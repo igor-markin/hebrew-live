@@ -7,10 +7,13 @@
 
 [Русская версия](README.ru.md)
 
-Hebrew Live turns spoken Hebrew into revisable live captions and local translation on
-Apple Silicon Macs. Speech recognition and MiLMMT translation run through MLX on the
-Mac's Metal GPU; audio, transcripts, translations, session history, and the browser UI
-stay on the Mac after the one-time setup download.
+Hebrew Live transcribes spoken Hebrew with
+[ivrit.ai Whisper Large v3 Turbo](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx)
+and translates it into your selected language with
+[MiLMMT-46-4B](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX).
+Both models run locally in MLX format on Apple Silicon's Metal GPU. After the initial
+setup, your audio, transcripts, translations, session history, and the browser UI stay
+on your Mac.
 
 **Runtime support is Apple Silicon only.** ASR and translation run through MLX on the
 Mac's Metal GPU. The Python coordinator and Silero VAD also use the CPU; this is not a
@@ -235,7 +238,7 @@ English (default), Russian, or Hebrew; Hebrew switches the interface to RTL. Cli
 outside Settings or pressing Escape closes the menu.
 
 `./run.sh languages` prints the source-of-truth target registry. The default pinned
-[MiLMMT model card](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX)
+[MiLMMT-46-4B v1.0 (4-bit MLX) model card](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX)
 advertises 46 languages, which yields 45 targets after excluding Hebrew-to-Hebrew.
 Those targets are Arabic, Azerbaijani, Bulgarian, Bengali, Catalan, Czech, Danish,
 German, Greek, English, Spanish, Persian, Finnish, French, Hindi, Croatian, Hungarian,
@@ -249,7 +252,8 @@ contains 46 distinct languages overall.
 The optional upstream multilingual Whisper tokenizer exposes 99 language tokens, as
 listed in [OpenAI Whisper's tokenizer](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py).
 That is a model capability, not this product's qualified input contract. The default
-ASR is an Ivrit.ai Hebrew fine-tune, and live input remains Hebrew. The old explicit
+ASR is the [ivrit.ai Whisper Large v3 Turbo MLX conversion](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx),
+and live input remains Hebrew. The old explicit
 `ru-he` CLI/archive direction remains readable for compatibility. Deterministic tests
 cover prompts, direction boundaries, persistence, caches, and metadata; they do not
 establish translation quality for every target.

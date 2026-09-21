@@ -7,10 +7,13 @@
 
 [English version](README.md)
 
-Локальные субтитры на иврите и перевод на целевой язык, поддержанный
-активной локальной моделью, для Mac с Apple Silicon. После одноразовой загрузки
-моделей распознавание, перевод, запись аудио, история и браузерный интерфейс
-работают на Mac без облачного inference.
+Hebrew Live распознаёт речь на иврите с помощью
+[ivrit.ai Whisper Large v3 Turbo](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx)
+и переводит её на выбранный язык с помощью
+[MiLMMT-46-4B](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX).
+Обе модели работают локально в формате MLX на GPU Apple Silicon через Metal. После
+первоначальной настройки аудио, транскрипты, переводы, история сессий и браузерный
+интерфейс остаются на Mac.
 
 **Поддерживается только Apple Silicon.** Распознавание и перевод выполняются через MLX
 на Apple GPU с Metal. Python-координатор и Silero VAD используют также CPU; это не
@@ -184,7 +187,7 @@ manifest проверяется. Переключение моделей во в
 русский или иврит; иврит включает RTL. Клик вне настроек и Escape закрывают меню.
 
 `./run.sh languages` печатает точный реестр. Базовая
-[MiLMMT](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX)
+[MiLMMT-46-4B v1.0 (4-bit MLX)](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX)
 заявляет 46 языков, поэтому для источника на иврите доступны 45 target-языков:
 арабский, азербайджанский, болгарский, бенгальский, каталанский, чешский, датский,
 немецкий, греческий, английский, испанский, персидский, финский, французский, хинди,
@@ -199,7 +202,8 @@ manifest проверяется. Переключение моделей во в
 Опциональный upstream multilingual Whisper имеет 99 языковых токенов в
 [официальном tokenizer OpenAI Whisper](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py),
 но это возможность модели, а не проверенный контракт продукта. Базовый ASR —
-Hebrew-fine-tune Ivrit.ai; live input остаётся ивритом. Старое явное направление
+[MLX-конверсия ivrit.ai Whisper Large v3 Turbo](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx);
+live input остаётся ивритом. Старое явное направление
 `ru-he` читается для совместимости CLI и архивов. Детерминированные тесты проверяют
 prompts, границы, persistence, cache keys и metadata, но не качество MT на всех языках.
 
