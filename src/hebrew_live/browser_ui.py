@@ -25,7 +25,8 @@ class BrowserUI:
                     'status_code':'loading_models','direction':'he-en','target_language':'en',
                     'target_languages':[],'target_error':None,'target_error_code':None,
                     'ui_locale':'en','paused':False,'finished':False,
-                    'lag':0,'level':0,'retry_supported':True}
+                    'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
+                    'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None}
         self.exports={}
         self.session_folder=None
         self.preference_folder=None
@@ -117,7 +118,7 @@ class BrowserUI:
                         identity=payload.get('value')
                         if not isinstance(identity,str) or len(identity)>128:return self.reply(400,b'{}')
                         with owner.lock:
-                            if owner.state['finished'] or owner.state.get('stopping') or owner.state.get('model_switching') or not owner.state.get('paused'):
+                            if owner.state['finished'] or owner.state.get('stopping') or owner.state.get('model_switching') or not owner.state.get('paused') or not owner.state.get('retry_supported',True):
                                 return self.reply(409,b'{}')
                             if owner.state.get('retrying_group') is not None:
                                 return self.reply(409,b'{}')
@@ -170,6 +171,15 @@ class BrowserUI:
                         except OSError:return self.reply(500,b'{}')
                         with owner.lock:owner.state['ui_locale']=locale
                         return self.reply(200,b'{"ok":true}')
+                    if action=='save_raw_audio':
+                        value=payload.get('value')
+                        if type(value) is not bool or owner.preference_folder is None:return self.reply(400,b'{}')
+                        if owner.state.get('save_raw_audio_locked'):return self.reply(409,b'{"error":"CLI audio retention override is active"}')
+                        from .preferences import save
+                        try:save(owner.preference_folder,save_raw_audio=value)
+                        except (OSError,ValueError):return self.reply(500,b'{}')
+                        with owner.lock:owner.state['save_raw_audio']=value
+                        return self.reply(200,b'{"ok":true}')
                     if action=='target_language':
                         target=payload.get('value')
                         with owner.lock:
@@ -221,6 +231,7 @@ class BrowserUI:
         return self
 
     def begin_session(self, session):
+        save_audio=getattr(session,'save_audio',True)
         with self.lock:
             self.next_session.clear()
             self.finished_seen.clear()
@@ -231,7 +242,11 @@ class BrowserUI:
             self.state.update(groups=[],generation=0,phase='loading',status='Загрузка локальных моделей…',status_code='loading_models',
                               finished=False,paused=False,stopping=False,cancelling=False,model_switching=False,
                               can_start_new=False,exports=[],retrying_group=None,retry_error=None,
-                              target_error=None,target_error_code=None,session=str(session.path))
+                              target_error=None,target_error_code=None,session=str(session.path),
+                              retry_supported=save_audio,save_raw_audio=save_audio,
+                              audio_saved=save_audio,partial=False,partial_kind=None,
+                              partial_ranges=[],partial_details=[],capture_discontinuity=False,
+                              integrity_warning=None)
         self.session_history.root=session.path.parent
         while not self.actions.empty():
             try:self.actions.get_nowait()
@@ -255,23 +270,27 @@ class BrowserUI:
     def prepare_exports(self,session):
         entries=[]
         from .languages import LANGUAGES,split_direction
+        session.close()  # Finalize WAV headers and the integrity manifest first.
         for number,part in session.parts.items():
             # Workers have stopped. Flush original files before exposing read-only
             # download IDs; no paths supplied by a browser are ever opened.
             # libsndfile rewrites WAV headers on close, not just flush.
-            part.audio.close()
-            for file in (part.source,part.target):file.flush()
             source,target=split_direction(part.direction)
             base=f'{number:03d}-{part.direction}'
-            for suffix,label,kind in [('audio.wav','Source recording','audio/wav'),('transcript.txt','Original ('+LANGUAGES[source].english_name+')','text/plain; charset=utf-8'),('translation.txt','Translation ('+LANGUAGES[target].english_name+')','text/plain; charset=utf-8')]:
+            candidates=[('transcript.txt','Original ('+LANGUAGES[source].english_name+')','text/plain; charset=utf-8'),('translation.txt','Translation ('+LANGUAGES[target].english_name+')','text/plain; charset=utf-8')]
+            if part.audio_path.is_file():candidates.insert(0,('audio.wav','Source recording','audio/wav'))
+            for suffix,label,kind in candidates:
                 id=str(len(entries)+1);path=session.path/(base+'.'+suffix)
                 self.exports[id]=(path,kind)
                 entries.append(dict(id=id,name=path.name,label=label))
         if self.live:
-            session.close()  # Final technical summaries are durable before Finder opens.
             self.session_folder=session.path.resolve()
             self.exports={};entries=[]
-        with self.lock:self.state.update(exports=entries,session=str(session.path))
+        integrity=session.integrity_view()
+        warning=('Session capture or processing is incomplete.' if integrity['partial'] else None)
+        with self.lock:self.state.update(exports=entries,session=str(session.path),
+                                         integrity_warning=warning,
+                                         retry_supported=session.save_audio,**integrity)
 
     def keys(self,screen):
         keys=list(self.keyboard.read())

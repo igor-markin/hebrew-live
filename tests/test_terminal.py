@@ -21,12 +21,15 @@ from unittest.mock import patch
 import sys, threading, time
 import numpy as np
 import hebrew_live.cli as cli
+import hebrew_live.remote_engine as remote_engine
 from hebrew_live.runtime import run_session
 from hebrew_live.session import Session
 
 class Engine:
     mx=type('MX',(),{'get_peak_memory':lambda:0})
-    def __init__(self,*a,**kw):pass
+    def __init__(self,folder,log,language='he',backend='turbo',direction='he-ru',topic='none',**kw):
+        self.log=log;self.language=language;self.backend=backend;self.direction=direction;self.topic=topic
+        self.translation_size='milmmt';self.custom_models=False;self.translation_context=[]
     def warmup(self):pass
     def recognize(self,*a,**kwargs):
         text='שלום עולם' if self.language=='he' else 'Привет мир'
@@ -35,6 +38,9 @@ class Engine:
     def translate(self,*a):
         time.sleep(.03)
         yield ('Привет мир.' if self.direction=='he-ru' else 'שלום עולם.'),'stop'
+    def switch_models(self,selection):self.backend=selection['asr']
+    def interrupt(self):pass
+    def close(self):pass
 class VAD:
     def __init__(self,*a,**kw):pass
     def __call__(self,*a):return 1
@@ -49,7 +55,7 @@ class Stream:
 args=SimpleNamespace(models=Path(sys.argv[1])/'models',language=None,direction='he-ru',topic='none',command='listen',device=None)
 session=Session(Path(sys.argv[1]),'he-ru',{})
 try:
-    with patch.object(cli,'Engine',Engine),patch.object(cli,'VAD',VAD),patch.object(cli,'verify'),patch('sounddevice.query_devices',return_value={'default_samplerate':16000}),patch('sounddevice.InputStream',Stream):
+    with patch.object(remote_engine,'RemoteEngine',Engine),patch.object(cli,'VAD',VAD),patch.object(cli,'verify'),patch('sounddevice.query_devices',return_value={'default_samplerate':16000}),patch('sounddevice.InputStream',Stream):
         run_session(args,session)
 finally:session.close()
 '''
@@ -90,7 +96,7 @@ class TerminalTests(unittest.TestCase):
                 self.assertEqual(events.count('resume'),1)
                 self.assertEqual(events.count('direction'),1)
                 self.assertEqual(events.count('clear'),1)
-                self.assertEqual(len(list(folder.iterdir())),8)
+                self.assertEqual(len(list(folder.iterdir())),9)
                 self.assertIn('Paused',output.decode(errors='replace'))
                 self.assertIn('Session saved:',output.decode(errors='replace'))
                 self.assertIn('שלום',output.decode(errors='replace'))
@@ -146,7 +152,7 @@ class TerminalTests(unittest.TestCase):
                         except OSError:break
                 process.wait(timeout=2);self.assertEqual(process.returncode,0)
                 folder=next(sessions.iterdir())
-                self.assertEqual(len(list(folder.iterdir())),4)
+                self.assertEqual(len(list(folder.iterdir())),5)
                 events=[json.loads(line)['event'] for file in folder.glob('*.jsonl') for line in file.read_text().splitlines()]
                 self.assertNotIn('direction',events)
             finally:

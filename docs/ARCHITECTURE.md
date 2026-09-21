@@ -4,13 +4,16 @@
 microphone / local WAV
         │
         ▼
- local audio stream ──► immutable session WAV       CPU / Core Audio
+ local audio stream ──► optional session WAV        CPU / Core Audio
         │
         ▼
- pinned or explicit compatible MLX ASR              Apple GPU / Metal
+ parent-owned queues, session state, and integrity ledger
+        │ bounded request/response IPC
+        ▼
+ spawned inference process: MLX ASR                  Apple GPU / Metal
         │ changing source text
         ▼
- pinned or explicit compatible MLX-LM model         Apple GPU / Metal
+ spawned inference process: MLX-LM model             Apple GPU / Metal
         │ revisable draft + final state
         ├──────────────► private local session files
         ▼
@@ -21,10 +24,36 @@ microphone / local WAV
 
 `hebrew_live.cli` owns argument parsing, setup, model inventory, and top-level error
 handling. `runtime.py`, `stream.py`, `feed.py`, and `retranslation.py` coordinate audio,
-boundaries, inference workers, retries, and shutdown. `session.py` writes immutable
-audio plus text and diagnostic records. `browser_ui.py` exposes a small same-origin
+boundaries, inference workers, retries, and shutdown. `session.py` writes optional raw
+audio plus text, integrity, and diagnostic records. `browser_ui.py` exposes a small same-origin
 loopback API and serves assets from `hebrew_live/web`; it does not depend on a repository
 checkout.
+
+`RemoteEngine` starts one spawned child for the native MLX model lifecycle. The parent
+keeps the session files, processors, UI state, and accepted/terminal ledgers durable.
+Request IDs serialize recognition, streamed translation, model changes, and close over
+bounded IPC. Stop first allows accepted work to drain for a conservative 120-second
+budget; cancellation then gets three seconds before the child is terminated, with kill
+as the final escalation if it does not exit. A
+closed translation generator is drained only for a short cancellation grace period, so
+tokens from an abandoned request cannot enter the next part. Constructor failures,
+child crashes, and close timeouts close IPC handles and reap the process. Runtime model
+checks remain offline inside the child.
+
+The process boundary bounds native inference startup, shutdown, and close hangs. A
+native call is not given a new wall-clock SLA while recording remains active; the
+deadline begins at stop or cancel. Python queue delivery and joins also have deadlines,
+and every started source, recording, segment, and inference thread is tracked. If one
+survives teardown, the application writes only the independent integrity snapshot,
+blocks a new session, and requires restart rather than closing files under that worker.
+It cannot force an arbitrary filesystem or audio-driver syscall to return; the parent
+does not claim that such an OS-level hang was cleanly interrupted.
+
+Raw audio retention is separate from transient inference audio. New installs save WAV
+files by default for archive playback and retry; the preference applies to the next
+session. When disabled, PCM remains in bounded memory only long enough for processing,
+while text, diagnostics, duration counters, and `session.json` are still persisted.
+Existing sessions remain readable by inspecting whether their WAV files exist.
 
 `languages.py` is the backend source of truth for translation capabilities and exact
 model prompt names. The normal live source remains Hebrew. A target change is inserted

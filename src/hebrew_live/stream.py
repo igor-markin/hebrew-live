@@ -48,7 +48,7 @@ class AudioBlock:
 
 
 class Control:
-    def __init__(self, settings, stop):
+    def __init__(self, settings, stop, accepted=None):
         self.settings = settings
         self.initial_settings = settings
         self.stop = stop
@@ -58,6 +58,8 @@ class Control:
         self.last_keys = {}
         self.pause_started = None
         self.paused_seconds = 0.
+        self.accepted = accepted
+        self.capture_rate = None
 
     def switch_models(self, selection):
         from .model_selection import validate
@@ -105,6 +107,8 @@ class Control:
             if self.paused or self.stop.is_set():
                 return False
             self.queue.put_nowait(Captured(data.copy(), end, self.settings))
+            if self.accepted is not None and self.capture_rate:
+                self.accepted(self.settings.part,len(data),self.capture_rate)
             return True
 
     def key(self, key, now=None):
@@ -189,18 +193,25 @@ def transfer(control, raw, session, rate, channels, consumer, errors, updates):
                 session.event('audio_health',part=settings.part,rms=rms,peak=float(np.max(np.abs(mono))),
                               capture_queue=control.queue.qsize(),audio_queue=raw.qsize())
     except Exception as exc:
+        if hasattr(session,'note_unprocessed'):
+            from .session import LowStorageError
+            reason='low_storage' if isinstance(exc,LowStorageError) else 'storage_or_recording_write_failed'
+            session.note_unprocessed(settings.part,None,None,reason,'unknown')
         errors.put(exc); control.stop.set()
         try:
             session.error(exc)
         except Exception:
             pass
     finally:
-        while consumer.is_alive():
+        deadline=time.monotonic()+5
+        while consumer.is_alive() and time.monotonic()<deadline:
             try:
                 raw.put(None, timeout=.1)
                 break
             except queue.Full:
                 pass
+        if consumer.is_alive() and time.monotonic()>=deadline and hasattr(session,'note_unprocessed'):
+            session.note_unprocessed(settings.part,None,None,'segmenter_sentinel_timeout','unknown')
 
 
 def replay(file, control):

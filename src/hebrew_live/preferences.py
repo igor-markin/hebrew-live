@@ -10,7 +10,7 @@ def read(folder):
  if not path.exists():return {}
  data=json.loads(path.read_text())
  if not isinstance(data,dict):raise ValueError('Invalid preferences')
- if data.get('schema_version',1) not in (1,2,3):raise ValueError('Unsupported preferences schema')
+ if data.get('schema_version',1) not in (1,2,3,4):raise ValueError('Unsupported preferences schema')
  result={}
  if 'timing' in data:result['timing']=as_dict(timing_validate(data['timing']))
  if 'mode' in data:
@@ -35,11 +35,12 @@ def read(folder):
   result['ui_locale']=data['ui_locale']
  result['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
  result['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
+ result['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
  return result
 def save(folder,**values):
  with _LOCK:
   folder=Path(folder);folder.mkdir(exist_ok=True,mode=0o700)
-  data=read(folder);data.pop('preference_notices',None);data.update(values);data['schema_version']=3
+  data=read(folder);data.pop('preference_notices',None);data.update(values);data['schema_version']=4
   if data.get('mode','phrases')!='phrases':raise ValueError('Invalid translation mode')
   if data.get('publication','draft') != 'draft':raise ValueError('Only draft publication is supported')
   if 'timing' in data:data['timing']=as_dict(timing_validate(data['timing']))
@@ -50,6 +51,7 @@ def save(folder,**values):
   if 'ui_locale' in data and data['ui_locale'] not in ('en','ru','he'):raise ValueError('Invalid interface language')
   data['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
   data['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
+  data['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
   fd,name=tempfile.mkstemp(prefix='.preferences-',dir=folder)
   try:
    with os.fdopen(fd,'w') as file:
@@ -66,4 +68,8 @@ def validate_draft_limit(value):
 
 def validate_catchup(value):
  if type(value) is not bool:raise ValueError('draft_catchup_enabled must be boolean')
+ return value
+
+def validate_save_audio(value):
+ if type(value) is not bool:raise ValueError('save_raw_audio must be boolean')
  return value

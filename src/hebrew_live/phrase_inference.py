@@ -131,10 +131,11 @@ class PhraseProcessor:
         start=time.monotonic();text=e.recognize(f.audio,0.,preliminary=not f.final,mode=f.settings.mode)
         self.log.event('asr',segment=f.id,revision=f.revision,seconds=time.monotonic()-start,chars=len(text),lag=max(0,start-f.end),input_seconds=len(f.audio)/16000,crop_seconds=0,guard_due=False)
         now=f.offset;self.last_now=now
+        window_start=now-len(f.audio)/16000
         status=getattr(e,'recognition_status',None) or ('rejected' if getattr(e,'recognition_issue',None) else 'accepted' if text else 'empty')
         words=getattr(e,'recognition_words',[]) if status=='accepted' else []
-        self.log.event('phrase_asr_status',segment=f.id,status=status,reason=getattr(e,'recognition_issue',None))
-        window_start=now-len(f.audio)/16000
+        self.log.event('phrase_asr_status',segment=f.id,status=status,reason=getattr(e,'recognition_issue',None),
+                       start=max(0.,window_start+f.prefix),end=now,final=f.final)
         corrections=[]
         if f.final and words:
             absolute=[dict(w,start=w['start']+window_start,end=w['end']+window_start,fragment=f.id) for w in words]
@@ -250,6 +251,8 @@ class PhraseProcessor:
             if self.part:self.part.text('target',f,label+result+(('\n['+issue+']') if issue and published else ''))
             if published:mark_first()
             self.emit('group_final',sid,dict(payload(result),issue=issue))
+            self.log.event('phrase_terminal',segment=sid,start=unit.start,end=unit.end,
+                           outcome='failed' if issue else 'published',issue=issue)
             self.log.event('translation',segment=sid,seconds=time.monotonic()-started,chars=len(result),lag=time.monotonic()-self.last.end+self.last.offset-unit.end,peak_memory=e.mx.get_peak_memory() if hasattr(e,'mx') else 0)
             self.updates.put(('lag',sid,time.monotonic()-self.last.end+self.last.offset-unit.end))
             if track and not unit.correction_of:self.published=(self.published+[(sid,unit)])[-64:]

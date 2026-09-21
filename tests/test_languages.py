@@ -53,7 +53,7 @@ class LanguageCapabilityTests(unittest.TestCase):
             save_preferences(folder,target_language='fr',ui_locale='he')
             self.assertEqual(read_preferences(folder)['target_language'],'fr')
             self.assertEqual(read_preferences(folder)['ui_locale'],'he')
-            self.assertEqual(json.loads((folder/'preferences.json').read_text())['schema_version'],3)
+            self.assertEqual(json.loads((folder/'preferences.json').read_text())['schema_version'],4)
 
     def test_concurrent_preference_updates_do_not_lose_either_language(self):
         with tempfile.TemporaryDirectory() as tmp:

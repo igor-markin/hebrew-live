@@ -122,15 +122,21 @@ he-ru doctor
 
 Отдельный репозиторий проекта —
 [github.com/igor-markin/hebrew-live](https://github.com/igor-markin/hebrew-live).
-Исходный код опубликован в нём. Для воспроизводимой установки из Git закрепи полный
-SHA проверенного коммита:
+Исходный код опубликован в нём. Обычная установка wheel или Git использует точные
+версии прямых runtime-зависимостей пакета. Для воспроизводимой установки из Git закрепи
+один полный SHA проверенного коммита и для кода, и для полного набора транзитивных
+ограничений:
 
 ```sh
-uv tool install --python 3.12 'git+https://github.com/igor-markin/hebrew-live.git@COMMIT_SHA'
+uv tool install --python 3.12 \
+  --constraints 'https://raw.githubusercontent.com/igor-markin/hebrew-live/COMMIT_SHA/constraints.txt' \
+  'git+https://github.com/igor-markin/hebrew-live.git@COMMIT_SHA'
 ```
 
-Замени `COMMIT_SHA` полным SHA опубликованного коммита; не устанавливай движущуюся
-непроверенную ветку. Синтаксис описан в официальном разделе uv о
+Замени оба `COMMIT_SHA` одним и тем же полным SHA опубликованного коммита: не смешивай
+ревизии исходников и constraints и не устанавливай движущуюся непроверенную ветку.
+Файл `constraints.txt` получен из того же `uv.lock` и закрепляет подходящие
+транзитивные зависимости для Python 3.12 на Apple Silicon macOS. Синтаксис описан в официальном разделе uv о
 [Git source для tools](https://docs.astral.sh/uv/guides/tools/#requesting-different-sources).
 Установка кода не скачивает веса моделей и не означает принятия их условий. Сначала
 проверь источники командой `he-ru model-info`, затем запускай
@@ -140,6 +146,13 @@ uv tool install --python 3.12 'git+https://github.com/igor-markin/hebrew-live.gi
 Окружение tool и общий download cache принадлежат uv; их пути показывают
 `uv tool dir` и `uv cache dir`. Модели, записи, настройки и Hugging Face cache по-прежнему
 следуют `HEBREW_LIVE_HOME` и перечисляются командой `he-ru storage`.
+
+По умолчанию приложение сохраняет исходное аудио. Переключатель в настройках действует
+со следующей записи; эквивалентные параметры CLI — `--save-raw-audio` и
+`--no-save-raw-audio`. При явном параметре CLI переключатель интерфейса заблокирован на
+время запуска. Без сохранения WAV распознавание использует временное аудио в памяти,
+но повторная обработка фрагментов недоступна; тексты, диагностика, длительность и
+метаданные целостности остаются в архиве.
 
 Вместо setup можно указать все три собственных совместимых локальных пути:
 

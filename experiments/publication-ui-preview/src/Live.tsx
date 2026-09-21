@@ -4,7 +4,7 @@ import {Card} from '@heroui/react/card';
 import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
-import {archiveRecordingLabel, isVisibleGroup, mergeLiveState, parseLiveState, virtualIndexes} from './liveState';
+import {archiveRecordingLabel, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
 import type {Group, LiveState, Pair} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -113,7 +113,7 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
-function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
+function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
   const busy=pending||loading||state.finished||state.stopping||state.model_switching;
@@ -122,7 +122,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
   const archiveKey=selected?archiveRecordingLabel(state):'';
   const archiveState=archiveKey?tx(archiveKey as TextKey):'';
   const statusKey=state.stopping?(state.cancelling?'cancelling':'finishing'):state.status_code;
-  const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','saved_session','runtime_status'].includes(statusKey)?tx(statusKey as TextKey):state.status;
+  const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','saved_session','runtime_status','partial_processing','restart_required'].includes(statusKey)?tx(statusKey as TextKey):state.status;
   const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind;
   return <section className="live-controls" aria-label={tx('recordingControls')}>
     <div className="live-toolbar">
@@ -136,6 +136,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
         <div className="live-settings-panel">
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option><option value="he">עברית</option></select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
+          <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
         </div>
@@ -182,6 +183,13 @@ export default function Live(){
   actionContext.current={state,closed};
   const selectedArchive=selected?archives[selected]:undefined;
   const shown=selected?selectedArchive:state;
+  const reasonKey=(reason:string):TextKey=>({translation_backlog:'partialReasonOverload',low_storage:'partialReasonLowStorage',storage_or_recording_write_failed:'partialReasonStorageIo',shutdown_deadline:'partialReasonShutdown',cancel_deadline:'partialReasonCancel',python_worker_shutdown_timeout:'partialReasonWorker',cancelled_pending:'partialReasonPending'} as Record<string,TextKey>)[reason]||'partialReasonRuntime';
+  const described=(shown?.partial_details||[]).map(item=>tx('partialDetail',{part:String(item.part??'?'),direction:item.direction||'?',range:typeof item.start==='number'&&typeof item.end==='number'?`${item.start.toFixed(3)}–${item.end.toFixed(3)}s`:tx('rangeUnavailable'),reason:tx(reasonKey(item.reason))}));
+  const partialRanges=described.join('; ')||(shown?.partial_ranges||[]).join(', ')||tx('rangeUnavailable');
+  const partialNoticeType=shown?partialNoticeKind(shown):null;
+  const partialNotice=partialNoticeType==='capture_unknown'?tx('partialCaptureUnknown'):
+    partialNoticeType==='mixed'?tx('partialMixed',{ranges:partialRanges}):
+    partialNoticeType==='known_unprocessed'?tx('partialKnown',{ranges:partialRanges}):partialNoticeType==='generic'?tx('partialSession'):'';
   const visibleGroups=shown?.groups||[];
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
@@ -300,11 +308,11 @@ export default function Live(){
     void poll();return()=>{cancelled=true;window.clearTimeout(timer);};
   },[closed,tx]);
 
-  const act=useCallback(async(action:string,value?:string)=>{
+  const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const localeAction=action==='ui_locale';
-    if(closed||actionBusy.current||(!localeAction&&((loading&&!['stop','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session'].includes(action))||(!['stop','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
+    const preferenceAction=action==='ui_locale'||action==='save_raw_audio';
+    if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session'].includes(action))||(!['stop','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
     try{
@@ -313,12 +321,13 @@ export default function Live(){
       if(action==='stop')setState(old=>({...old,stopping:true,phase:'stopping',status_code:'finishing'}));
       if(action==='cancel_processing')setState(old=>({...old,cancelling:true,status_code:'cancelling'}));
       if(action==='start_session')setState(old=>({...old,can_start_new:false}));
+      if(action==='save_raw_audio'&&typeof value==='boolean')setState(old=>({...old,save_raw_audio:value}));
       if(action==='exports_ready'){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
       return true;
     }catch{setActionError(action==='open_archive_folder'?tx('openFolderError'):tx('actionError'));return false;}
     finally{actionBusy.current=false;setPending(false);}
   },[tx]);
-  const onAction=useCallback((action:string,value?:string)=>{void act(action,value);},[act]);
+  const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
   const retryFragment=useCallback((id:string)=>{void act('retry_fragment',id);},[act]);
   const changeLocale=useCallback(async(value:UiLocale)=>{
     const request=beginLocaleRequest(locale,state.ui_locale,value,localeRequested.current);
@@ -358,12 +367,14 @@ export default function Live(){
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
       {!selected&&state.retry_error&&<p className="unavailable global-error" role="alert">{issueText(locale,state.retry_error)}</p>}
       {!selected&&state.target_error&&<p className="unavailable global-error" role="alert">{tx(state.target_error_code==='target_preference_not_saved'?'targetPreferenceError':state.target_error_code==='target_busy'?'targetBusyError':'targetChangeError')}</p>}
+      {!selected&&partialNotice&&<p className="unavailable global-error" role="status">{partialNotice}</p>}
       {selected&&archiveError&&<div className="archive-error" role="alert"><p className="unavailable">{archiveError}</p><Button variant="tertiary" onPress={()=>{setArchiveRetries(old=>({...old,[selected]:(old[selected]||0)+1}));setArchiveError('');}}>{tx('retryButton')}</Button></div>}
-      {selected&&selectedArchive?.warning&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
+      {selected&&partialNotice&&<p role="status" className="unavailable global-error">{partialNotice}</p>}
+      {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
         <MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>
         {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?tx('readyToSpeak'):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
-        {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx('filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
+        {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>
       {!selected&&!follow.following&&state.groups.length>0&&<Button className="follow-latest" variant="primary" onPress={follow.resume}><Icon kind="down"/>{tx('backToCurrent')}</Button>}
     </main><footer className="app-footer"><span>{tx('onThisMac')}</span><span>{tx('lateNotBetter')}</span></footer>

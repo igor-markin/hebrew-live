@@ -80,6 +80,8 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
             else:
                 phrases.process(f,defer=age_scheduler)
     except Exception as exc:
+        if f is not None and hasattr(log,'note_unprocessed_fragment'):
+            log.note_unprocessed_fragment(getattr(f,'fragment',f),'inference_interrupted')
         errors.put(exc);stop.set()
         try:log.error(exc)
         except Exception:pass

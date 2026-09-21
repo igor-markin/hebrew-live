@@ -11,15 +11,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mlx-whisper",
-    "mlx-lm",
-    "onnxruntime",
-    "sounddevice",
-    "soundfile",
-    "soxr",
-    "rich",
-    "huggingface-hub",
-    "python-bidi>=0.6.11",
+    "mlx-whisper==0.4.3",
+    "mlx-lm==0.31.3",
+    "onnxruntime==1.29.0",
+    "sounddevice==0.5.6",
+    "soundfile==0.14.0",
+    "soxr==1.1.0",
+    "rich==15.0.0",
+    "huggingface-hub==1.30.0",
+    "python-bidi==0.6.11",
 ]
 [project.scripts]
 he-ru = "hebrew_live.cli:main"
@@ -34,6 +34,7 @@ include = [
     "/tests",
     "/pyproject.toml",
     "/uv.lock",
+    "/constraints.txt",
     "/README.md",
     "/README.ru.md",
     "/LICENSE",

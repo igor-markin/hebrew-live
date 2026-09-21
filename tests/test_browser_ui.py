@@ -55,3 +55,29 @@ class BrowserTests(unittest.TestCase):
                 request=urllib.request.Request(ui.url+'action',data=b'{"action":"exports_ready"}',headers={'Content-Type':'application/json','Origin':'http://'+ui.host})
                 with urllib.request.urlopen(request) as r:self.assertEqual(r.status,200)
                 self.assertTrue(ui.finished_seen.is_set())
+
+    def test_no_audio_exports_only_text_and_disables_retry(self):
+        import tempfile
+        from pathlib import Path
+        from hebrew_live.session import Session
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(Path(tmp),'he-ru',{},save_audio=False)
+            with BrowserUI(open_browser=False) as ui:
+                ui.begin_session(session);ui.prepare_exports(session)
+                self.assertEqual([item['name'] for item in ui.state['exports']],
+                                 ['001-he-ru.transcript.txt','001-he-ru.translation.txt'])
+                self.assertFalse(ui.state['retry_supported']);self.assertFalse(ui.state['audio_saved'])
+                self.assertFalse(any(session.path.glob('*.wav')))
+                ui.finished_seen.set()
+
+    def test_cli_audio_retention_override_locks_browser_preference(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp, BrowserUI(open_browser=False) as ui:
+            ui.preference_folder=Path(tmp);ui.details(save_raw_audio=False,save_raw_audio_locked=True)
+            request=urllib.request.Request(ui.url+'action',data=json.dumps({'action':'save_raw_audio','value':True}).encode(),
+                headers={'Content-Type':'application/json','Origin':'http://'+ui.host})
+            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(request)
+            self.assertEqual(error.exception.code,409);self.assertFalse(ui.state['save_raw_audio'])
+            self.assertFalse((Path(tmp)/'preferences.json').exists())
+            ui.finished_seen.set()

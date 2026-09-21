@@ -179,15 +179,20 @@ he-ru doctor
 
 The dedicated repository is
 [github.com/igor-markin/hebrew-live](https://github.com/igor-markin/hebrew-live).
-The source is published there. For a reproducible VCS install, pin the full commit
-SHA that you reviewed:
+The source is published there. A normal wheel or Git install resolves the package's
+exact direct runtime dependencies. For a reproducible VCS install, pin the full commit
+SHA that you reviewed for both the source and its complete transitive constraints:
 
 ```sh
-uv tool install --python 3.12 'git+https://github.com/igor-markin/hebrew-live.git@COMMIT_SHA'
+uv tool install --python 3.12 \
+  --constraints 'https://raw.githubusercontent.com/igor-markin/hebrew-live/COMMIT_SHA/constraints.txt' \
+  'git+https://github.com/igor-markin/hebrew-live.git@COMMIT_SHA'
 ```
 
-Replace `COMMIT_SHA` with a full published commit hash; do not install an unreviewed
-moving branch. See uv's official
+Replace both `COMMIT_SHA` placeholders with the same full published commit hash; do
+not mix source and constraints revisions or install an unreviewed moving branch. The
+tracked `constraints.txt` is generated from the same `uv.lock` dependency graph and
+pins applicable transitive packages for Python 3.12 on Apple Silicon macOS. See uv's official
 [tool source examples](https://docs.astral.sh/uv/guides/tools/#requesting-different-sources).
 Installing the code does not download model weights or accept their terms. Review the
 model sources with `he-ru model-info`, then run `he-ru setup --accept-model-terms` only
@@ -279,9 +284,15 @@ contract exposes 45 translation targets for Hebrew input.
 
 *Settings are shown over the same synthetic local session.*
 
-Completed sessions remain available for local search and read-only review. Audio,
-transcripts, translations, and technical logs stay in the session folder until the user
-explicitly deletes that session.
+Completed sessions remain available for local search and read-only review. By default,
+source audio, transcripts, translations, technical logs, and `session.json` stay in the
+session folder until the user explicitly deletes that session. **Save source audio** in
+Settings changes the next recording; the equivalent CLI switches are
+`--save-raw-audio` and `--no-save-raw-audio`. With source audio disabled, capture still
+uses transient PCM for local inference and records duration/integrity counters, but no
+WAV is persisted and fragment retry is unavailable. Text, diagnostics, exports, and
+partial-session metadata remain available. When either CLI switch is supplied, the UI
+checkbox is locked for that run so it cannot promise a different next-session value.
 
 ![Hebrew Live local session archive with a synthetic conversation](docs/images/session-archive.jpg)
 
@@ -363,6 +374,14 @@ by the application. The archive UI can delete a completed session after confirma
 the current session is protected. There is no automatic retention policy
 or secure-erasure guarantee. See [PRIVACY.md](PRIVACY.md).
 
+Before capture and while writing persisted audio, Hebrew Live keeps free space in
+reserve for a final metadata snapshot. Low space stops further admission and marks the
+archive partial; it never deletes older sessions automatically. `session.json`
+distinguishes PCM accepted into the application FIFO, ranges where ASR was attempted,
+terminal published/failed outcomes, exact known unprocessed ranges, and device
+overflow/underflow where the lost extent is unknown. Accepted PCM is not proof that the
+audio driver delivered everything. Silence and normal overlap are not reported as loss.
+
 ## Reproducible bug reports
 
 Generate a privacy-filtered environment report:
@@ -394,6 +413,10 @@ session logs only after the recipient and purpose are explicitly agreed.
   steps. A generic banner alone does not prove network loss.
 - **no microphone** — run `./run.sh devices`, confirm macOS microphone permission, and
   choose a device explicitly.
+- **partial session warning** — open the saved archive. The live/archive screen shows
+  known unprocessed time ranges separately from an unknown device-capture gap. A
+  low-space, overload, inference timeout, or device discontinuity ends admission while
+  preserving the readable text and metadata that could be finalized.
 - **Metal/model load failure** — use a normal local macOS terminal, confirm Apple
   Silicon and free disk/memory, then run `./run.sh doctor`.
 - **MLX import fails after the frozen environment check passes** — preserve the import

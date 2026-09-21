@@ -57,6 +57,14 @@ class SessionHistory:
         if folder is None: raise FileNotFoundError(identity)
         groups = []
         warnings = []
+        manifest={}
+        try:
+            manifest_path=folder/'session.json'
+            if manifest_path.is_file() and not manifest_path.is_symlink():
+                candidate=json.loads(manifest_path.read_text(encoding='utf-8'))
+                if isinstance(candidate,dict):manifest=candidate
+                else:warnings.append('Session metadata has an unsupported shape.')
+        except (OSError,ValueError,UnicodeError):warnings.append('Session metadata is incomplete.')
         for path in sorted(folder.glob('*.diagnostics.jsonl')):
             match = PART.fullmatch(path.name)
             if not match or path.is_symlink(): continue
@@ -83,9 +91,26 @@ class SessionHistory:
                 for key, source in sources.items():
                     groups.append(dict(id=base+':'+key,direction=direction,complete=True,
                                        final=dict(source=source,translation=targets.get(key,''))))
+        if manifest.get('partial'):warnings.append('Session capture or processing is incomplete.')
+        audio_saved=manifest.get('audio_saved')
+        if type(audio_saved) is not bool:audio_saved=any(folder.glob('*.audio.wav'))
+        known=manifest.get('known_unprocessed',[]);discontinuities=manifest.get('capture_discontinuities',[])
+        known=known if isinstance(known,list) else [];discontinuities=discontinuities if isinstance(discontinuities,list) else []
+        parts=manifest.get('parts',{});parts=parts if isinstance(parts,dict) else {}
+        details=[]
+        for item in known:
+            if not isinstance(item,dict):continue
+            part=item.get('part');part_info=parts.get(str(part),{});part_info=part_info if isinstance(part_info,dict) else {}
+            details.append(dict(part=part,direction=part_info.get('direction'),reason=item.get('reason','runtime_error'),
+                                start=item.get('start'),end=item.get('end')))
+        ranges=[f"part {item['part']} {item['direction'] or ''} · {item['start']:.3f}–{item['end']:.3f}s · {item['reason']}"
+                for item in details if isinstance(item.get('start'),(int,float)) and isinstance(item.get('end'),(int,float))]
+        partial_kind='mixed' if known and discontinuities else 'capture_unknown' if discontinuities else 'known_unprocessed' if known else None
         return dict(groups=groups,session=identity,session_path=str(folder.resolve()),warning=' '.join(dict.fromkeys(warnings)),
                     status='Сохранённая сессия',status_code='saved_session',finished=True,paused=True,
-                    direction=groups[-1]['direction'] if groups else 'he-en')
+                    direction=groups[-1]['direction'] if groups else 'he-en',partial=bool(manifest.get('partial')),
+                    partial_kind=partial_kind,partial_ranges=ranges,partial_details=details,
+                    audio_saved=audio_saved,retry_supported=False)
 
     @staticmethod
     def records(path):

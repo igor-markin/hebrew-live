@@ -41,6 +41,17 @@ class SessionBrowserTests(unittest.TestCase):
             self.assertIsNone(ui.state['retrying_group']);self.assertIsNone(ui.state['retry_error'])
             self.assertTrue(ui.actions.empty())
 
+    def test_begin_session_clears_every_partial_warning_field(self):
+        from pathlib import Path
+        from types import SimpleNamespace
+        ui=BrowserUI(open_browser=False)
+        ui.details(partial=True,partial_kind='mixed',partial_ranges=['old'],
+                   partial_details=[{'part':1}],capture_discontinuity=True)
+        ui.begin_session(SimpleNamespace(path=Path('/tmp/new-clean-session'),save_audio=True))
+        self.assertFalse(ui.state['partial']);self.assertIsNone(ui.state['partial_kind'])
+        self.assertEqual(ui.state['partial_ranges'],[]);self.assertEqual(ui.state['partial_details'],[])
+        self.assertFalse(ui.state['capture_discontinuity'])
+
     def test_stop_is_idempotent_and_cancellation_is_explicit(self):
         with BrowserUI(open_browser=False) as ui:
             def post(action):

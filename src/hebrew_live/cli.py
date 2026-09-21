@@ -458,18 +458,27 @@ class Fragment:
 class Inbox:
     TIMEOUT=object()
     """Bounded final FIFO; only the newest provisional snapshot is retained."""
-    def __init__(self):
+    def __init__(self,on_overload=None):
         self.condition=threading.Condition();self.finals=deque();self.preview=None;self.done=False;self.latest={}
+        self.overloaded=False;self.on_overload=on_overload
     def put(self, f):
         with self.condition:
             f.queued_at=time.monotonic()
             self.latest[f.id]=f.revision
+            if self.overloaded:
+                if self.on_overload:self.on_overload(f)
+                return False
             if f.final:
-                if len(self.finals)>=4: raise RuntimeError('Translation backlog exceeded 4 utterances')
+                if len(self.finals)>=4:
+                    self.overloaded=True
+                    self.preview=None
+                    if self.on_overload:self.on_overload(f)
+                    return False
                 self.finals.append(f)
                 if self.preview and self.preview.id<=f.id:self.preview=None
             else:self.preview=f
             self.condition.notify()
+            return True
     def put_boundary(self, boundary):
         with self.condition:
             self.finals.append(boundary);self.condition.notify()
@@ -486,6 +495,10 @@ class Inbox:
             return not f.final and any(getattr(item,'id',None)==f.id for item in self.finals)
     def finish(self):
         with self.condition:self.done=True;self.condition.notify_all()
+    def pending_fragments(self):
+        with self.condition:
+            return [item.fragment if hasattr(item,'fragment') else item for item in self.finals
+                    if hasattr(item,'fragment') or isinstance(item,Fragment)]
     def take_draft_catchup(self, current, group_start, group_end):
         """Take only the ordinary next item, atomically; never wait or skip FIFO."""
         with self.condition:
@@ -541,7 +554,11 @@ def segment(raw, inbox, vad, stop, log, errors):
         audio = np.concatenate(frames)
         from dataclasses import replace
         frozen=replace(settings,timing=group_timing,mode=group_mode) if settings is not None else None
-        inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason))
+        accepted=inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason))
+        if accepted is False:
+            stop.set()
+            log.event('processing_overload',segment=sid,revision=rev,
+                      start=max(0.,offset-len(audio)/16000+prefix),end=offset)
         last = len(frames)*.032
         log.event('fragment',segment=sid,revision=rev,seconds=len(audio)/16000,new_seconds=len(audio)/16000-prefix,context_seconds=prefix,final=final)
 
@@ -633,7 +650,8 @@ def run(args, log):
                                else TRANSLATION['milmmt'][0])
             browser.details(direction=args.direction,models={'Распознавание':asr_label,
                 'Перевод':translation_label,'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},
-                topic=args.topic,session=str(log.path))
+                topic=args.topic,session=str(log.path),
+                save_raw_audio_locked=bool(getattr(args,'save_raw_audio_explicit',False)))
             current=log
             while True:
                 browser.begin_session(current)
@@ -645,11 +663,15 @@ def run(args, log):
                     raise
                 finally:
                     current.close()
-                if not browser.wait_for_next_session(args.command=='listen'):break
+                if not browser.wait_for_next_session(args.command=='listen' and getattr(current,'restart_safe',True)):break
                 # run_session owns and closes each engine. A fresh session gets
                 # fresh workers, PCM, IDs and log routing; no old queue is reused.
                 previous=current
-                current=Session(args.log_dir,args.direction,dict(log.metadata))
+                models=getattr(args,'models',None)
+                saved=read_preferences(models.parent/'.local-settings') if models is not None else {}
+                save_audio=(args.save_raw_audio if getattr(args,'save_raw_audio_explicit',False)
+                            else saved.get('save_raw_audio',getattr(current,'save_audio',True)))
+                current=Session(args.log_dir,args.direction,dict(log.metadata),save_audio=save_audio)
                 for handler in logging.getLogger().handlers:
                     if isinstance(handler,LibraryHandler) and handler.log is previous:
                         handler.log=current
@@ -693,6 +715,8 @@ def main():
         directions=tuple(['he-'+item.code for item in target_languages()]+['ru-he'])
         command.add_argument('--direction',choices=directions,default='he-en')
         command.add_argument('--topic',choices=tuple(TOPICS),default='none')
+        command.add_argument('--save-raw-audio',action=argparse.BooleanOptionalAction,default=None,
+                             help='Persist source WAV files in the session archive (default: saved preference or enabled)')
     args=parser.parse_args();args.models=args.models.resolve();args.log_dir=args.log_dir.resolve()
     if args.command=='setup' and not args.accept_model_terms:
         parser.error('setup requires --accept-model-terms after you run model-info and review the linked terms')
@@ -722,6 +746,8 @@ def main():
     if args.command in ('listen','benchmark'):
         from .preferences import read as read_preferences
         saved_preferences=read_preferences(args.models.parent/'.local-settings')
+        args.save_raw_audio_explicit=args.save_raw_audio is not None
+        if args.save_raw_audio is None:args.save_raw_audio=saved_preferences.get('save_raw_audio',True)
         saved=saved_preferences.get('models',{})
         if saved and not custom_models:
             if not any(x=='--asr-backend' or x.startswith('--asr-backend=') for x in sys.argv):args.asr_backend=saved['asr']
@@ -743,7 +769,8 @@ def main():
     metadata=dict(asr_backend=getattr(args,'asr_backend','turbo'),models=active_models, python=sys.version,
                   code_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.iterdir() if p.suffix in ('.py','.html','.js','.css')},
                   versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')})
-    log = (Session(args.log_dir,args.direction,dict(metadata,topic=args.topic,language=args.language or args.direction[:2]))
+    log = (Session(args.log_dir,args.direction,dict(metadata,topic=args.topic,language=args.language or args.direction[:2]),
+                   save_audio=getattr(args,'save_raw_audio',True))
            if args.command in ('listen','benchmark') else Log(args.log_dir,args.debug_text))
     handler=LibraryHandler(log)
     logging.getLogger().addHandler(handler)

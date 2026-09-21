@@ -237,15 +237,15 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub" },
-    { name = "mlx-lm" },
-    { name = "mlx-whisper" },
-    { name = "onnxruntime" },
-    { name = "python-bidi", specifier = ">=0.6.11" },
-    { name = "rich" },
-    { name = "sounddevice" },
-    { name = "soundfile" },
-    { name = "soxr" },
+    { name = "huggingface-hub", specifier = "==1.30.0" },
+    { name = "mlx-lm", specifier = "==0.31.3" },
+    { name = "mlx-whisper", specifier = "==0.4.3" },
+    { name = "onnxruntime", specifier = "==1.29.0" },
+    { name = "python-bidi", specifier = "==0.6.11" },
+    { name = "rich", specifier = "==15.0.0" },
+    { name = "sounddevice", specifier = "==0.5.6" },
+    { name = "soundfile", specifier = "==0.14.0" },
+    { name = "soxr", specifier = "==1.1.0" },
 ]
 
 [[package]]

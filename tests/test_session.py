@@ -19,6 +19,53 @@ from hebrew_live.stream import Settings, Control, Boundary, AudioBlock, transfer
 
 
 class SessionTests(unittest.TestCase):
+    def test_device_status_is_unknown_capture_loss_not_accepted_audio(self):
+        from hebrew_live.runtime import accept_audio_callback
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(Path(tmp),'he-ru',{},save_audio=False)
+            stop=threading.Event();errors=queue.Queue();control=Control(Settings(),stop,session.note_accepted);control.capture_rate=16000
+            accept_audio_callback(control,session,stop,errors,np.ones((1600,1),dtype=np.float32),'overflow',now=1)
+            self.assertTrue(stop.is_set());self.assertFalse(errors.empty());self.assertTrue(control.queue.empty())
+            folder=session.path;session.close();manifest=json.loads((folder/'session.json').read_text())
+            self.assertNotIn('1',manifest['accepted']);self.assertTrue(manifest['partial'])
+            self.assertEqual(manifest['capture_discontinuities'][0]['extent'],'unknown')
+
+    def test_no_audio_keeps_duration_text_and_truthful_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(Path(tmp),'he-ru',{},save_audio=False);part=session.parts[1]
+            audio=np.ones(1600,dtype=np.float32);part.write_audio(audio,16000)
+            session.note_accepted(1,len(audio),16000)
+            fragment=Fragment(1,1,audio,0,time.monotonic(),True,Settings(),.1)
+            part.text('source',fragment,'שלום');part.text('target',fragment,'hello')
+            folder=session.path;session.close()
+            self.assertFalse(any(folder.glob('*.wav')))
+            manifest=json.loads((folder/'session.json').read_text())
+            self.assertFalse(manifest['audio_saved']);self.assertEqual(manifest['parts']['1']['samples'],1600)
+            self.assertEqual(manifest['accepted']['1']['duration'],.1)
+            self.assertIn('שלום',(folder/'001-he-ru.transcript.txt').read_text())
+
+    def test_low_space_stops_capture_but_reserved_metadata_remains_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            free=[128*1024*1024]
+            session=Session(Path(tmp),'he-ru',{},free_bytes=lambda _:free[0])
+            stop=threading.Event();control=Control(Settings(),stop,session.note_accepted);control.capture_rate=16000
+            raw=queue.Queue();box=Inbox();errors=queue.Queue();updates=queue.Queue()
+            consumer=threading.Thread(target=segment,args=(raw,box,lambda _:1,stop,session,errors));consumer.start()
+            control.accept(np.ones(1600,dtype=np.float32),time.monotonic());control.queue.put(None)
+            free[0]=64*1024*1024-1
+            transfer(control,raw,session,16000,1,consumer,errors,updates);consumer.join(2)
+            self.assertTrue(stop.is_set());self.assertFalse(errors.empty())
+            free[0]=1024*1024
+            from hebrew_live.browser_ui import BrowserUI
+            from hebrew_live.session_history import SessionHistory
+            folder=session.path;ui=BrowserUI(open_browser=False);ui.prepare_exports(session)
+            manifest=json.loads((folder/'session.json').read_text())
+            self.assertTrue(manifest['partial']);self.assertEqual(manifest['known_unprocessed'][0]['reason'],'low_storage')
+            self.assertTrue(SessionHistory(folder.parent).read(folder.name)['partial'])
+            self.assertTrue(ui.state['partial']);self.assertEqual(ui.state['partial_kind'],'known_unprocessed')
+            self.assertEqual(ui.state['partial_details'][0]['reason'],'low_storage')
+            self.assertEqual(ui.state['partial_details'][0]['direction'],'he-ru')
+
     def test_retry_request_is_revalidated_after_browser_admission(self):
         from hebrew_live.runtime import retry_request_current
         stop=threading.Event();cancel=threading.Event();control=Control(Settings(),stop);control.paused=True
@@ -83,7 +130,7 @@ class SessionTests(unittest.TestCase):
             for t in (writer,consumer,infer):t.join(5);self.assertFalse(t.is_alive())
             self.assertTrue(errors.empty(), list(errors.queue))
             folder=session.path;session.close()
-            self.assertEqual(len(list(folder.iterdir())),12)
+            self.assertEqual(len(list(folder.iterdir())),13)
             for number,expected in ((1,[.1]),(2,[.2,.3]),(3,[.4])):
                 wav=next(folder.glob(f'{number:03d}-*.wav'))
                 data,rate=sf.read(wav)
@@ -225,7 +272,7 @@ class ScriptAndDisplayTests(unittest.TestCase):
             session=Session(Path(tmp),'he-ru',{});handler=LibraryHandler(session)
             handler.emit(logging.LogRecord('test',logging.WARNING,'module.py',4,'Secret input: %s',('private utterance',),None))
             folder=session.path;session.close()
-            self.assertEqual(len(list(folder.iterdir())),4)
+            self.assertEqual(len(list(folder.iterdir())),5)
             text=(folder/'001-he-ru.diagnostics.jsonl').read_text()
             self.assertIn('"event": "library"',text)
             self.assertNotIn('private utterance',text)

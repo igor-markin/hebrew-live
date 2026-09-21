@@ -1,6 +1,7 @@
 export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null};
 export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number};
 export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;final?:Pair;final_progress?:Pair};
+export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
   status_code?:string;ui_locale?:'en'|'ru'|'he';target_language?:string;
@@ -11,6 +12,8 @@ export type LiveState = {
   generation?:number;exports?:{id:string;name:string;label:string}[];warning?:string;
   retrying_group?:string|null;retry_error?:string|null;
   retry_supported?:boolean;
+  save_raw_audio?:boolean;save_raw_audio_locked?:boolean;audio_saved?:boolean;partial?:boolean;integrity_warning?:string|null;
+  partial_kind?:'known_unprocessed'|'capture_unknown'|'mixed'|null;partial_ranges?:string[];partial_details?:PartialDetail[];capture_discontinuity?:boolean;
 };
 
 const phases = new Set(['loading','opening','listening','paused','stopping','finished','error','exited']);
@@ -35,10 +38,13 @@ function group(value:unknown): value is Group {
 
 export function parseLiveState(value:unknown):LiveState {
   if(!record(value)||!Array.isArray(value.groups)||!value.groups.every(group)||typeof value.status!=='string'||typeof value.paused!=='boolean'||typeof value.finished!=='boolean'||typeof value.direction!=='string')throw new Error('Invalid local API snapshot');
-  if(!optionalString(value.session_path)||!optionalString(value.publication)||!optionalString(value.input_kind)||!optionalString(value.device)||!optionalString(value.session)||!optionalString(value.warning)||!optionalString(value.retrying_group)||!optionalString(value.retry_error)||!optionalString(value.status_code)||!optionalString(value.target_language)||!optionalString(value.target_error)||!optionalString(value.target_error_code))throw new Error('Invalid local API snapshot');
+  if(!optionalString(value.session_path)||!optionalString(value.publication)||!optionalString(value.input_kind)||!optionalString(value.device)||!optionalString(value.session)||!optionalString(value.warning)||!optionalString(value.integrity_warning)||!optionalString(value.retrying_group)||!optionalString(value.retry_error)||!optionalString(value.status_code)||!optionalString(value.target_language)||!optionalString(value.target_error)||!optionalString(value.target_error_code))throw new Error('Invalid local API snapshot');
   if(value.ui_locale!==undefined&&!['en','ru','he'].includes(String(value.ui_locale)))throw new Error('Invalid local API snapshot');
   if(value.target_languages!==undefined&&(!Array.isArray(value.target_languages)||!value.target_languages.every(item=>record(item)&&typeof item.code==='string'&&typeof item.name==='string'&&typeof item.rtl==='boolean')))throw new Error('Invalid local API snapshot');
-  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.target_capabilities_assumed)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
+  if(value.partial_kind!==undefined&&value.partial_kind!==null&&!['known_unprocessed','capture_unknown','mixed'].includes(String(value.partial_kind)))throw new Error('Invalid local API snapshot');
+  if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');
+  if(value.partial_details!==undefined&&(!Array.isArray(value.partial_details)||!value.partial_details.every(item=>record(item)&&(item.part===null||typeof item.part==='number')&&(item.direction===null||typeof item.direction==='string')&&typeof item.reason==='string'&&(item.start===null||typeof item.start==='number')&&(item.end===null||typeof item.end==='number'))))throw new Error('Invalid local API snapshot');
+  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
   if(value.phase!==undefined&&(typeof value.phase!=='string'||!phases.has(value.phase)))throw new Error('Invalid local API phase');
   const phase=(value.phase as string|undefined)??(value.finished?'finished':value.paused?'paused':'listening');
@@ -85,4 +91,9 @@ export function archiveRecordingLabel(state:LiveState):string {
   if(state.phase==='loading'||state.phase==='opening')return 'recordingPreparing';
   if(state.phase==='listening')return 'recordingContinues';
   return 'recordingUpdating';
+}
+
+export function partialNoticeKind(state:LiveState):'known_unprocessed'|'capture_unknown'|'mixed'|'generic'|null {
+  if(state.partial_kind)return state.partial_kind;
+  return state.partial?'generic':null;
 }
