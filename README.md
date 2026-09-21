@@ -24,9 +24,9 @@ CPU-inference, CUDA, or cloud fallback.
 
 *Production browser UI with synthetic demonstration text.*
 
-This repository is a **public-alpha candidate**, not a stable release. Its original
+This repository is a **public-alpha prerelease**, not a stable release. Its original
 code is licensed under [Apache License 2.0](LICENSE). That license does not cover model
-weights, fonts, or other third-party material. Do not call the candidate release-ready
+weights, fonts, or other third-party material. Do not call it production-ready
 until the separate reviews in [Third-party software and models](docs/THIRD_PARTY.md)
 and [Release readiness](docs/RELEASE_READINESS.md) are complete.
 

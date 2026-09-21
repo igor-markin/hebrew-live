@@ -1,6 +1,6 @@
 [project]
 name = "hebrew-live-cli"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Offline Hebrew live captions and local translation on Apple Silicon with MLX/Metal"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"

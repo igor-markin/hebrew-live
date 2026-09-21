@@ -5,7 +5,7 @@ Status date: 2026-09-21 (Asia/Jerusalem).
 The repository has a reviewable alpha distribution design: allowlisted source export,
 Apache-2.0 for original code, embedded runtime UI, locked source bootstrap, synthetic
 public fixtures, deterministic CI, package smoke, privacy-filtered bug reports, and
-user-facing documentation. It remains an **alpha candidate**, not a public-ready or
+user-facing documentation. It remains an **alpha prerelease**, not a production-ready or
 stable release.
 
 ## Acceptance checklist
@@ -19,7 +19,7 @@ stable release.
 | Cross-contract fixtures | **Passed locally** | Shared synthetic API snapshots are parsed by frontend tests and checked against backend-required state keys. |
 | Follow-latest and localized live UI regression | **Passed locally** | Deterministic observer test covers new children and later card resize callbacks. A rendered installed-wheel smoke polled synthetic state, loaded local fonts, stayed at bottom through card growth and a new group. A current production-asset fixture additionally verified the English default, Hebrew RTL, target switching with old/new group language metadata, outside-click closure, a server-error locale rollback with the selector disabled during the request, successful retry, and no console warnings/errors. |
 | Model acquisition boundary | Implemented; runtime terms review remains | Weights are absent from source/wheel/sdist. Interactive first run asks separately before dependency bootstrap and model download; noninteractive setup requires the explicit acknowledgement flag. Setup prints sources and terms/evidence and writes a versioned per-file SHA-256 manifest. Compatible local paths skip managed download without bypassing the platform guard. Separately downloaded weights are not a code-distribution license grant. |
-| User install/use docs | Implemented | English README plus Russian quickstart document local-path installs and same-commit Git source plus transitive constraints, distinguish setup/model terms, state Apple-GPU-only MLX/Metal inference, and cover optional raw audio, partial archives, storage/deletion, BYO paths, limitations, and troubleshooting. The publication check still requires installing the pushed commit through its public Git URL. |
+| User install/use docs | Implemented | English README plus Russian quickstart document local-path installs and same-commit Git source plus transitive constraints, distinguish setup/model terms, state Apple-GPU-only MLX/Metal inference, and cover optional raw audio, partial archives, storage/deletion, BYO paths, limitations, and troubleshooting. A pushed commit was installed through its public Git URL with constraints from the same SHA; the final prerelease commit receives the same check before tagging. |
 | Native launcher and platform boundary | **Passed locally** | `run.sh` rejects non-macOS, Intel, and Rosetta before downloads, accepts only a frozen environment confirmed by read-only `uv --check`, requires renewed consent to repair partial/stale environments, distinguishes missing MLX from missing Metal, keeps prepared runs offline with `--no-sync`, and preserves command arguments/status. The Python entry point repeats the runtime guard. |
 | Privacy/security/support docs | Implemented with honest gaps | No private security intake address or public support URL has been invented. |
 | Third-party/model/font inventory | **Bundled-material review passed locally; model terms remain separate** | Vite found 12 packages in the production output. Their license files, locked registry URLs, and integrity values ship in the notice. Python direct requirements are exact, `constraints.txt` matches the full `uv.lock` export, and the generated inventory records both lock graphs. Python dependencies remain separately installed rather than vendored. |
@@ -32,15 +32,14 @@ The standalone CI uses GitHub's current `macos-14` arm64 label and asserts
 `uname -m=arm64`; the label is listed in the official
 [runner-images table](https://github.com/actions/runner-images#available-images).
 
-## Required before a tagged public-alpha release
+## Open gates after this public-alpha prerelease
 
-- create a reviewed release tag, and configure a real private security intake channel
-  and public support links;
-- the second clean Apple Silicon Mac, real microphone/model run, and long-session trial
-  are explicitly deferred from this reliability implementation. Before a tagged alpha,
-  complete source and wheel install plus privacy/storage/uninstall review there; if the
-  alpha advertises the default downloader, also exercise explicit setup/model terms,
-  doctor, microphone, stop/cancel, archive, restart, and deletion;
+- configure a real private security intake channel and public support links;
+- complete a source and wheel install plus privacy/storage/uninstall review on a second
+  clean Apple Silicon Mac; if a later release advertises the default downloader, also
+  exercise explicit setup/model terms, doctor, microphone, stop/cancel, archive,
+  restart, and deletion there;
+- run real microphone/model inference acceptance and a long-session soak;
 - complete a focused security/privacy review of the loopback server, archive deletion,
   export composition, and bug-report boundary.
 
@@ -118,9 +117,10 @@ subsequent sessions, and a recording worker stalled while holding the session lo
 They do not prove that macOS can interrupt an arbitrary filesystem or Core Audio kernel
 call, or that real MLX models meet the synthetic timing bounds.
 
-The install-from-source check used `uv tool install --python 3.12` against the local
-service path with isolated tool, binary, cache, Python, and application-data roots. It
-resolved and installed the locked Python dependencies, exposed `he-ru`, printed the
-current model/language/storage reports, and passed the installed-package probe. This
-validates the local source build and entry point. It does not validate an unavailable
-public Git URL, model downloads, model inference, microphone capture, or publication.
+The publication check used `uv tool install --python 3.12` against a pushed full commit
+SHA and `constraints.txt` fetched from that same SHA, with isolated tool, binary, cache,
+Python, and application-data roots. It resolved the complete constrained dependency
+graph, exposed `he-ru`, printed the privacy-filtered report and model inventory, and
+passed the installed-package/embedded-UI probe. No model weights or microphone data
+were used. This does not validate a second Mac, model inference, microphone capture,
+or a long-session soak.

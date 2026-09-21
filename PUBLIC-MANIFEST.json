@@ -17,9 +17,9 @@
       "sha256": "44103ac245c41063f6a63cab47a6ea19bd1e2df15bc1ce6cbf665fab8d335870"
     },
     {
-      "bytes": 2980,
+      "bytes": 3637,
       "path": "CHANGELOG.md",
-      "sha256": "d7a9cc141c6ec82227b1d9c25bf604e9c0d0f9de395c1d5f4b21cb02dc9aaa3f"
+      "sha256": "5aeba080c9f100afeccf6900e0833921b6de384c3256731d3cad3167be7f58e0"
     },
     {
       "bytes": 2151,
@@ -37,14 +37,14 @@
       "sha256": "429bbb4a80e93b7163b7fb3b13fa1be1800a1cbc25abd23de92de0c46b92fdd5"
     },
     {
-      "bytes": 23593,
+      "bytes": 23586,
       "path": "README.md",
-      "sha256": "7253bacce386ea0da1f2f2a05978ee1c0459069bf70e34d93baf7aed15448d2e"
+      "sha256": "8d8a457a5c57ad3fe1355d086d529a32f23e5a4471d18160c961b4a14ca02355"
     },
     {
-      "bytes": 26295,
+      "bytes": 26289,
       "path": "README.ru.md",
-      "sha256": "fd84809dd7d4ef6235f976404d4ee1b52f6f517e56f0d892fb70138a1c64d99f"
+      "sha256": "c5cdbf0df72a97aeb5e7cd6d141087608589788d0c55e35f3a920f2c09407af7"
     },
     {
       "bytes": 1073,
@@ -67,9 +67,9 @@
       "sha256": "7d65fca948a16c9ae17040ff6075210abddbd1b4b9b4b6fd68f0aa13f7e3f468"
     },
     {
-      "bytes": 203992,
+      "bytes": 203994,
       "path": "docs/DEPENDENCY_INVENTORY.json",
-      "sha256": "358752328b52b7b0ba548f1a2f439014bd0402f5c01e796d7ecf01c1016d0273"
+      "sha256": "2719b22a99ba3052726f787ef3fc78cbf5d9ad805e6a20a862731f6e75e350c5"
     },
     {
       "bytes": 8194,
@@ -82,9 +82,9 @@
       "sha256": "96fdcf2632f4de106f8705dd394427ed980fab8ec4f850a2b87f773e8d080aeb"
     },
     {
-      "bytes": 11205,
+      "bytes": 11211,
       "path": "docs/RELEASE_READINESS.md",
-      "sha256": "85c145c1dfb5a608bdd4b4aa4bceffd057cad26873c0aa20d7036682ad70bc3a"
+      "sha256": "4741b8a5d0cfd68a686b363912a9a69466c26e0b174058b654b6901973855130"
     },
     {
       "bytes": 7260,
@@ -232,9 +232,9 @@
       "sha256": "9e60917c5292863d48a040ee9330aa1fc3f4eea23a597cc8a4f7e9d5d0199fa8"
     },
     {
-      "bytes": 1165,
+      "bytes": 1167,
       "path": "pyproject.toml",
-      "sha256": "e91f736c346ee108d1f1790f213452efd15c8a5fb0c5e7bd437274afa785b0f5"
+      "sha256": "a022bbe0d36380abcea30f334231557b8f5cf450cbeb316835dd9e50ec9f824e"
     },
     {
       "bytes": 10977,
@@ -242,9 +242,9 @@
       "sha256": "e3374b4b1a56fa7437be8931fd5bb4654caa5f9c370af7bda01e3d8f0cd7ee19"
     },
     {
-      "bytes": 5113,
+      "bytes": 5115,
       "path": "scripts/build_public_export.py",
-      "sha256": "cc3c4777c034bbee98b13b888f76ca3bace377806878a9e8f86adf0ba1b79401"
+      "sha256": "07f78666529b04d1914bc5271b896eb76f04baf2703f5487ce4882e577539aac"
     },
     {
       "bytes": 5156,
@@ -252,9 +252,9 @@
       "sha256": "d17d9e5a8ec6a7e890ef6431ca91e990f8d76e350141856e8a4d9967181b0e2b"
     },
     {
-      "bytes": 5806,
+      "bytes": 5808,
       "path": "scripts/ci_clean_smoke.py",
-      "sha256": "8f4618594150a882ed0f87333ca7b798ad7bb91341b3f5d58dd69e5f4e3bcca1"
+      "sha256": "c4d575ec878308a94ebe73ef806170523a180bb7a0ddcb11e51ab1418aa8778d"
     },
     {
       "bytes": 2612,
@@ -642,9 +642,9 @@
       "sha256": "630c7a1fb33842d2bb1038f6c68ca1fd30136f5965ab8b01c5430df604af667d"
     },
     {
-      "bytes": 124144,
+      "bytes": 124146,
       "path": "uv.lock",
-      "sha256": "a354cedb11155c58b8a789ec8ec631bf5573ec4db904fe9411b2f4cb82841a14"
+      "sha256": "f6943a9ae031ab611cc6536d0458ea0ac9553757500f9dc792c679935bb13f4e"
     }
   ],
   "schema_version": 1

@@ -93,7 +93,7 @@ def build(destination:Path,archive:Path|None=None)->dict:
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--output',type=Path,default=ROOT/'build/public/hebrew-live-cli-0.1.0-alpha-source')
+    parser.add_argument('--output',type=Path,default=ROOT/'build/public/hebrew-live-cli-0.1.0-alpha.1-source')
     parser.add_argument('--archive',type=Path)
     args=parser.parse_args()
     result=build(args.output,args.archive)

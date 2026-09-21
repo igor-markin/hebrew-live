@@ -48,7 +48,7 @@ def verify_constraints(root:Path,env:dict):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--offline',action='store_true');args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='hebrew-live-public-smoke-') as temporary:
-        temporary=Path(temporary);export=temporary/'hebrew-live-cli-0.1.0-alpha-source'
+        temporary=Path(temporary);export=temporary/'hebrew-live-cli-0.1.0-alpha.1-source'
         npm_cache=temporary/'npm-cache'
         env=dict(os.environ,UV_CACHE_DIR=str(ROOT/'.cache/uv'),HF_HOME=str(temporary/'hf'),HEBREW_LIVE_HOME=str(temporary/'data'),npm_config_cache=str(npm_cache))
         run([sys.executable,ROOT/'scripts/build_public_export.py','--output',export],ROOT,env)

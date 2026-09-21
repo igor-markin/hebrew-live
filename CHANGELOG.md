@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — public-alpha candidate
+## 0.1.0-alpha.1 — 2026-09-21
 
 ### Added
 
@@ -26,6 +26,12 @@
   explicit nonfatal preference-write failures, and a read-only language inventory;
 - centralized fresh-install runtime/cache/model/session storage plus read-only `storage`
   and `uninstall --dry-run` path previews, while preserving existing source-local data.
+- reproducible same-commit Git installation with exact direct requirements and complete
+  transitive constraints derived from the frozen `uv.lock` graph;
+- bounded spawned inference with controlled stop/cancel escalation, readable partial
+  archives, and explicit known-unprocessed or unknown-capture outcomes;
+- optional source-audio retention, truthful no-audio export/retry behavior, and
+  low-space checks that preserve final metadata when the reserved space remains usable.
 
 ### Changed
 
@@ -43,11 +49,13 @@
 - variable-height history virtualization, archive/session protections, retry guards, and
   persistent follow-latest behavior across new content and resized cards.
 
-### Pending before publication
+### Deferred acceptance gates
 
-- private security intake channel and public support/repository links;
-- fresh-Mac human install/storage trial and focused security/privacy review.
+- a second physical Apple Silicon Mac install and storage trial;
+- real microphone and model inference acceptance, plus a long-session soak;
+- focused security/privacy review and a dedicated private security intake channel.
 
 Model conversion/terms review remains a separate condition for rights-cleared runtime
 use of user-downloaded weights. A broader browser/accessibility matrix, quality corpus,
-and long-session soak remain later stable-release work.
+and long-session soak remain later stable-release work. An arbitrary stalled macOS
+filesystem or audio-driver system call can still require restarting the application.
