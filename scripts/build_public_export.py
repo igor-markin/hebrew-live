@@ -19,7 +19,11 @@ ROOT_FILES=(
     '.gitignore','README.md','README.ru.md','LICENSE','CHANGELOG.md','CONTRIBUTING.md','PRIVACY.md',
     'SECURITY.md','SUPPORT.md','pyproject.toml','run.sh','uv.lock',
 )
-DOC_FILES=('ARCHITECTURE.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md','RELEASE_READINESS.md','THIRD_PARTY.md')
+DOC_FILES=(
+    'ARCHITECTURE.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
+    'RELEASE_READINESS.md','THIRD_PARTY.md',
+    'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
+)
 SCRIPT_FILES=('build_public_export.py','check_public_tree.py','ci_clean_smoke.py','generate_dependency_inventory.py',
               'probe_installed_package.py')
 FRONTEND_FILES=(

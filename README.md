@@ -1,13 +1,25 @@
 # Hebrew Live CLI
 
-Local Hebrew live captions and translation into a model-qualified target language for
-Apple Silicon Macs. Speech recognition, translation, audio capture, session history,
-and the browser UI run on the Mac after the one-time setup download.
+[![CI](https://github.com/igor-markin/hebrew-live/actions/workflows/ci.yml/badge.svg)](https://github.com/igor-markin/hebrew-live/actions/workflows/ci.yml)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)](#supported-alpha-contract)
+[![MLX + Metal](https://img.shields.io/badge/MLX%20%2B%20Metal-local-5E5CE6)](https://github.com/ml-explore/mlx)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0B7285)](LICENSE)
+
+[Русская версия](README.ru.md)
+
+Hebrew Live turns spoken Hebrew into revisable live captions and local translation on
+Apple Silicon Macs. Speech recognition and MiLMMT translation run through MLX on the
+Mac's Metal GPU; audio, transcripts, translations, session history, and the browser UI
+stay on the Mac after the one-time setup download.
 
 **Runtime support is Apple Silicon only.** ASR and translation run through MLX on the
 Mac's Metal GPU. The Python coordinator and Silero VAD also use the CPU; this is not a
 claim that every operation runs on the GPU. There is no Intel, Rosetta, Linux, Docker,
 CPU-inference, CUDA, or cloud fallback.
+
+![Hebrew Live translating a synthetic Hebrew conversation into English](docs/images/live-translation.jpg)
+
+*Production browser UI with synthetic demonstration text.*
 
 This repository is a **public-alpha candidate**, not a stable release. Its original
 code is licensed under [Apache License 2.0](LICENSE). That license does not cover model
@@ -49,14 +61,18 @@ Other operating systems, Intel Macs, Rosetta terminals, Python 3.13+, browser
 extensions that block loopback requests, and remote/browser-server deployments are
 outside this alpha contract.
 
-## Clean source quickstart
+## GitHub and clean-source quickstart
 
-Install [`uv`](https://docs.astral.sh/uv/), unpack the allowlisted source bundle, then
-run one command in an interactive Terminal:
+Install [`uv`](https://docs.astral.sh/uv/), then clone the repository and run the
+launcher in an interactive Terminal:
 
 ```sh
+git clone https://github.com/igor-markin/hebrew-live.git
+cd hebrew-live
 ./run.sh
 ```
+
+For an allowlisted source bundle, unpack it and run `./run.sh` from its root instead.
 
 On the first run, the launcher asks before `uv` acquires Python 3.12 or installs the
 frozen dependencies, checks the supported platform and Metal device, prints the model
@@ -248,6 +264,24 @@ custom paths; a custom translator must implement the MiLMMT contract.
 
 The public UI supports one publication behavior: `draft`. Earlier internal publication
 names are migrated to `draft`; they do not enable a second public mode.
+
+## Language controls and local archive
+
+Interface language and translation target are independent. English is the default UI
+locale and target; the UI can also run in Russian or Hebrew, and the active MiLMMT
+contract exposes 45 translation targets for Hebrew input.
+
+![Hebrew Live language and target settings with synthetic content](docs/images/language-settings.jpg)
+
+*Settings are shown over the same synthetic local session.*
+
+Completed sessions remain available for local search and read-only review. Audio,
+transcripts, translations, and technical logs stay in the session folder until the user
+explicitly deletes that session.
+
+![Hebrew Live local session archive with a synthetic conversation](docs/images/session-archive.jpg)
+
+*The archive contains synthetic conversation text and a representative local path.*
 
 ## Local storage and deletion
 

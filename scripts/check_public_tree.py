@@ -59,6 +59,8 @@ def check(root:Path)->dict:
     required=[
         'README.md','README.ru.md','LICENSE','SECURITY.md','PRIVACY.md','CONTRIBUTING.md','run.sh',
         'docs/DOCKER.md','docs/THIRD_PARTY.md','docs/RELEASE_READINESS.md',
+        'docs/images/language-settings.jpg','docs/images/live-translation.jpg',
+        'docs/images/session-archive.jpg',
         'src/hebrew_live/web/live.html','src/hebrew_live/web/licenses/THIRD-PARTY-NOTICES.txt',
         'tests/fixtures/live_states.json',
         'experiments/publication-ui-preview/src/data/public-cases.json',
