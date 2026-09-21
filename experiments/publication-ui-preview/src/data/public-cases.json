@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Synthetic text written for the public demo; it is not a transcript and has no source audio.",
+  "cases": [
+    {
+      "id": "synthetic-weather",
+      "title": "Прогулка",
+      "early": {"eventId":"synthetic:1","op":1,"fragment":1,"revision":1,"status":"accepted","source":"היום...","translation":"Сегодня я останусь дома.","closed":false,"closureReason":"open","callIndex":1},
+      "terminal": {"eventId":"synthetic:2","op":2,"fragment":1,"revision":2,"status":"accepted","source":"היום נצא לטיול בפארק.","translation":"Сегодня мы пойдём на прогулку в парк.","closed":true,"closureReason":"synthetic_end","callIndex":2}
+    },
+    {
+      "id": "synthetic-greeting",
+      "title": "Приветствие",
+      "early": {"eventId":"synthetic:3","op":3,"fragment":2,"revision":1,"status":"accepted","source":"שלום","translation":"Привет","closed":false,"closureReason":"open","callIndex":3},
+      "terminal": {"eventId":"synthetic:4","op":4,"fragment":2,"revision":2,"status":"accepted","source":"שלום לכולם.","translation":"Привет всем.","closed":true,"closureReason":"synthetic_end","callIndex":4}
+    }
+  ]
+}

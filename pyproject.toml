@@ -1,0 +1,47 @@
+[project]
+name = "hebrew-live-cli"
+version = "0.1.0"
+description = "Offline Hebrew live captions and local translation on Apple Silicon with MLX/Metal"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "mlx-whisper",
+    "mlx-lm",
+    "onnxruntime",
+    "sounddevice",
+    "soundfile",
+    "soxr",
+    "rich",
+    "huggingface-hub",
+    "python-bidi>=0.6.11",
+]
+[project.scripts]
+he-ru = "hebrew_live.cli:main"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.hatch.build.targets.wheel]
+packages = ["src/hebrew_live"]
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/hebrew_live",
+    "/tests",
+    "/pyproject.toml",
+    "/uv.lock",
+    "/README.md",
+    "/README.ru.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/PRIVACY.md",
+    "/SECURITY.md",
+    "/SUPPORT.md",
+    "/run.sh",
+    "/docs",
+]

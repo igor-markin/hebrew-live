@@ -1,0 +1,192 @@
+.live-shell {max-width:1120px;overflow-x:clip}
+.live-controls {margin-bottom:28px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:20px}
+.live-status {display:flex;align-items:center;gap:10px;margin-bottom:18px;font-weight:600}
+.live-controls .actions {flex-wrap:wrap;margin-bottom:20px}
+.live-mode {display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.live-mode select {font:inherit;max-width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--foreground)}
+.live-mode span,.live-controls .reading-note {font-size:13px;color:var(--muted)}
+.live-controls a,.live-exports a {color:var(--accent);text-decoration:underline;text-underline-offset:4px}
+.live-feed {display:flex;flex-direction:column;gap:24px;overflow-anchor:none}
+.live-feed .speech-heading h2 {font-size:15px;font-weight:600;margin:0}
+.live-feed .speech-card {overflow-anchor:none}
+.live-empty {padding:32px;color:var(--muted)}
+.live-exports {margin-top:24px;display:flex;flex-wrap:wrap;gap:16px}
+.live-exports h2,.live-exports p {width:100%}
+@media(max-width:560px){.live-controls{padding:16px}.live-mode{align-items:stretch;flex-direction:column}.live-controls .actions button{white-space:normal;height:auto;min-height:44px}}
+.live-feed .speech-card--replaced {animation: live-change 180ms ease-out}
+@keyframes live-change {from{box-shadow:0 0 0 3px var(--accent)}to{box-shadow:var(--shadow)}}
+@media(prefers-reduced-motion:reduce){.live-feed .speech-card--replaced{animation:none}}
+
+.follow-latest {position:fixed;right:24px;bottom:24px;z-index:20;background:var(--accent);color:var(--accent-foreground);box-shadow:0 3px 18px #0003}
+
+/* Conversation view: keep controls small and give the text the space. */
+.live-shell {padding-top:16px}
+.live-controls {padding:10px 14px;margin-bottom:16px;border-radius:14px}
+.live-toolbar {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.live-status {margin:0 auto 0 0;font-size:14px}
+.live-toolbar .finish-button {min-width:0;width:auto;height:40px}
+.live-settings {position:relative}
+.live-settings summary {cursor:pointer;list-style:none;padding:10px 12px;border-radius:9px;font-size:14px}
+.live-settings summary::-webkit-details-marker {display:none}
+.live-settings summary:hover,.live-settings[open] summary {background:var(--soft)}
+.live-settings summary:focus-visible {outline:2px solid var(--accent);outline-offset:2px}
+.live-settings-panel {position:absolute;z-index:30;right:0;top:calc(100% + 12px);width:min(460px,calc(100vw - 56px));padding:20px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
+.live-settings-panel .actions {margin:14px 0 0;gap:6px;flex-wrap:wrap}
+.live-settings-panel .reading-note {margin:12px 0}
+.settings-field {display:flex;flex-direction:column;gap:6px;margin-bottom:14px;font-size:13px;font-weight:600}
+.settings-field select {width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--foreground);font:inherit}
+.settings-field small {color:var(--muted);font-size:11px;font-weight:400;line-height:1.45}
+.live-feed {gap:14px}
+.live-feed .speech-card {margin-bottom:0}
+.live-feed .speech-content {padding:18px 22px}
+.live-feed .field-label {font-size:12px;margin-bottom:8px}
+.live-feed .speech-status {padding:10px 22px 0;font-size:12px;color:var(--muted)}
+.live-feed .history-trigger {padding:9px 22px;font-size:12px;min-height:36px}
+.live-feed .history-body {padding:8px 22px 18px}
+@media(max-width:560px){
+ .live-shell {padding:12px}
+ .live-controls {padding:8px}
+ .live-status {flex-basis:100%;padding:2px 4px}
+ .live-toolbar {gap:4px}
+ .live-toolbar button {font-size:13px;padding-inline:10px}
+ .live-settings {margin-left:auto;position:static}
+ .live-toolbar {position:relative}
+ .live-settings-panel {right:0;width:calc(100vw - 44px)}
+ .live-feed .speech-content {padding:16px}
+ .live-feed .snapshot {gap:14px}
+ .live-feed .hebrew {padding-top:14px}
+ .live-feed .history-trigger {padding-inline:16px}
+}
+
+.live-shell {overflow-x:visible}
+.live-controls {position:sticky;top:12px;z-index:40;box-shadow:var(--shadow)}
+.live-toolbar button,.live-settings summary {display:inline-flex;align-items:center;gap:8px}
+.live-toolbar svg,.live-exports svg {flex-shrink:0}
+.session-buttons {display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.session-buttons button {border-radius:0;height:40px}
+.session-buttons button+button {border-left:1px solid var(--border)}
+.live-feed {padding-top:max(20px,calc(40vh - 120px));padding-bottom:45vh}
+.live-feed .speech-card:not(:last-child) {transition:border-color 150ms ease}
+.live-exports code {display:block;width:100%;overflow-wrap:anywhere;font-size:13px}
+@media(max-width:560px){.live-controls{top:8px}.session-buttons{flex:1}.session-buttons button{flex:1;font-size:12px;padding-inline:8px}.live-toolbar>.button{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.live-feed .speech-card{transition:none!important}}
+@media(max-width:560px){.session-buttons{flex-basis:100%;order:3;min-width:0}.session-buttons button{white-space:nowrap;min-width:max-content}.live-settings{order:2}.live-status{order:0}}
+
+/* Compact conversation bubbles; alignment denotes direction, never a guessed speaker. */
+.live-shell .chat-feed {max-width:880px;height:clamp(420px,calc(100vh - 190px),860px);margin-inline:auto;display:block;overflow-y:auto;overscroll-behavior:contain;padding-top:24px;scrollbar-gutter:stable}
+.virtual-message-list {position:relative;width:100%;min-height:1px}
+.virtual-message-row {position:absolute;inset:0 0 auto 0;width:100%;display:flex;justify-content:flex-start;will-change:transform}
+.virtual-message-row--reverse {justify-content:flex-end}
+.virtual-message-row>.chat-bubble {display:block}
+.live-feed .chat-bubble {width:fit-content;max-width:min(86%,720px);min-width:0;padding:0;background:var(--soft);border:1px solid var(--border);border-radius:4px 18px 18px 18px;box-shadow:0 1px 2px #0000000c;overflow:visible}
+.live-feed .chat-bubble:last-child {background:var(--soft-hover)}
+.live-feed .chat-bubble--reverse {align-self:flex-end;border-radius:18px 4px 18px 18px}
+.live-feed .chat-bubble:last-child {border-color:color-mix(in srgb,var(--accent) 42%,var(--border))}
+.live-feed .bubble-copy>.translation {display:block;margin:0;padding:11px 16px;font-size:20px;font-weight:400;line-height:1.55;letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.bubble-original {border-top:1px solid color-mix(in srgb,var(--border) 65%,transparent)}
+.bubble-original summary {cursor:pointer;list-style:none;padding:6px 16px;min-height:30px;color:var(--muted);font-size:11px;font-weight:600}
+.bubble-original summary::-webkit-details-marker {display:none}
+.bubble-original summary:focus-visible {outline:2px solid var(--accent);outline-offset:-2px}
+.bubble-original[open] summary {color:var(--foreground)}
+.bubble-original .bubble-source {position:static;max-width:none;max-height:none;margin:0 10px 10px;padding:10px 12px;box-shadow:none;background:var(--surface)}
+.live-feed .bubble-status {display:block;padding:0 16px 9px;color:var(--muted);font-size:11px}
+.live-feed .bubble-issue {margin:0;padding:0 16px 12px;font-size:12px;line-height:1.5}
+.live-feed .bubble-history {border-top:1px solid color-mix(in srgb,var(--border) 65%,transparent)}
+.live-feed .bubble-history .history-trigger {padding:6px 16px;min-height:30px;font-size:11px;justify-content:flex-start;gap:10px}
+.live-feed .bubble-history .history-body {padding:0 6px 6px}
+.live-feed .bubble-history .translation {font-size:17px;color:var(--muted)}
+.bubble-source {max-width:min(460px,calc(100vw - 32px));max-height:min(380px,45vh);overflow:auto;padding:14px 18px;background:var(--surface);color:var(--foreground);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 32px #0002;z-index:60;user-select:text}
+.bubble-source-label {display:block;font:500 11px/1.5 'Noto Sans',sans-serif;color:var(--muted);margin-bottom:6px}
+.bubble-source p {margin:0;font-size:19px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble-source [lang="he"],.chat-bubble [lang="he"] {font-family:'Noto Sans Hebrew','Noto Sans',sans-serif}
+@media(max-width:560px){
+ .live-shell .chat-feed {gap:8px;padding-top:16px}
+ .live-feed .chat-bubble {max-width:94%}
+ .live-feed .bubble-copy>.translation {padding:10px 13px;font-size:18px;line-height:1.55}
+ .bubble-source p {font-size:18px}
+}
+@media(prefers-reduced-motion:reduce){.bubble-source {animation:none!important;transition:none!important}}
+
+/* Session navigation uses the same chat surface for current and saved speech. */
+.messenger-shell {max-width:none;padding:0 24px 0 320px;min-height:100vh}
+.session-sidebar {position:fixed;inset:0 auto 0 0;width:296px;background:var(--surface);border-right:1px solid var(--border);z-index:45;display:flex;flex-direction:column;padding:20px 12px}
+.session-sidebar header {display:flex;align-items:center;justify-content:space-between;padding:0 12px 18px}
+.session-sidebar h1 {font-size:22px;line-height:1.3;margin:0;font-weight:650}
+.session-search {display:flex;align-items:center;gap:8px;background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:16px;color:var(--muted)}
+.session-search input {width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--foreground);font:inherit;font-size:13px}
+.session-search:focus-within {outline:2px solid var(--accent);outline-offset:2px}
+.session-sidebar nav {overflow:auto;flex:1;min-height:0}
+.session-row {width:100%;display:flex;align-items:center;gap:12px;padding:13px 10px;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--foreground);cursor:pointer;transition:background-color 150ms}
+.session-row:hover {background:var(--soft)}
+.session-row.selected {background:var(--soft-hover)}
+.session-row:focus-visible {outline:2px solid var(--accent);outline-offset:-2px}
+.session-row strong {display:block;font-size:13px;font-weight:600}
+.session-row small {display:block;font-size:12px;color:var(--muted);margin-top:4px}
+.session-row .session-date {font-size:10px;margin-top:3px}
+.session-avatar {display:grid;place-items:center;width:36px;height:36px;flex-shrink:0;border-radius:50%;background:var(--soft);color:var(--accent)}
+.session-list-label {font-size:12px;color:var(--muted);padding:12px 10px 4px}
+.conversation-pane {max-width:1120px;margin-inline:auto;min-width:0}
+.conversation-title {display:flex;align-items:center;gap:12px;padding:20px 0;min-height:82px}
+.conversation-title>div {flex:1}
+.conversation-title strong {font-size:17px;font-weight:600}
+.conversation-title small {display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.messenger-shell .chat-feed {padding-inline:12px}
+.session-sidebar .close-sessions,.conversation-title .show-sessions {display:none}
+@media(max-width:900px){
+ .messenger-shell {padding:0 12px}
+ .session-sidebar {display:none;width:min(320px,100vw)}
+ .sessions-open .session-sidebar {display:flex;width:100vw}
+ .sessions-open .conversation-pane {visibility:hidden}
+ .session-sidebar .close-sessions,.conversation-title .show-sessions {display:inline-flex}
+ .conversation-title {flex-wrap:wrap}
+ .conversation-title button {font-size:12px}
+ .messenger-shell .chat-feed {padding-inline:0}
+}
+@media(prefers-reduced-motion:reduce){.session-row{transition:none}}
+.sidebar-actions {display:flex;flex-direction:column;align-items:stretch;gap:4px;border-top:1px solid var(--border);padding-top:10px;margin-top:10px}
+.sidebar-actions button {justify-content:flex-start;gap:10px;font-size:12px}
+.session-entry {position:relative}
+.session-entry .session-row {padding-right:38px}
+.session-delete {position:absolute;right:6px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:30px;height:32px;border:0;border-radius:8px;background:var(--surface);color:var(--muted);opacity:0;cursor:pointer}
+.session-entry:hover .session-delete,.session-entry:focus-within .session-delete {opacity:1}
+.session-delete:hover {color:var(--foreground);background:var(--soft-hover)}
+.session-delete:focus-visible {outline:2px solid var(--accent);outline-offset:2px}
+.session-delete:disabled {cursor:wait}
+@media(hover:none){.session-delete{opacity:1}}
+.chat-feed .live-exports {width:100%;margin-top:6px;padding:12px 0;gap:8px}
+.chat-feed .live-exports h2 {font-size:15px;margin:0}
+.chat-feed .live-exports p {font-size:13px;margin:0;color:var(--muted)}
+.chat-feed .live-exports code {font-size:11px}
+
+.live-status>span:last-child {display:flex;flex-direction:column;gap:2px}
+.live-status strong {font-size:14px}
+.live-status small {color:var(--muted);font-size:11px;font-weight:400}
+.cancel-processing {max-width:290px;white-space:normal;text-align:left}
+.global-error,.archive-error {margin:0 0 12px}
+.archive-error {display:flex;align-items:center;gap:10px}
+.archive-error p {margin:0}
+.fragment-failed {display:flex;align-items:center;gap:8px;margin:0;padding:13px 16px;font-weight:600}
+.fragment-failed>span {display:flex;flex-direction:column;gap:2px}
+.fragment-failed small {color:var(--muted);font-size:11px;font-weight:400}
+.fragment-retry {display:flex;align-items:center;gap:10px;padding:0 12px 12px}
+.fragment-retry small {color:var(--muted);font-size:11px}
+.chat-bubble--issue {border-color:color-mix(in srgb,#b84b4b 55%,var(--border))}
+.session-list-error {padding:10px;color:var(--muted);font-size:12px}
+.session-list-error p {margin:0 0 8px}
+.fatal-error {max-width:680px;margin:10vh auto;padding:24px;color:var(--foreground);font-family:'Noto Sans',system-ui,sans-serif}
+.fatal-error button {padding:10px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:inherit;font:inherit}
+html[data-fonts="fallback"] body {font-family:system-ui,-apple-system,sans-serif}
+
+@media(max-width:900px){
+ .sessions-open:before {content:"";position:fixed;inset:0;background:#0005;z-index:44}
+ .sessions-open .session-sidebar {box-shadow:0 12px 40px #0004}
+}
+
+html[dir="rtl"] .messenger-shell {padding:0 320px 0 24px}
+html[dir="rtl"] .session-sidebar {inset:0 0 0 auto;border-right:0;border-left:1px solid var(--border)}
+html[dir="rtl"] .live-status {margin:0 0 0 auto}
+html[dir="rtl"] .live-settings-panel {right:auto;left:0}
+html[dir="rtl"] .session-row {text-align:right}
+html[dir="rtl"] .session-entry .session-row {padding-right:10px;padding-left:38px}
+html[dir="rtl"] .session-delete {right:auto;left:6px}
+@media(max-width:900px){html[dir="rtl"] .messenger-shell{padding:0 12px}}

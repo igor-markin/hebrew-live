@@ -1,0 +1,29 @@
+{
+  "asr": {
+    "repo": "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx",
+    "revision": "53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+    "terms_url": "https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+    "terms_note": "The conversion card has no clear license field; review the conversion and its named upstream model before download."
+  },
+  "asr_multilingual": {
+    "repo": "mlx-community/whisper-large-v3-turbo",
+    "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+    "folder": "asr-multilingual",
+    "terms_url": "https://huggingface.co/mlx-community/whisper-large-v3-turbo/tree/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+    "terms_note": "Review the conversion metadata and the upstream Whisper MIT license before download."
+  },
+  "translation": {
+    "repo": "translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX",
+    "revision": "24877ecba801e4b198a5679445501022682d867c",
+    "folder": "milmmt-4b-4bit",
+    "terms_url": "https://ai.google.dev/gemma/terms",
+    "terms_note": "The model card declares Gemma terms and links a prohibited-use policy; review both for the intended use."
+  },
+  "vad": {
+    "url": "https://raw.githubusercontent.com/snakers4/silero-vad/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/src/silero_vad/data/silero_vad.onnx",
+    "revision": "867c2aa692646a1f1de3e94a15c9dd9f614c0acb",
+    "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+    "terms_url": "https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/LICENSE",
+    "terms_note": "The exact silero-vad commit is MIT; review attribution and notice placement before distribution."
+  }
+}
