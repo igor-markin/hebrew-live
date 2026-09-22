@@ -8,6 +8,17 @@ public fixtures, deterministic CI, package smoke, privacy-filtered bug reports, 
 user-facing documentation. It remains an **alpha prerelease**, not a production-ready or
 stable release.
 
+## Local desktop build (2026-09-22)
+
+The unsigned PyInstaller/Electron desktop work is evaluated separately in
+[`DESKTOP_TEST_REPORT.md`](DESKTOP_TEST_REPORT.md). On the qualified MacBook Air
+(Apple M5, 16 GiB, macOS 27.0), the packaged engine completed real physical-microphone
+Hebrew-to-Russian inference and the Electron shell completed local first-run,
+model-reuse, lifecycle, responsive-layout, and long-session checks. That evidence does
+not close the clean-second-Mac, Developer ID, notarization, or distribution gates below.
+The desktop download inventory is three components and 3,833,075,730 bytes; the older
+approximately-5.1-GB CLI bundle is not its disk estimate.
+
 ## Acceptance checklist
 
 | Area | Status | Evidence or remaining work |

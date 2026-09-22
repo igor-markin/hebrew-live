@@ -21,6 +21,11 @@ dependencies = [
     "huggingface-hub==1.30.0",
     "python-bidi==0.6.11",
 ]
+[dependency-groups]
+desktop-build = [
+    "pyinstaller==6.22.3",
+    "pyobjc-framework-avfoundation==12.2.2",
+]
 [project.scripts]
 he-ru = "hebrew_live.cli:main"
 [build-system]

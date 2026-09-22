@@ -25,7 +25,7 @@
 .live-toolbar {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .live-status {margin:0 auto 0 0;font-size:14px}
 .live-toolbar .finish-button {min-width:0;width:auto;height:40px}
-.live-settings {position:relative}
+.live-settings {position:relative;margin-left:auto}
 .live-settings summary {cursor:pointer;list-style:none;padding:10px 12px;border-radius:9px;font-size:14px}
 .live-settings summary::-webkit-details-marker {display:none}
 .live-settings summary:hover,.live-settings[open] summary {background:var(--soft)}
@@ -186,6 +186,7 @@ html[data-fonts="fallback"] body {font-family:system-ui,-apple-system,sans-serif
 html[dir="rtl"] .messenger-shell {padding:0 320px 0 24px}
 html[dir="rtl"] .session-sidebar {inset:0 0 0 auto;border-right:0;border-left:1px solid var(--border)}
 html[dir="rtl"] .live-status {margin:0 0 0 auto}
+html[dir="rtl"] .live-settings {margin-left:0;margin-right:auto}
 html[dir="rtl"] .live-settings-panel {right:auto;left:0}
 html[dir="rtl"] .session-row {text-align:right}
 html[dir="rtl"] .session-entry .session-row {padding-right:10px;padding-left:38px}

@@ -9,12 +9,16 @@ import type {Group, LiveState, Pair} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
+declare global {
+  interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
+}
+
 type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
 const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:translator('en')});
 const useI18n=()=>useContext(I18nContext);
 
 function Icon({kind}:{kind:string}) {
-  const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
+  const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[kind]||paths.settings}/></svg>;
 }
 
@@ -122,19 +126,21 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
   const archiveKey=selected?archiveRecordingLabel(state):'';
   const archiveState=archiveKey?tx(archiveKey as TextKey):'';
   const statusKey=state.stopping?(state.cancelling?'cancelling':'finishing'):state.status_code;
-  const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','saved_session','runtime_status','partial_processing','restart_required'].includes(statusKey)?tx(statusKey as TextKey):state.status;
+  const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session','runtime_status','partial_processing','restart_required'].includes(statusKey)?tx(statusKey as TextKey):state.status;
   const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind;
   return <section className="live-controls" aria-label={tx('recordingControls')}>
     <div className="live-toolbar">
       <div className="live-status" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localizedStatus}</strong><small>{direction}{state.device?' · '+state.device:inputKind?' · '+inputKind:''}{archiveState?' · '+archiveState:''}</small></span></div>
       {state.finished?(state.can_start_new?<Button variant="primary" isDisabled={pending} onPress={()=>onAction('start_session')}><Icon kind="play"/>{tx('newRecording')}</Button>:null):state.stopping?<Button variant="tertiary" className="cancel-processing" isDisabled={pending||state.cancelling} onPress={()=>{if(window.confirm(tx('cancelConfirm')))onAction('cancel_processing');}}><Icon kind="stop"/>{state.cancelling?tx('cancelShort'):tx('cancelRemaining')}</Button>:<div className="session-buttons" role="group" aria-label={tx('recordingControls')}>
-        <Button variant="primary" className="finish-button" isDisabled={busy} onPress={()=>onAction('pause')}><Icon kind={state.paused?'play':'pause'}/>{state.paused?tx('continue'):tx('pause')}</Button>
-        <Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('stop')}><Icon kind="stop"/>{tx('finishRecording')}</Button>
+        <Button variant="primary" className="finish-button" isDisabled={busy} onPress={()=>onAction('pause')}><Icon kind={state.paused?'play':'pause'}/>{state.paused?(state.desktop_mode&&state.status_code==='ready_to_start'?tx('startRecording'):tx('continue')):tx('pause')}</Button>
+        <Button variant="tertiary" isDisabled={busy||(state.desktop_mode&&!state.recording_started)} onPress={()=>onAction('stop')}><Icon kind="stop"/>{tx('finishRecording')}</Button>
       </div>}
+      {window.hebrewLive&&<Button variant="tertiary" onPress={()=>void window.hebrewLive?.showHelp()}><Icon kind="help"/>{tx('helpFeedback')}</Button>}
+      <Button variant="tertiary" isDisabled={pending} onPress={()=>{if(window.hebrewLive){void window.hebrewLive.requestQuit();return;}if(state.finished||window.confirm(tx('quitConfirm')))onAction('quit');}}><Icon kind="power"/>{tx('quitApp')}</Button>
       <details ref={settingsRef} className="live-settings">
         <summary><Icon kind="settings"/>{tx('settings')}</summary>
         <div className="live-settings-panel">
-          <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option><option value="he">עברית</option></select></label>
+          <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
@@ -312,7 +318,7 @@ export default function Live(){
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
     const preferenceAction=action==='ui_locale'||action==='save_raw_audio';
-    if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session'].includes(action))||(!['stop','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
+    if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
     try{
@@ -323,6 +329,10 @@ export default function Live(){
       if(action==='start_session')setState(old=>({...old,can_start_new:false}));
       if(action==='save_raw_audio'&&typeof value==='boolean')setState(old=>({...old,save_raw_audio:value}));
       if(action==='exports_ready'){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
+      if(action==='quit'){
+        if(state.finished){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
+        else setState(old=>({...old,stopping:true,phase:'stopping',status_code:'finishing'}));
+      }
       return true;
     }catch{setActionError(action==='open_archive_folder'?tx('openFolderError'):tx('actionError'));return false;}
     finally{actionBusy.current=false;setPending(false);}
@@ -334,6 +344,7 @@ export default function Live(){
     if(!request)return;
     localeRequested.current=request;setLocalePending(true);setLocale(value);
     if(await act('ui_locale',value)){
+      if(window.hebrewLive&&(value==='en'||value==='ru'))await window.hebrewLive.setUiLocale(value);
       localeConfirmed.current=value;localeRequested.current=null;setLocalePending(false);
       setState(old=>({...old,ui_locale:value}));setLocale(value);return;
     }
@@ -351,7 +362,7 @@ export default function Live(){
       <header><h1>{tx('sessions')}</h1><Button variant="tertiary" className="close-sessions" onPress={closeSidebar} aria-label={tx('closeSessions')}>×</Button></header>
       <label className="session-search"><Icon kind="folder"/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder={tx('searchPlaceholder')} aria-label={tx('searchSaved')}/></label>
       <nav aria-label={tx('savedConversations')}>
-        <button className={`session-row ${!selected?'selected':''}`} onClick={()=>choose('')} aria-current={!selected?'page':undefined}><span className="session-avatar"><Icon kind="play"/></span><span><strong>{tx('currentSession')}</strong><small>{state.status_code&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','saved_session'].includes(state.status_code)?tx(state.status_code as TextKey):state.status}</small></span></button>
+        <button className={`session-row ${!selected?'selected':''}`} onClick={()=>choose('')} aria-current={!selected?'page':undefined}><span className="session-avatar"><Icon kind="play"/></span><span><strong>{tx('currentSession')}</strong><small>{state.status_code&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session'].includes(state.status_code)?tx(state.status_code as TextKey):state.status}</small></span></button>
         <p className="session-list-label">{tx('saved')}</p>
         {filtered.map(item=><div className="session-entry" key={item.id}><button className={`session-row ${selected===item.id?'selected':''}`} onClick={()=>choose(item.id)} aria-current={selected===item.id?'page':undefined}><span className="session-avatar"><Icon kind="folder"/></span><span><strong>{item.title?.startsWith('Разговор ')?item.label:item.title||item.label}</strong><small>{item.preview||item.label}</small><small className="session-date">{item.label}</small></span></button><button className="session-delete" disabled={!!deleting} onClick={()=>void deleteSession(item)} aria-label={tx('deleteSession',{label:item.label})} title={tx('deleteTitle')}><Icon kind="trash"/></button></div>)}
         {sessionsLoaded&&!sessions.length&&<p className="session-list-label">{tx('noneSaved')}</p>}
@@ -373,7 +384,7 @@ export default function Live(){
       {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
         <MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>
-        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?tx('readyToSpeak'):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
+        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx('readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
         {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>
       {!selected&&!follow.following&&state.groups.length>0&&<Button className="follow-latest" variant="primary" onPress={follow.resume}><Icon kind="down"/>{tx('backToCurrent')}</Button>}

@@ -91,6 +91,14 @@ class PublicContractTests(unittest.TestCase):
             manifest['spec']=SPEC;(models/'manifest.json').write_text(json.dumps(manifest))
             with self.assertRaisesRegex(RuntimeError,'Unknown required model asset'):verify(models,{'translation_7b'})
 
+    def test_desktop_three_asset_manifest_and_original_four_asset_manifest_are_valid(self):
+        for assets in (['asr','translation','vad'],['asr','asr_multilingual','translation','vad']):
+            with self.subTest(assets=assets),tempfile.TemporaryDirectory() as tmp:
+                models=Path(tmp)
+                manifest={'schema_version':2,'assets':assets,'spec':SPEC,'files':model_files(models,assets)}
+                (models/'manifest.json').write_text(json.dumps(manifest))
+                verify(models,set(assets))
+
     def test_old_manifest_may_keep_retired_unused_files_without_exposing_them(self):
         with tempfile.TemporaryDirectory() as tmp:
             models=Path(tmp);assets=['asr','asr_multilingual','translation','vad']

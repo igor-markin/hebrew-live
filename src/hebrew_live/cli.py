@@ -48,6 +48,11 @@ def model_download_keys():
     return ['asr','asr_multilingual','translation','vad']
 
 
+def desktop_model_download_keys():
+    """Return the smaller, qualified desktop bundle without the optional CLI ASR."""
+    return ['asr','translation','vad']
+
+
 def print_model_info():
     print('Separate third-party assets (not covered by the Hebrew Live CLI code license):')
     for key in model_download_keys():
@@ -177,7 +182,10 @@ def manifest_assets(manifest):
         if (not isinstance(assets,list) or not assets or len(assets)!=len(set(assets))
                 or any(not isinstance(key,str) or key not in known for key in assets)):
             raise ValueError('Invalid model manifest assets')
-        required={'asr','asr_multilingual','translation','vad'}
+        # Schema v2 supports both the original CLI setup (four assets) and the
+        # desktop setup (the three assets used by the qualified Hebrew flow).
+        # The multilingual ASR remains a valid optional CLI asset.
+        required={'asr','translation','vad'}
         if not required.issubset(assets):raise ValueError('Model manifest omits required setup assets')
         for key in set(assets)&set(SPEC):
             if asset_identity(spec,key)!=asset_identity(SPEC,key):

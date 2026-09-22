@@ -1,5 +1,6 @@
 """Loopback-only browser captions; no external assets or model requests."""
 import json
+import os
 import queue
 import secrets
 import sys
@@ -14,6 +15,7 @@ from .paths import data_root
 class BrowserUI:
     def __init__(self,open_browser=True,live=False):
         self.live=live
+        self.desktop_mode=os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED')=='1'
         self.live_root=Path(__file__).with_name('web')
         if live and not (self.live_root/'live.html').is_file():
             raise RuntimeError('Installed package is missing the bundled browser UI')
@@ -26,7 +28,9 @@ class BrowserUI:
                     'target_languages':[],'target_error':None,'target_error_code':None,
                     'ui_locale':'en','paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
-                    'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None}
+                    'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
+                    'recording_started':False,'capture_active':False}
+        self.state['desktop_mode']=self.desktop_mode
         self.exports={}
         self.session_folder=None
         self.preference_folder=None
@@ -36,6 +40,7 @@ class BrowserUI:
         self.next_session=threading.Event()
         self.stop_requested=False
         self.cancel_requested=False
+        self.quit_requested=False
 
     def __enter__(self):
         owner=self
@@ -195,6 +200,18 @@ class BrowserUI:
                             if not owner.state['finished'] or owner.next_session.is_set():return self.reply(409,b'{}')
                             owner.state.update(can_start_new=False,phase='exited',status='Приложение закрыто',status_code='app_closed')
                             owner.finished_seen.set();return self.reply(200,b'{"ok":true}')
+                    if action=='quit':
+                        with owner.lock:
+                            owner.quit_requested=True
+                            if owner.state['finished']:
+                                owner.state.update(can_start_new=False,phase='exited',status='Приложение закрыто',status_code='app_closed')
+                                owner.finished_seen.set()
+                                return self.reply(200,b'{"ok":true}')
+                            if not owner.stop_requested:
+                                owner.actions.put_nowait('q')
+                                owner.stop_requested=True
+                            owner.state.update(stopping=True,phase='stopping',status='Завершаю обработку…',status_code='finishing')
+                        return self.reply(202,b'{"ok":true}')
                     if action=='stop':
                         # Stop is idempotent. A second HTTP request must never turn
                         # into cancellation of translation that was already accepted.
@@ -226,7 +243,13 @@ class BrowserUI:
         self.url='http://'+self.host+'/'+self.token+'/'
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.keyboard=TerminalKeys();self.keyboard.__enter__()
-        print('Локальный экран: '+self.url,file=sys.stderr,flush=True)
+        if self.desktop_mode:
+            descriptor=os.environ.get('HEBREW_LIVE_DESKTOP_EVENT_FD')
+            if descriptor:
+                event={'v':1,'event':'backend_ready','url':self.url+('live/' if self.live else '')}
+                os.write(int(descriptor),(json.dumps(event,separators=(',',':'))+'\n').encode('utf8'))
+        else:
+            print('Локальный экран: '+self.url,file=sys.stderr,flush=True)
         if self.open_browser:webbrowser.open(self.url+('live/' if self.live else ''))
         return self
 
@@ -239,10 +262,12 @@ class BrowserUI:
             self.exports={}
             self.stop_requested=False
             self.cancel_requested=False
+            self.quit_requested=False
             self.state.update(groups=[],generation=0,phase='loading',status='Загрузка локальных моделей…',status_code='loading_models',
                               finished=False,paused=False,stopping=False,cancelling=False,model_switching=False,
                               can_start_new=False,exports=[],retrying_group=None,retry_error=None,
                               target_error=None,target_error_code=None,session=str(session.path),
+                              recording_started=False,capture_active=False,
                               retry_supported=save_audio,save_raw_audio=save_audio,
                               audio_saved=save_audio,partial=False,partial_kind=None,
                               partial_ranges=[],partial_details=[],capture_discontinuity=False,
@@ -256,6 +281,9 @@ class BrowserUI:
         with self.lock:
             self.state.update(finished=True,paused=True,stopping=False,cancelling=False,phase='finished',
                               status='Сессия завершена · модели выгружены',status_code='session_finished',can_start_new=enabled)
+            if self.quit_requested:
+                self.state.update(can_start_new=False,phase='exited',status='Приложение закрыто',status_code='app_closed')
+                self.finished_seen.set()
         while not self.finished_seen.wait(.1):
             if self.next_session.is_set():return True
             if any(key in ('q','Q','\x03') for key in self.keyboard.read()):
@@ -306,7 +334,10 @@ class BrowserUI:
             status=stopping or self.state.get('status') or 'Завершаю обработку…'
             status_code='cancelling' if self.cancel_requested else 'finishing'
         elif control.paused:
-            status,status_code='Пауза','paused'
+            if self.desktop_mode and not screen.groups:
+                status,status_code='Готово к началу','ready_to_start'
+            else:
+                status,status_code='Пауза','paused'
         else:
             status,status_code=labels.get(screen.status,(screen.status,'runtime_status'))
         from .tuning import DEFAULTS,as_dict

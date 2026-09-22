@@ -10,7 +10,7 @@ from pathlib import Path
 
 ALLOWED_ROOTS={
     '.github','.gitignore','CHANGELOG.md','CONTRIBUTING.md','PRIVACY.md','PUBLIC-MANIFEST.json',
-    'README.md','README.ru.md','LICENSE','SECURITY.md','SUPPORT.md','docs','experiments',
+    'README.md','README.ru.md','LICENSE','SECURITY.md','SUPPORT.md','desktop','docs','experiments',
     'constraints.txt','pyproject.toml','run.sh','scripts','src','tests','uv.lock',
 }
 FORBIDDEN_PARTS={
@@ -60,8 +60,10 @@ def check(root:Path)->dict:
         'README.md','README.ru.md','LICENSE','SECURITY.md','PRIVACY.md','CONTRIBUTING.md',
         'constraints.txt','run.sh',
         'docs/DOCKER.md','docs/THIRD_PARTY.md','docs/RELEASE_READINESS.md',
+        'docs/DESKTOP_BUILD.md','docs/DESKTOP_TEST_REPORT.md',
         'docs/images/language-settings.jpg','docs/images/live-translation.jpg',
         'docs/images/session-archive.jpg',
+        'desktop/electron/assets/icon.png','desktop/electron/package.json','desktop/electron/src/main.ts',
         'src/hebrew_live/web/live.html','src/hebrew_live/web/licenses/THIRD-PARTY-NOTICES.txt',
         'tests/fixtures/live_states.json',
         'experiments/publication-ui-preview/src/data/public-cases.json',

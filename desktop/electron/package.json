@@ -1,0 +1,69 @@
+{
+  "name": "hebrew-live-desktop",
+  "version": "0.1.0",
+  "description": "Local live Hebrew speech translation for macOS",
+  "author": "Igor Markin",
+  "private": true,
+  "type": "module",
+  "main": "build/main.js",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "dist:mac": "npm run build && electron-builder --mac dir --arm64"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "electron": "44.4.3",
+    "electron-builder": "26.15.3",
+    "typescript": "5.9.3"
+  },
+  "build": {
+    "appId": "com.hebrew-live.desktop",
+    "productName": "Hebrew Live",
+    "asar": true,
+    "directories": {
+      "output": "../../dist/electron",
+      "buildResources": "assets"
+    },
+    "files": [
+      "build/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../dist/desktop-engine/Hebrew Live",
+        "to": "engine"
+      },
+      {
+        "from": "../../docs/images/live-translation.jpg",
+        "to": "onboarding/live-translation.jpg"
+      },
+      {
+        "from": "../../docs/images/language-settings.jpg",
+        "to": "onboarding/language-settings.jpg"
+      },
+      {
+        "from": "../../docs/images/session-archive.jpg",
+        "to": "onboarding/session-archive.jpg"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["arm64"]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "icon.png",
+      "identity": null,
+      "minimumSystemVersion": "26.2",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Hebrew Live uses the microphone only when you start a live translation or run the input test."
+      }
+    }
+  }
+}

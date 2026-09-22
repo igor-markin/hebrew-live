@@ -19,8 +19,26 @@ microphone / local WAV
         ▼
  Python loopback API (127.0.0.1 + random URL)
         ▼
- bundled React browser UI
+bundled React browser UI
 ```
+
+The desktop distribution adds a shell in front of the same runtime:
+
+```text
+Electron main process
+  ├─ sandboxed preparation renderer + narrow preload API
+  ├─ versioned JSONL controller over stdin/stdout
+  │    └─ PyInstaller onedir Python controller
+  │         └─ packaged backend + spawned MLX inference child
+  └─ existing tokenized loopback React working UI
+```
+
+The preparation renderer is independent of Python and can display a controller
+startup failure. Once models are verified and warmed, Electron navigates only to the
+validated `127.0.0.1` backend URL. Controller diagnostics and technical logs do not
+share stdout with protocol messages. A closed controller channel terminates the
+backend process group. The Electron engine directory is an `extraResource` outside
+ASAR; models stay in the existing Application Support root.
 
 `hebrew_live.cli` owns argument parsing, setup, model inventory, and top-level error
 handling. `runtime.py`, `stream.py`, `feed.py`, and `retranslation.py` coordinate audio,

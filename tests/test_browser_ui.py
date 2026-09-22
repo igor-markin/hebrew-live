@@ -1,10 +1,27 @@
-import json,unittest,urllib.request,urllib.error
+import io,json,os,unittest,urllib.request,urllib.error
+from unittest.mock import patch
 from hebrew_live.browser_ui import BrowserUI
 from hebrew_live.display import TranslationScreen
 from hebrew_live.stream import Control,Settings
 import threading
 
 class BrowserTests(unittest.TestCase):
+    def test_desktop_mode_publishes_private_url_on_dedicated_fd_and_starts_ready(self):
+        read_fd,write_fd=os.pipe()
+        errors=io.StringIO()
+        try:
+            with patch.dict(os.environ,{'HEBREW_LIVE_DESKTOP_MANAGED':'1','HEBREW_LIVE_DESKTOP_EVENT_FD':str(write_fd)}),patch('sys.stderr',errors),BrowserUI(open_browser=False,live=True) as ui:
+                event=json.loads(os.read(read_fd,4096))
+                self.assertEqual(event,{'v':1,'event':'backend_ready','url':ui.url+'live/'})
+                self.assertNotIn(ui.token,errors.getvalue())
+                screen=TranslationScreen();control=Control(Settings(),threading.Event());control.paused=True
+                ui.draw(screen,control,'')
+                self.assertTrue(ui.state['desktop_mode'])
+                self.assertEqual(ui.state['status_code'],'ready_to_start')
+                ui.finished_seen.set()
+        finally:
+            os.close(read_fd);os.close(write_fd)
+
     def test_private_loopback_state_actions_and_rtl_assets(self):
         with BrowserUI(open_browser=False) as ui:
             self.assertEqual(ui.server.server_address[0],'127.0.0.1')
@@ -55,6 +72,19 @@ class BrowserTests(unittest.TestCase):
                 request=urllib.request.Request(ui.url+'action',data=b'{"action":"exports_ready"}',headers={'Content-Type':'application/json','Origin':'http://'+ui.host})
                 with urllib.request.urlopen(request) as r:self.assertEqual(r.status,200)
                 self.assertTrue(ui.finished_seen.is_set())
+
+    def test_quit_requests_stop_and_exits_after_session_finishes(self):
+        with BrowserUI(open_browser=False) as ui:
+            request=urllib.request.Request(ui.url+'action',data=b'{"action":"quit"}',
+                headers={'Content-Type':'application/json','Origin':'http://'+ui.host})
+            with urllib.request.urlopen(request) as response:self.assertEqual(response.status,202)
+            self.assertTrue(ui.quit_requested);self.assertTrue(ui.stop_requested)
+            self.assertEqual(ui.keys(None),['q'])
+            self.assertFalse(ui.finished_seen.is_set())
+            ui.state['finished']=True
+            with urllib.request.urlopen(request) as response:self.assertEqual(response.status,200)
+            self.assertTrue(ui.finished_seen.is_set())
+            self.assertEqual(ui.state['status_code'],'app_closed')
 
     def test_no_audio_exports_only_text_and_disables_retry(self):
         import tempfile

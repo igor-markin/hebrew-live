@@ -14,6 +14,7 @@ SHUTDOWN_GRACE = 120.0
 CANCEL_GRACE = 3.0
 JOIN_GRACE = 2.0
 TRANSPORT_TIMEOUT = 5.0
+FINAL_DRAIN_GRACE = 0.25
 
 
 class RemoteEngineError(RuntimeError):
@@ -93,6 +94,10 @@ def _engine_process(receive, send, config, engine_factory=None):
                 send.send(("failed", request_id, type(exc).__name__, str(exc),
                            traceback.format_exc(limit=12)))
     except BaseException as exc:
+        try:
+            log.error(exc)
+        except BaseException:
+            pass
         try:
             send.send(("fatal", type(exc).__name__, str(exc), traceback.format_exc(limit=12)))
         except BaseException:
@@ -185,6 +190,12 @@ class RemoteEngine:
                     raise RemoteEngineError(self._format_failure(message,"MLX engine process failed"))
                 if request_id is None or (len(message)>1 and message[1]==request_id):return message
             if not self._process.is_alive():
+                # A child can send its final diagnostic and exit before the
+                # multiprocessing feeder makes that message visible to poll().
+                # Give the pipe one bounded drain window so the caller receives
+                # the real startup failure instead of a generic process-exit error.
+                if self._receive.poll(FINAL_DRAIN_GRACE):
+                    continue
                 self._abort_process()
                 raise RemoteEngineError("MLX engine process exited unexpectedly")
 

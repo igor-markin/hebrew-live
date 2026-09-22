@@ -1,5 +1,6 @@
 """One inference worker, ordered recording worker, and foreground terminal UI."""
 from contextlib import nullcontext
+import os
 import queue
 import sys
 import threading
@@ -132,6 +133,9 @@ def run_session(args, session, browser_ui=None):
         session.event('publication_mode',publication=control.settings.publication)
         session.event('translation_mode',mode=control.settings.mode)
         raw=queue.Queue(maxsize=300)
+        capture_requested=threading.Event()
+        if not control.paused:
+            capture_requested.set()
         def note_backlog(fragment):
             session.note_unprocessed_fragment(fragment,'translation_backlog')
             if browser_ui:browser_ui.details(phase='stopping',stopping=True,
@@ -175,15 +179,21 @@ def run_session(args, session, browser_ui=None):
                     updates.put(('status',0,'Playing recording'))
                     replay(file,control)
                 else:
+                    while not stop.is_set() and not capture_requested.wait(.1):
+                        pass
+                    if stop.is_set():
+                        return
                     def callback(data,frames,timing,status):
                         accept_audio_callback(control,session,stop,errors,data,status)
                     with sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback):
+                        if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
                         session.event('device',rate=rate,channels=1)
                         updates.put(('status',0,'Listening'))
                         stop.wait()
         except Exception as exc:
             errors.put(exc);stop.set()
         finally:
+            if browser_ui:browser_ui.details(capture_active=False,level=0)
             # EOF closes admission before the recording worker's sentinel. Hotkeys
             # during the remaining inference must not create unreachable boundaries.
             with control.lock:
@@ -343,7 +353,9 @@ def run_session(args, session, browser_ui=None):
                             continue
                         if control.key(key):
                             if key=='\x0c':screen.clear(control.settings.generation)
-                            if key==' ':screen.level=0
+                            if key==' ':
+                                screen.level=0
+                                if not control.paused:capture_requested.set()
                     if not errors.empty():
                         stop.set();stopping='Error; finishing accepted audio…'
                     if browser_ui and session.is_partial() and not partial_published:
@@ -372,7 +384,7 @@ def run_session(args, session, browser_ui=None):
                         elif kind=='status':screen.status=value
                         else:
                             screen.update(kind,sid,value)
-                            if not terminal:
+                            if not terminal and os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED')!='1':
                                 if kind=='live_publication':
                                     print('\nВерсия '+value['stage']+':\n'+value['current']['source']+'\n'+value['current']['translation'],flush=True)
                                 if kind=='group_progress':

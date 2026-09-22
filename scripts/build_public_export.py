@@ -21,11 +21,12 @@ ROOT_FILES=(
 )
 DOC_FILES=(
     'ARCHITECTURE.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
-    'RELEASE_READINESS.md','THIRD_PARTY.md',
+    'RELEASE_READINESS.md','THIRD_PARTY.md','DESKTOP_BUILD.md','DESKTOP_TEST_REPORT.md',
     'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
 )
 SCRIPT_FILES=('build_public_export.py','check_public_tree.py','ci_clean_smoke.py','generate_dependency_inventory.py',
-              'probe_installed_package.py')
+              'probe_installed_package.py','build_macos_engine_app.py','prepare_desktop_proof_models.py',
+              'prepare_desktop_proof_app.py','macos_bundle_report.py','measure_macos_processes.py')
 FRONTEND_FILES=(
     'README.md','package.json','package-lock.json','tsconfig.json','vite.config.ts','index.html','live.html',
     'src/App.tsx','src/Live.tsx','src/i18n.ts','src/live.css','src/liveMain.tsx','src/liveState.ts',
@@ -33,6 +34,19 @@ FRONTEND_FILES=(
     'src/data/public-cases.json','tests/followGrowth.test.ts','tests/i18n.test.ts','tests/liveContract.test.ts',
     'tests/liveState.test.ts','tests/policy.test.ts','public/licenses/Noto-Sans-Hebrew-OFL.txt',
     'public/licenses/Noto-Sans-OFL.txt',
+)
+ELECTRON_FILES=(
+    'desktop/engine/HebrewLive.spec',
+    'desktop/electron/assets/icon.png',
+    'desktop/electron/package.json','desktop/electron/package-lock.json','desktop/electron/tsconfig.json',
+    'desktop/electron/scripts/copy-assets.mjs','desktop/electron/scripts/cdp-qa.mjs',
+    'desktop/electron/scripts/cdp-preparation-qa.mjs',
+    'desktop/electron/src/lifecycle.ts','desktop/electron/src/main.ts','desktop/electron/src/preferences.ts',
+    'desktop/electron/src/preload.cts','desktop/electron/src/protocol.ts','desktop/electron/src/security.ts',
+    'desktop/electron/src/shared.ts','desktop/electron/src/renderer/index.html',
+    'desktop/electron/src/renderer/index.ts','desktop/electron/src/renderer/styles.css',
+    'desktop/electron/tests/lifecycle.test.ts','desktop/electron/tests/preferences.test.ts',
+    'desktop/electron/tests/security.test.ts',
 )
 
 
@@ -82,6 +96,7 @@ def build(destination:Path,archive:Path|None=None)->dict:
     copy_file(Path('.github/ISSUE_TEMPLATE/bug_report.md'),destination)
     add_tree(Path('src/hebrew_live'),destination,{'.py','.json','.html','.js','.css','.woff','.woff2','.txt'})
     add_tree(Path('tests'),destination,{'.py','.json'},exclude_names={'model_smoke.py'})
+    for name in ELECTRON_FILES:copy_file(Path(name),destination)
     frontend=Path('experiments/publication-ui-preview')
     for name in FRONTEND_FILES:copy_file(frontend/name,destination)
     result=manifest(destination)

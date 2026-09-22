@@ -36,6 +36,13 @@ class InputStream:
     def __exit__(self,*args):pass
 
 
+class TrackingInputStream(InputStream):
+    entered=threading.Event()
+    def __enter__(self):
+        self.entered.set()
+        return self
+
+
 class Browser:
     def __init__(self):
         self.state={};self.actions=0;self.prepared=False;self.detail_calls=[]
@@ -47,6 +54,22 @@ class Browser:
     def draw(self,*args):pass
     def prepare_exports(self,session):
         session.close();self.prepared=True
+
+
+class QuitBeforeStartBrowser(Browser):
+    def read(self):
+        self.actions+=1
+        return ['q'] if self.actions==1 else []
+
+
+class StartThenQuitBrowser(Browser):
+    def read(self):
+        self.actions+=1
+        if self.actions==1:return [' ']
+        if self.actions==2:
+            TrackingInputStream.entered.wait(2)
+            return ['q']
+        return []
 
 
 def process_engine(*args,**kwargs):
@@ -65,6 +88,32 @@ def custom_models(*unused):
 
 
 class RuntimeLifecycleTests(unittest.TestCase):
+    def test_start_paused_does_not_open_microphone_before_quit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);session=Session(root/'logs','he-en',{},save_audio=False)
+            browser=QuitBeforeStartBrowser();options=args(root);options.start_paused=True
+            TrackingInputStream.entered.clear()
+            with patch('hebrew_live.cli.validate_custom_models',custom_models), \
+                 patch('hebrew_live.remote_engine.RemoteEngine',side_effect=process_engine), \
+                 patch('hebrew_live.cli.VAD',VAD), \
+                 patch('sounddevice.query_devices',return_value={'default_samplerate':16000,'name':'fake'}), \
+                 patch('sounddevice.InputStream',TrackingInputStream):
+                run_session(options,session,browser)
+            self.assertFalse(TrackingInputStream.entered.is_set())
+
+    def test_start_paused_opens_microphone_after_start_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);session=Session(root/'logs','he-en',{},save_audio=False)
+            browser=StartThenQuitBrowser();options=args(root);options.start_paused=True
+            TrackingInputStream.entered.clear()
+            with patch('hebrew_live.cli.validate_custom_models',custom_models), \
+                 patch('hebrew_live.remote_engine.RemoteEngine',side_effect=process_engine), \
+                 patch('hebrew_live.cli.VAD',VAD), \
+                 patch('sounddevice.query_devices',return_value={'default_samplerate':16000,'name':'fake'}), \
+                 patch('sounddevice.InputStream',TrackingInputStream):
+                run_session(options,session,browser)
+            self.assertTrue(TrackingInputStream.entered.is_set())
+
     def test_vad_startup_failure_reaps_started_native_child(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);session=Session(root/'logs','he-en',{})

@@ -58,6 +58,10 @@ class PrivacyEngine(FakeNativeEngine):
         if os.environ.get('HF_HUB_OFFLINE')!='1':raise RuntimeError('offline environment missing')
         logging.getLogger('fake.native').warning('private value: %s','do not persist')
 
+class WarmupFailureEngine(FakeNativeEngine):
+    def warmup(self):
+        raise ModuleNotFoundError("No module named 'fake_dynamic_module'",name='fake_dynamic_module')
+
 def nonreading_worker(receive,send,config,engine_factory):
     send.send(('ready',dict(backend='turbo',translation_size='milmmt',asr_path='fake',custom_models=False)))
     time.sleep(30)
@@ -71,6 +75,15 @@ class Log:
 
 
 class RemoteEngineTests(unittest.TestCase):
+    def test_startup_failure_preserves_child_diagnostic(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log=Log()
+            with self.assertRaisesRegex(RuntimeError,'ModuleNotFoundError'):
+                RemoteEngine(Path(folder),log,engine_factory=WarmupFailureEngine,startup_timeout=5)
+            errors=[data for event,data in log.events if event=='engine_error']
+            self.assertEqual(errors[0]['type'],'ModuleNotFoundError')
+            self.assertEqual(errors[0]['stack'][-1]['function'],'warmup')
+
     def test_attributes_streaming_events_and_graceful_close(self):
         with tempfile.TemporaryDirectory() as folder:
             log=Log();engine=RemoteEngine(Path(folder),log,engine_factory=FakeNativeEngine,startup_timeout=5)

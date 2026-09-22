@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "total_bytes": 3833075730,
+  "components": [
+    {
+      "key": "asr",
+      "label": "Hebrew speech recognition",
+      "folder": "asr",
+      "repo": "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx",
+      "revision": "53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+      "terms_url": "https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+      "files": [
+        {"path": "config.json", "bytes": 268, "sha256": "b34fc29e4e11e0a25e812775dd67f4dd16fc2c8eb43d28ae25ff7d660ecb6379"},
+        {"path": "weights.safetensors", "bytes": 1613977612, "sha256": "f69cfdd61a6169f4b29a7813e32f9d7f128b5bc07f0b6c09dbf2ef44ac3fb13f"}
+      ]
+    },
+    {
+      "key": "translation",
+      "label": "MiLMMT translation",
+      "folder": "milmmt-4b-4bit",
+      "repo": "translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX",
+      "revision": "24877ecba801e4b198a5679445501022682d867c",
+      "terms_url": "https://ai.google.dev/gemma/terms",
+      "files": [
+        {"path": "README.md", "bytes": 5795, "sha256": "fe7564bf677b589844796b9546e74ff08c6c0574fbbb215deb14c84f94de80ae"},
+        {"path": "added_tokens.json", "bytes": 35, "sha256": "50b2f405ba56a26d4913fd772089992252d7f942123cc0a034d96424221ba946"},
+        {"path": "chat_template.jinja", "bytes": 62, "sha256": "61fbedab465ef2a7f1b123fc7e4bc06a995bd09ac381579affeda60f02ebd940"},
+        {"path": "config.json", "bytes": 2890, "sha256": "f775df4f50b0296af30755d54e59fb6ca9f765f3fc21d86fa9d0a3e71b6d6d16"},
+        {"path": "generation_config.json", "bytes": 210, "sha256": "72e999861fcdc6c43485d04e12c47a78f4c6037db1234452e7226575662b72bb"},
+        {"path": "model.safetensors", "bytes": 2183295977, "sha256": "f70907fe5fc259fcc2c0e1880b683ea0eb8dbe052c10e98a304b9cd9d14d1d49"},
+        {"path": "model.safetensors.index.json", "bytes": 79768, "sha256": "3a5bbc82ff34d68405c524e03aca88d2e455dacf87e3957441c10a389e48c518"},
+        {"path": "special_tokens_map.json", "bytes": 662, "sha256": "2f7b0adf4fb469770bb1490e3e35df87b1dc578246c5e7e6fc76ecf33213a397"},
+        {"path": "tokenizer.json", "bytes": 33384123, "sha256": "48a9afc4c8abd25310cbc644959cff42b119dc95aaf8543279952300c5938bc4"},
+        {"path": "tokenizer_config.json", "bytes": 804, "sha256": "c4bb1cf181c6dba7a75b2427fbd0b1656f054be253d9267598bd4cc5fabb11ff"}
+      ]
+    },
+    {
+      "key": "vad",
+      "label": "Silero VAD",
+      "url": "https://raw.githubusercontent.com/snakers4/silero-vad/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/src/silero_vad/data/silero_vad.onnx",
+      "revision": "867c2aa692646a1f1de3e94a15c9dd9f614c0acb",
+      "terms_url": "https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/LICENSE",
+      "files": [
+        {"path": "silero.onnx", "bytes": 2327524, "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"}
+      ]
+    }
+  ]
+}

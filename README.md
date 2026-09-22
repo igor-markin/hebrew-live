@@ -64,6 +64,22 @@ Other operating systems, Intel Macs, Rosetta terminals, Python 3.13+, browser
 extensions that block loopback requests, and remote/browser-server deployments are
 outside this alpha contract.
 
+## Local macOS desktop app
+
+An unsigned local `Hebrew Live.app` can be built in two stages: a PyInstaller
+`onedir` proof engine and an Electron shell that embeds that engine outside ASAR.
+The desktop app prepares exactly three external model components (Hebrew ASR,
+MiLMMT, and Silero VAD), totalling 3,833,075,730 pinned bytes; it does not download
+the optional multilingual CLI ASR model. The existing four-component CLI setup
+continues to work, so the approximately 5.1 GB CLI note below must not be used as
+the desktop download estimate.
+
+See [the desktop build procedure](docs/DESKTOP_BUILD.md) and [the local acceptance
+report](docs/DESKTOP_TEST_REPORT.md). The app has been exercised only on the
+MacBook Air / Apple M5 / 16 GiB / macOS 27.0 configuration documented there.
+Signing, notarization, publication, updates, and clean installation on another Mac
+remain outside the verified result.
+
 ## GitHub and clean-source quickstart
 
 Install [`uv`](https://docs.astral.sh/uv/), then clone the repository and run the
