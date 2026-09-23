@@ -10,7 +10,7 @@ from pathlib import Path
 
 ALLOWED_ROOTS={
     '.github','.gitignore','CHANGELOG.md','CONTRIBUTING.md','PRIVACY.md','PUBLIC-MANIFEST.json',
-    'README.md','README.ru.md','LICENSE','SECURITY.md','SUPPORT.md','desktop','docs','experiments',
+    'README.md','LICENSE','SECURITY.md','SUPPORT.md','desktop','docs','experiments',
     'constraints.txt','pyproject.toml','run.sh','scripts','src','tests','uv.lock',
 }
 FORBIDDEN_PARTS={
@@ -57,9 +57,9 @@ def check(root:Path)->dict:
             for label,pattern in PRIVATE_PATTERNS.items():
                 if pattern.search(text):errors.append(f'{label}: {relative}')
     required=[
-        'README.md','README.ru.md','LICENSE','SECURITY.md','PRIVACY.md','CONTRIBUTING.md',
+        'README.md','LICENSE','SECURITY.md','PRIVACY.md','CONTRIBUTING.md',
         'constraints.txt','run.sh',
-        'docs/DOCKER.md','docs/THIRD_PARTY.md','docs/RELEASE_READINESS.md',
+        'docs/CLI.md','docs/DOCKER.md','docs/THIRD_PARTY.md','docs/RELEASE_READINESS.md',
         'docs/DESKTOP_BUILD.md','docs/DESKTOP_TEST_REPORT.md',
         'docs/images/language-settings.jpg','docs/images/live-translation.jpg',
         'docs/images/session-archive.jpg',

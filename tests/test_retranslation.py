@@ -158,7 +158,11 @@ class LiveTransportTests(unittest.TestCase):
    ui.live_root=Path(folder)
    (ui.live_root/'live.html').write_text('<script src="./assets/test.js"></script>')
    with urllib.request.urlopen(ui.url+'live/') as response:
-    self.assertIn(b'./assets/',response.read());self.assertIn("font-src 'self'",response.headers['Content-Security-Policy'])
+    self.assertIn(b'./assets/',response.read())
+    policy=response.headers['Content-Security-Policy']
+    self.assertIn("script-src 'self'",policy);self.assertNotIn("script-src 'self' 'unsafe-inline'",policy)
+    self.assertIn("style-src 'self' 'unsafe-inline'",policy)
+    self.assertIn("font-src 'self'",policy)
    for suffix in ['live/../.local-settings/preferences.json','live/%2e%2e/package.json','live/assets/missing.js']:
     with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(ui.url+suffix)
    payload=json.dumps({'action':'publication','value':'revisable'}).encode()

@@ -50,12 +50,10 @@ Verified results:
   run did not fall back to `.venv`.
 
 Two acoustic Hebrew-to-Russian checks played speech through the Mac speakers
-and captured it through the physical microphone:
-
-1. `שלום, זאת בדיקה של התרגום החי. תודה רבה, תודה רבה.` became
-   `Здравствуйте, это проверка живого перевода. Большое спасибо, большое спасибо.`
-2. `שלום, זאת בדיקה של התרגום החי. תודה רבה.` became
-   `Здравствуйте, это проверка живого перевода. Большое спасибо.`
+and captured it through the physical microphone. The first translated the test
+phrase as the Russian equivalent of “Hello, this is a live translation test.
+Thank you very much, thank you very much.” The shorter second check produced the
+same result with one closing “thank you very much.”
 
 The second short proof session measured MiLMMT load at 1.977 s, warmup at
 2.533 s, MLX peak memory at 4,371,638,122 bytes, ASR p50/p95 at
@@ -102,8 +100,8 @@ and warmup completed before the language step was shown.
 After preparation, the same copy was launched with `HF_HUB_OFFLINE=1`,
 `TRANSFORMERS_OFFLINE=1`, and an unreachable HTTPS proxy. It reached “Ready to
 begin”, captured the physical microphone, and translated the control phrase to
-`Здравствуйте, это проверка живого перевода. Большое спасибо.` without network
-access.
+the expected Russian equivalent of “Hello, this is a live translation test.
+Thank you very much.” without network access.
 
 The reported layout defect in which the Russian Settings panel moved under the
 left archive column was reproduced. The settings trigger now consumes the
@@ -190,8 +188,9 @@ RSS are both views of unified memory and are not added together.
 - A clean install on another Mac has not been tested.
 - Physical microphone refusal was not re-created because the host already had
   permission; changing macOS privacy settings was not part of this unattended
-  run. Denied/no-device/no-signal states are distinct in code and automated
-  tests, but only granted/no-signal were physically observed.
+  run. Granted access was physically observed both with a detected input signal
+  in the packaged Electron meter and with no audible signal. Denied and no-device
+  states remain covered by code and automated tests only.
 - The measurements describe this Mac and this workload only. In particular,
   16 GiB is the tested reference, not a proven minimum, and the observed
   system-wide swap cannot be assigned entirely to the application.

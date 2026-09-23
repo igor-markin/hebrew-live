@@ -17,8 +17,8 @@
   sync, offline `--no-sync` prepared launches, and BYO-path support;
 - build-derived third-party notices with exact license texts and lock provenance for
   every package embedded in the production browser output;
-- public installation, privacy, security, support, architecture, dependency, and release
-  documentation in English, plus a Russian quickstart;
+- user-focused README plus task-specific installation, CLI, privacy, security,
+  architecture, dependency, acceptance, and release documentation in English;
 - English-default interface localization with Russian and Hebrew/RTL choices, persisted
   independently from the translation target;
 - MiLMMT-scoped Hebrew translation targets (English by default), ordered live target

@@ -16,11 +16,11 @@ from check_public_tree import check
 
 ROOT=Path(__file__).resolve().parents[1]
 ROOT_FILES=(
-    '.gitignore','README.md','README.ru.md','LICENSE','CHANGELOG.md','CONTRIBUTING.md','PRIVACY.md',
+    '.gitignore','README.md','LICENSE','CHANGELOG.md','CONTRIBUTING.md','PRIVACY.md',
     'SECURITY.md','SUPPORT.md','pyproject.toml','run.sh','uv.lock','constraints.txt',
 )
 DOC_FILES=(
-    'ARCHITECTURE.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
+    'ARCHITECTURE.md','CLI.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
     'RELEASE_READINESS.md','THIRD_PARTY.md','DESKTOP_BUILD.md','DESKTOP_TEST_REPORT.md',
     'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
 )

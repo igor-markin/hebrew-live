@@ -41,7 +41,7 @@ include = [
     "/uv.lock",
     "/constraints.txt",
     "/README.md",
-    "/README.ru.md",
+    "/docs",
     "/LICENSE",
     "/CHANGELOG.md",
     "/CONTRIBUTING.md",
