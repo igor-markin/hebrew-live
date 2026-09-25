@@ -169,8 +169,11 @@
 .fragment-failed {display:flex;align-items:center;gap:8px;margin:0;padding:13px 16px;font-weight:600}
 .fragment-failed>span {display:flex;flex-direction:column;gap:2px}
 .fragment-failed small {color:var(--muted);font-size:11px;font-weight:400}
+.fragment-muted {color:var(--muted);font-weight:500;padding:9px 16px}
+.fragment-muted svg {width:15px;height:15px}
 .fragment-retry {display:flex;align-items:center;gap:10px;padding:0 12px 12px}
 .fragment-retry small {color:var(--muted);font-size:11px}
+.bubble-unconfirmed {color:var(--muted)}
 .chat-bubble--issue {border-color:color-mix(in srgb,#b84b4b 55%,var(--border))}
 .session-list-error {padding:10px;color:var(--muted);font-size:12px}
 .session-list-error p {margin:0 0 8px}

@@ -5,10 +5,33 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from hebrew_live.desktop_control import DesktopController, ProtocolError, ProtocolWriter, parse_message
+from hebrew_live.desktop_control import DesktopController, ProtocolError, ProtocolWriter, desktop_asr_backend, desktop_inventory, parse_message
 
 
 class DesktopControlTests(unittest.TestCase):
+    def test_desktop_fast_asr_is_fixed_even_with_old_saved_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            models = Path(tmp) / "models"
+            self.assertEqual(desktop_asr_backend(models), "fast")
+            from hebrew_live.preferences import save
+            save(models.parent / ".local-settings",
+                 models={"asr": "turbo", "translation": "milmmt"})
+            self.assertEqual(desktop_asr_backend(models), "fast")
+
+    def test_desktop_inventory_uses_all_bundled_components(self):
+        components = [
+            {"key": key, "files": [{"bytes": size}]}
+            for key, size in (("fast_asr", 100), ("translation", 200), ("vad", 3))
+        ]
+        inventory = {"components": components, "total_bytes": 303}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("hebrew_live.desktop_control.load_inventory", return_value=inventory):
+            models = Path(tmp) / "models"
+            selected = desktop_inventory(models)
+            self.assertEqual([item["key"] for item in selected["components"]],
+                             ["fast_asr", "translation", "vad"])
+            self.assertEqual(selected["total_bytes"], 303)
+
     def test_protocol_requires_version_identity_command_and_object_payload(self):
         valid = parse_message(b'{"v":1,"id":"one","command":"preflight"}')
         self.assertEqual(valid["payload"], {})
@@ -45,7 +68,7 @@ class DesktopControlTests(unittest.TestCase):
                 "ui_locale": "en", "target_language": "ru", "save_raw_audio": True,
             })
             self.assertEqual(saved["target_language"], "ru")
-            self.assertTrue((root / ".local-settings" / "preferences.json").is_file())
+            self.assertTrue((root / "data" / ".local-settings" / "preferences.json").is_file())
             self.assertFalse((root / "data" / "desktop" / "preferences.json").exists())
 
     def test_diagnostics_excludes_paths_tokens_and_conversation_content(self):

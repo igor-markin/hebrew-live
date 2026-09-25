@@ -155,7 +155,9 @@ class RetranslationProcessor:
         e.language, e.direction, e.topic = f.settings.language, f.settings.direction, f.settings.topic
         # Bound growing work. This is an explicit technical split, not a pause.
         # Keep a remainder and process it on the next real snapshot/final below.
-        limit=round(self.settings.draft_max_audio_seconds*16000)
+        max_seconds=self.settings.draft_max_audio_seconds
+        if getattr(e,'backend',None)=='fast':max_seconds=min(max_seconds,20.0)
+        limit=round(max_seconds*16000)
         while len(self.audio) > limit:
             remainder = self.audio[limit:].copy()
             full_end = self.end
@@ -261,6 +263,14 @@ class RetranslationProcessor:
                 return
         else:
             reason='disabled' if not self.settings.draft_catchup_enabled else 'not_eligible_or_already_used'
+        # Keep the first translation and every closing translation. When newer
+        # audio is already queued, an intermediate refresh would only occupy
+        # the single ASR/MT worker while the next spoken words wait unread.
+        if (job.kind=='refresh' and not job.catchup_used and self.catchup_inbox is not None and
+                self.visible is not None and job.end/16000-self.visible['end'] < 4. and
+                self.catchup_inbox.newer_audio_waiting(self.last)):
+            self.mt_event('mt_skipped_superseded_refresh',job,reason='newer_audio_queued')
+            return
         self.execute_mt(job,decision=reason)
 
     def execute_mt(self, job, decision):
@@ -276,7 +286,8 @@ class RetranslationProcessor:
                 self.mt_event('mt_discarded',job,reason='cancelled');return
             output += piece
             if repetition_loop(output): issue = 'Повтор генерации'; break
-        if end_reason != 'stop': issue = issue or 'Перевод не завершён'
+        if end_reason == 'repetition': issue = issue or 'Повтор генерации'
+        elif end_reason != 'stop': issue = issue or 'Перевод не завершён'
         if not output.strip(): issue = issue or 'Пустой перевод'
         self.log.event('live_mt', segment=self.sid, source=text, translation=output,
                        seconds=time.monotonic()-began, finish_reason=end_reason, issue=issue)

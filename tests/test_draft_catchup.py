@@ -88,11 +88,37 @@ class CatchupTests(unittest.TestCase):
    if kind=='eof':inbox.finish()
    if kind=='fifo':f.settings=replace(self.settings,generation=1);inbox.put(self.f(128000,4,True,'silence'))
    self.assertIsNone(inbox.take_draft_catchup(self.f(64000,2),0,64000)[0]);self.assertIs(inbox.get(),f)
- def test_missing_snapshot_and_disabled(self):
-  for enabled in (False,True):
-   self.setUp();self.settings=replace(self.settings,draft_catchup_enabled=enabled);self.prime()
-   if not enabled:self.inbox.put(self.f(96000,3))
-   self.runf(self.f(64000,2),'pending');self.assertEqual(self.mt,['first','pending']);self.assertFalse(self.ev('mt_deferred_for_asr'))
+  def test_missing_snapshot_runs_refresh_with_or_without_catchup(self):
+   for enabled in (False,True):
+    self.setUp();self.settings=replace(self.settings,draft_catchup_enabled=enabled);self.prime()
+    self.runf(self.f(64000,2),'pending');self.assertEqual(self.mt,['first','pending']);self.assertFalse(self.ev('mt_deferred_for_asr'))
+  def test_backlog_skips_only_intermediate_refresh(self):
+   self.settings=replace(self.settings,draft_catchup_enabled=False)
+   final=self.f(96000,3,True,'silence')
+   self.inbox.put(final);self.prime()
+   self.runf(self.f(64000,2),'pending')
+   self.assertEqual(self.mt,['first'])
+   self.assertEqual(len(self.ev('mt_skipped_superseded_refresh')),1)
+   self.assertIs(self.inbox.get(),final)
+   self.runf(final,'final')
+   self.assertEqual(self.mt,['first','final'])
+   self.assertEqual(self.pubs()[-1]['stage'],'closed')
+   self.assertEqual(self.pubs()[-1]['current']['translation'],'RU final')
+  def test_backlog_skip_respects_control_barrier(self):
+   self.settings=replace(self.settings,draft_catchup_enabled=False)
+   self.prime()
+   self.inbox.put_boundary(Boundary(self.settings,'clear'))
+   self.inbox.put(self.f(96000,3,True,'silence'))
+   self.runf(self.f(64000,2),'pending')
+   self.assertEqual(self.mt,['first','pending'])
+   self.assertFalse(self.ev('mt_skipped_superseded_refresh'))
+  def test_backlog_still_refreshes_after_four_seconds_of_new_audio(self):
+   self.settings=replace(self.settings,draft_catchup_enabled=False)
+   self.prime()
+   self.inbox.put(self.f(128000,3,True,'silence'))
+   self.runf(self.f(96000,2),'pending')
+   self.assertEqual(self.mt,['first','pending'])
+   self.assertFalse(self.ev('mt_skipped_superseded_refresh'))
  def test_cancel_during_catchup(self):
   self.prime();self.inbox.put(self.f(96000,3));self.hook=lambda:self.cancel.set() if len(self.pcm)==3 else None
   self.runf(self.f(64000,2),'pending','new');self.assertEqual(self.mt,['first'])

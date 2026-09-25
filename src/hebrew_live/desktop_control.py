@@ -16,8 +16,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .desktop_download import DesktopDownloadError, DownloadCancelled, prepare_models
-from .desktop_preflight import check_computer, load_inventory
+from .desktop_download import DesktopDownloadError, DownloadCancelled, prepare_models, verify_accurate_asr
+from .desktop_locations import resolve_model_locations
+from .desktop_preflight import accurate_inventory, bundled_models, check_computer, load_inventory
 
 
 PROTOCOL_VERSION = 1
@@ -88,7 +89,20 @@ class _WarmupLog:
         self.writer.event("warmup_error", {"type": type(exc).__name__})
 
 
-def warmup_models(models: Path, writer: ProtocolWriter, cancel: threading.Event) -> dict[str, Any]:
+def desktop_asr_backend(models: Path, selected: str = "fast") -> str:
+    """Only the two supported desktop modes may reach the worker."""
+    if selected not in ("fast", "turbo"):
+        raise DesktopDownloadError("unsupported_mode", "Unsupported recognition mode.")
+    return selected
+
+
+def desktop_inventory(models: Path) -> dict[str, Any]:
+    """One pinned inventory describes bundled and external desktop assets."""
+    return load_inventory()
+
+
+def warmup_models(models: Path, writer: ProtocolWriter, cancel: threading.Event,
+                  backend: str = "fast") -> dict[str, Any]:
     writer.event("preparation_phase", {"phase": "warming"})
     from .cli import VAD
     import numpy as np
@@ -98,7 +112,9 @@ def warmup_models(models: Path, writer: ProtocolWriter, cancel: threading.Event)
         raise DownloadCancelled()
     from .remote_engine import RemoteEngine
     log = _WarmupLog(writer)
-    engine = RemoteEngine(models, log, language="he", direction="he-en", stop=cancel, cancel=cancel)
+    engine = RemoteEngine(models, log, language="he", direction="he-en",
+                          backend=desktop_asr_backend(models, backend),
+                          stop=cancel, cancel=cancel)
     try:
         if cancel.is_set():
             engine.interrupt()
@@ -117,9 +133,13 @@ def _source_command() -> list[str]:
 class DesktopController:
     def __init__(self, data_home: Path, models: Path, writer: ProtocolWriter):
         self.data_home = data_home.expanduser().resolve()
-        self.models = models.expanduser().resolve()
+        self.bundled = bundled_models()
+        if getattr(sys, "frozen", False) and self.bundled is None:
+            raise RuntimeError("The packaged app is missing its bundled models")
+        self.locations = resolve_model_locations(self.data_home, models, bundled=self.bundled)
+        self.models = self.locations.external
         self.writer = writer
-        self.inventory = load_inventory()
+        self.inventory = desktop_inventory(self.models)
         self.cancel_prepare = threading.Event()
         self.prepare_thread: threading.Thread | None = None
         self.backend: subprocess.Popen[bytes] | None = None
@@ -136,33 +156,49 @@ class DesktopController:
 
     def preflight(self) -> dict[str, Any]:
         self.writer.event("preflight_phase", {"phase": "checking"})
-        result = check_computer(self.models, inventory=self.inventory)
+        result = check_computer(self.models, inventory=self.inventory, bundled_root=self.bundled)
         self.last_preflight = result
         self.writer.event("preflight_complete", result)
         return result
 
-    def start_preparation(self) -> None:
+    def accurate_status(self) -> dict[str, Any]:
+        optional = next(item for item in accurate_inventory()["components"] if item["key"] == "asr")
+        info = {"total_bytes": sum(item["bytes"] for item in optional["files"]),
+                "terms_url": optional["terms_url"]}
+        try:
+            verify_accurate_asr(self.models)
+        except DesktopDownloadError:
+            return {**info, "ready": False}
+        return {**info, "ready": True}
+
+    def start_preparation(self, backend: str = "fast") -> None:
+        desktop_asr_backend(self.models, backend)
         with self.lock:
             if self.preparing:
                 raise DesktopDownloadError("busy", "Model preparation is already running.")
             if self.backend and self.backend.poll() is None:
                 raise DesktopDownloadError("busy", "The live backend is running.")
             self.cancel_prepare = threading.Event()
-            self.prepare_thread = threading.Thread(target=self._prepare, name="desktop-model-preparation", daemon=True)
+            self.prepare_thread = threading.Thread(target=self._prepare, args=(backend,),
+                                                   name="desktop-model-preparation", daemon=True)
             self.prepare_thread.start()
 
-    def _prepare(self) -> None:
+    def _prepare(self, backend: str) -> None:
         try:
+            inventory = accurate_inventory() if backend == "turbo" else self.inventory
             result = prepare_models(
                 self.models,
                 cancelled=self.cancel_prepare.is_set,
                 emit=self.writer.event,
-                inventory=self.inventory,
+                inventory=inventory,
+                bundled_root=self.bundled,
             )
-            result.update(warmup_models(self.models, self.writer, self.cancel_prepare))
+            if backend == "turbo":
+                verify_accurate_asr(self.models)
+            result.update(warmup_models(self.models, self.writer, self.cancel_prepare, backend))
             if self.cancel_prepare.is_set():
                 raise DownloadCancelled()
-            self.writer.event("preparation_complete", result)
+            self.writer.event("preparation_complete", {**result, "asr_backend": backend})
         except DownloadCancelled:
             self.writer.event("preparation_paused", {"code": "cancelled"})
         except DesktopDownloadError as exc:
@@ -178,13 +214,14 @@ class DesktopController:
         if allowed.get("ui_locale") not in (None, "en", "ru"):
             raise ProtocolError("unsupported_interface_language")
         from .preferences import save
-        folder = self.models.parent / ".local-settings"
+        folder = self.data_home / ".local-settings"
+        self.data_home.mkdir(parents=True, exist_ok=True)
         save(folder, **allowed)
         return self.read_preferences()
 
     def read_preferences(self) -> dict[str, Any]:
         from .preferences import read
-        saved = read(self.models.parent / ".local-settings")
+        saved = read(self.data_home / ".local-settings")
         return {key: saved[key] for key in ("ui_locale", "target_language", "save_raw_audio") if key in saved}
 
     def _backend_event_reader(self, descriptor: int) -> None:
@@ -223,7 +260,8 @@ class DesktopController:
                 self.backend_log = None
         self.writer.event("backend_exit", {"code": code, "expected": expected})
 
-    def start_backend(self) -> None:
+    def start_backend(self, backend: str = "fast") -> None:
+        desktop_asr_backend(self.models, backend)
         with self.lock:
             if self.preparing:
                 raise DesktopDownloadError("busy", "Model preparation is still running.")
@@ -231,8 +269,14 @@ class DesktopController:
                 if self.backend_url:
                     self.writer.event("backend_ready", {"url": self.backend_url})
                 return
-            from .cli import desktop_model_download_keys, verify
-            verify(self.models, desktop_model_download_keys())
+            from .desktop_download import file_verified, iter_model_files, verify_desktop_external
+            verify_desktop_external(self.models, self.inventory)
+            if backend == "fast":
+                if any(not file_verified((self.bundled or self.models) / item.relative, item)
+                       for item in iter_model_files(self.inventory) if item.component == "fast_asr"):
+                    raise DesktopDownloadError("corrupt_file", "The fast recognition model must be prepared again.")
+            else:
+                verify_accurate_asr(self.models)
             desktop_folder = self.data_home / "desktop"
             desktop_folder.mkdir(parents=True, exist_ok=True)
             log_path = desktop_folder / "backend.log"
@@ -253,6 +297,7 @@ class DesktopController:
             })
             command = [*_source_command(), "--models", str(self.models), "--log-dir", str(self.data_home / "logs"),
                        "listen", "--ui", "browser", "--start-paused", "--no-open-browser"]
+            command.extend(("--asr-backend", backend))
             try:
                 process = subprocess.Popen(
                     command,
@@ -279,7 +324,7 @@ class DesktopController:
                              name="desktop-backend-events").start()
             threading.Thread(target=self._backend_monitor, args=(process, parent_write_fd), daemon=True,
                              name="desktop-backend-monitor").start()
-            self.writer.event("backend_starting", {"pid": process.pid})
+            self.writer.event("backend_starting", {"pid": process.pid, "asr_backend": backend})
 
     def backend_state(self) -> dict[str, Any]:
         with self.lock:
@@ -397,7 +442,10 @@ def main(argv: list[str] | None = None) -> int:
                     from .languages import target_language_options
                     writer.response(identity, {"source": "he", "targets": target_language_options()})
                 elif command == "prepare":
-                    controller.start_preparation();writer.response(identity, {"started": True})
+                    backend = payload.get("asr_backend", "fast")
+                    controller.start_preparation(backend);writer.response(identity, {"started": True})
+                elif command == "accurate_status":
+                    writer.response(identity, controller.accurate_status())
                 elif command == "cancel_prepare":
                     controller.cancel_prepare.set();writer.response(identity, {"cancelled": True})
                 elif command == "preferences":
@@ -405,7 +453,8 @@ def main(argv: list[str] | None = None) -> int:
                 elif command == "save_preferences":
                     writer.response(identity, controller.save_preferences(payload))
                 elif command == "start_backend":
-                    controller.start_backend();writer.response(identity, {"started": True})
+                    backend = payload.get("asr_backend", "fast")
+                    controller.start_backend(backend);writer.response(identity, {"started": True})
                 elif command == "backend_state":
                     writer.response(identity, controller.backend_state())
                 elif command == "backend_action":

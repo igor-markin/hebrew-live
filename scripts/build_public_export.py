@@ -22,10 +22,12 @@ ROOT_FILES=(
 DOC_FILES=(
     'ARCHITECTURE.md','CLI.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
     'RELEASE_READINESS.md','THIRD_PARTY.md','DESKTOP_BUILD.md','DESKTOP_TEST_REPORT.md',
+    'DISTRIBUTION.md','legal/EULA.en.txt','legal/EULA.ru.txt',
     'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
 )
 SCRIPT_FILES=('build_public_export.py','check_public_tree.py','ci_clean_smoke.py','generate_dependency_inventory.py',
-              'probe_installed_package.py','build_macos_engine_app.py','prepare_desktop_proof_models.py',
+              'probe_installed_package.py','build_macos_engine_app.py','export_fast_hebrew_onnx.py',
+              'prepare_desktop_proof_models.py',
               'prepare_desktop_proof_app.py','macos_bundle_report.py','measure_macos_processes.py')
 FRONTEND_FILES=(
     'README.md','package.json','package-lock.json','tsconfig.json','vite.config.ts','index.html','live.html',
@@ -41,11 +43,14 @@ ELECTRON_FILES=(
     'desktop/electron/package.json','desktop/electron/package-lock.json','desktop/electron/tsconfig.json',
     'desktop/electron/scripts/copy-assets.mjs','desktop/electron/scripts/cdp-qa.mjs',
     'desktop/electron/scripts/cdp-preparation-qa.mjs',
-    'desktop/electron/src/lifecycle.ts','desktop/electron/src/main.ts','desktop/electron/src/preferences.ts',
+    'desktop/electron/scripts/check-dmg-size.mjs',
+    'desktop/electron/src/backendNavigation.ts','desktop/electron/src/lifecycle.ts',
+    'desktop/electron/src/main.ts','desktop/electron/src/preferences.ts',
     'desktop/electron/src/preload.cts','desktop/electron/src/protocol.ts','desktop/electron/src/security.ts',
     'desktop/electron/src/shared.ts','desktop/electron/src/renderer/index.html',
     'desktop/electron/src/renderer/index.ts','desktop/electron/src/renderer/styles.css',
-    'desktop/electron/tests/lifecycle.test.ts','desktop/electron/tests/preferences.test.ts',
+    'desktop/electron/tests/backendNavigation.test.ts','desktop/electron/tests/lifecycle.test.ts',
+    'desktop/electron/tests/preferences.test.ts',
     'desktop/electron/tests/security.test.ts',
 )
 

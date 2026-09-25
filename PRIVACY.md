@@ -16,9 +16,13 @@ when the application itself does not transmit them.
 
 ## Network activity
 
-Network access is expected only when installing dependencies or running `setup`.
-Setup contacts Hugging Face for pinned model repositories and GitHub raw content for
-the pinned Silero VAD file. The runtime sets Hugging Face, Transformers, and ONNX
+Network access is expected when installing dependencies, running CLI `setup`, or
+preparing/repairing MiLMMT in the desktop app, or preparing the optional accurate
+Whisper mode. Desktop preparation downloads the pinned MiLMMT files from Hugging
+Face and downloads pinned Whisper files only if Accurate recognition is selected;
+CLI setup also contacts GitHub raw
+content for the pinned Silero VAD file. Live recognition and translation run
+locally after preparation. The runtime sets Hugging Face, Transformers, and ONNX
 telemetry/offline controls; this is an implementation control, not a claim about every
 third-party package on the machine.
 

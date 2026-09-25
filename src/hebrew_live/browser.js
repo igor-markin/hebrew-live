@@ -58,6 +58,16 @@ function render(s){
    u.target.dir=g.direction?(g.direction==='ru-he'?'rtl':'ltr'):direction(b.translation);
    setText(u.status,b.issue?'Перевод не завершён':b.complete?'':'Перевожу…');newest=u;
   }
+  if(g.live?.current){
+   const current=g.live.current;
+   let u=c.units.get('live');
+   if(!u){u=unitCard(c,{id:g.id+':live',source:current.source,direction:g.direction});c.units.set('live',u);appended=true;}
+   setText(u.source,current.source||'');
+   setText(u.target,current.translation||'');
+   u.target.dir=g.direction==='ru-he'?'rtl':'ltr';
+   setText(u.status,g.live.issue||(!current.translation?'Перевожу…':''));
+   newest=u;
+  }
   if((g.final||g.final_progress||g.correction)&&!(g.final||g.final_progress||g.correction).sequential){
    const final=g.final||g.final_progress||g.correction;
    if(!c.finalUnit){
@@ -153,7 +163,7 @@ $('timing-reset').addEventListener('click',()=>{if(timingDefaults){fillTiming(ti
 
 let modelsInitialized=false;
 function updateModels(s){
- if(s.model_options&&!modelsInitialized){for(const [kind,id] of [['asr','asr-choice'],['translation','translation-choice']]){for(const [value,label] of Object.entries(s.model_options[kind])){const option=document.createElement('option');option.value=value;option.textContent=label;$(id).append(option);}$(id).value=s.model_selection[kind];}modelsInitialized=true;}
+ if(s.model_options&&s.model_selection&&!modelsInitialized){for(const [kind,id] of [['asr','asr-choice'],['translation','translation-choice']]){for(const [value,label] of Object.entries(s.model_options[kind]||{})){const option=document.createElement('option');option.value=value;option.textContent=label;$(id).append(option);}$(id).value=s.model_selection[kind];}modelsInitialized=true;}
  for(const id of ['model-apply','asr-choice','translation-choice'])$(id).disabled=!modelsInitialized||!!s.model_switching||!!s.finished;
  if(s.model_switching)$('pause').disabled=true;else $('pause').disabled=!!s.finished;
  if(s.model_message)setText($('model-status'),s.model_message);

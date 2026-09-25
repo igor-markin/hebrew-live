@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "total_bytes": 1613977880,
+  "components": [
+    {
+      "key": "asr",
+      "label": "ivrit.ai Whisper Turbo Hebrew speech recognition",
+      "folder": "asr",
+      "repo": "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx",
+      "revision": "53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+      "terms_url": "https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+      "files": [
+        {"path": "config.json", "bytes": 268, "sha256": "b34fc29e4e11e0a25e812775dd67f4dd16fc2c8eb43d28ae25ff7d660ecb6379"},
+        {"path": "weights.safetensors", "bytes": 1613977612, "sha256": "f69cfdd61a6169f4b29a7813e32f9d7f128b5bc07f0b6c09dbf2ef44ac3fb13f"}
+      ]
+    }
+  ]
+}

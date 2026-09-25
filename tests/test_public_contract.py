@@ -99,6 +99,15 @@ class PublicContractTests(unittest.TestCase):
                 (models/'manifest.json').write_text(json.dumps(manifest))
                 verify(models,set(assets))
 
+    def test_bundled_fast_asr_needs_only_translation_and_vad_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            models=Path(tmp);assets=['translation','vad']
+            manifest={'schema_version':2,'assets':assets,'spec':SPEC,'files':model_files(models,assets)}
+            (models/'manifest.json').write_text(json.dumps(manifest))
+            verify(models,set(assets))
+            with self.assertRaisesRegex(RuntimeError,'absent from the setup manifest'):
+                verify(models,{'asr'})
+
     def test_old_manifest_may_keep_retired_unused_files_without_exposing_them(self):
         with tempfile.TemporaryDirectory() as tmp:
             models=Path(tmp);assets=['asr','asr_multilingual','translation','vad']

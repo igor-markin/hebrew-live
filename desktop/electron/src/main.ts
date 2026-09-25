@@ -15,10 +15,11 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopControllerClient } from "./protocol.js";
-import { DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "./preferences.js";
+import { acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "./preferences.js";
 import { allowedBackendUrl, allowedExternalUrl, preferredUiLocale } from "./security.js";
-import type { BootstrapData, ControllerEvent, DesktopPreferences } from "./shared.js";
+import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type RecognitionMode, type UiLocale } from "./shared.js";
 import { quitSituation, type BackendState } from "./lifecycle.js";
+import { navigateBackend } from "./backendNavigation.js";
 
 const APP_DATA_FOLDER = "Hebrew Live CLI";
 const GITHUB_URL = "https://github.com/igor-markin/hebrew-live";
@@ -55,7 +56,8 @@ let allowWindowClose = false;
 let quitInProgress = false;
 let microphoneExpectedUntil = 0;
 let backendBase: string | null = null;
-let prepViewReason: "normal" | "help" | "backend_crash" = "normal";
+let prepViewReason: "normal" | "help" | "backend_crash" | "accurate_setup" = "normal";
+let navigationGeneration = 0;
 
 function publicError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -75,6 +77,19 @@ function onboardingImages(): string[] {
     .map((name) => pathToFileURL(path.join(folder, name)).href);
 }
 
+function legalText(document: UiLocale | "gemma"): string {
+  const name = document === "gemma" ? "gemma_terms.txt" : `EULA.${document}.txt`;
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, "legal", name)
+    : document === "gemma" ? path.resolve(app.getAppPath(), "../../src/hebrew_live/gemma_terms.txt")
+      : path.resolve(app.getAppPath(), `../../docs/legal/${name}`);
+  return readFileSync(file, "utf8");
+}
+
+function requireAcceptedAgreement(): void {
+  if (preferences.acceptedAgreementVersion !== AGREEMENT_VERSION) throw new Error("agreement_not_accepted");
+}
+
 function prepFile(): string {
   return path.join(app.getAppPath(), "build", "renderer", "index.html");
 }
@@ -89,10 +104,26 @@ function showMessageBox(options: MessageBoxOptions): Promise<MessageBoxReturnVal
 }
 
 async function loadPreparation(reason: typeof prepViewReason = "normal"): Promise<void> {
+  navigationGeneration += 1;
   prepViewReason = reason;
   backendBase = null;
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  await mainWindow.loadFile(prepFile());
+  const window = mainWindow;
+  await window.loadFile(prepFile());
+  if (!window.isDestroyed()) window.webContents.invalidate();
+}
+
+async function showBackend(url: string): Promise<void> {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  const generation = ++navigationGeneration;
+  const current = () => generation === navigationGeneration && mainWindow === window;
+  const loaded = await navigateBackend(window, url, current);
+  if (loaded && current() && !window.isDestroyed()) window.webContents.invalidate();
+  if (!loaded && current() && !window.isDestroyed()) {
+    controllerError = "backend_ui_unavailable";
+    await loadPreparation("backend_crash");
+  }
 }
 
 function handleControllerEvent(event: ControllerEvent): void {
@@ -106,7 +137,7 @@ function handleControllerEvent(event: ControllerEvent): void {
       void loadPreparation("backend_crash");
     } else {
       backendBase = allowed.href;
-      void mainWindow?.loadURL(allowed.href);
+      void showBackend(allowed.href);
     }
   }
   if (event.event === "backend_exit" && event.data.expected !== true && !quitInProgress) {
@@ -196,7 +227,9 @@ function createWindow(): BrowserWindow {
     event.preventDefault();
     void requestApplicationQuit();
   });
-  void window.loadFile(prepFile());
+  void window.loadFile(prepFile()).then(() => {
+    if (!window.isDestroyed()) window.webContents.invalidate();
+  });
   return window;
 }
 
@@ -387,10 +420,45 @@ function registerIpc(): void {
   ipcMain.handle("desktop:inventory", () => control("inventory"));
   ipcMain.handle("desktop:languages", () => control("languages"));
   ipcMain.handle("desktop:preflight", () => control("preflight"));
+  ipcMain.handle("desktop:legal-text", (_event, document: UiLocale | "gemma") =>
+    legalText(document === "ru" || document === "gemma" ? document : "en"));
+  ipcMain.handle("desktop:accept-agreement", () => {
+    preferences = acceptDesktopAgreement(preferencesFile, preferences, AGREEMENT_VERSION);
+    return preferences;
+  });
   ipcMain.handle("desktop:prepare", async () => {
+    requireAcceptedAgreement();
     preparing = true;
     try { return await control("prepare"); }
     catch (error) { preparing = false; throw error; }
+  });
+  ipcMain.handle("desktop:prepare-accurate", async () => {
+    requireAcceptedAgreement();
+    if (preferences.asrBackend !== "turbo") throw new Error("accurate_mode_not_selected");
+    preparing = true;
+    try { return await control("prepare", { asr_backend: "turbo" }); }
+    catch (error) { preparing = false; throw error; }
+  });
+  ipcMain.handle("desktop:accurate-status", () => control("accurate_status"));
+  ipcMain.handle("desktop:set-recognition-mode", async (_event, mode: RecognitionMode) => {
+    requireAcceptedAgreement();
+    if (mode !== "fast" && mode !== "turbo") throw new Error("unsupported_recognition_mode");
+    if (preparing) throw new Error("model_preparation_running");
+    const state = await control("backend_state") as BackendState;
+    if (state.running && (!state.ready || (!state.finished && state.recording_started !== false))) {
+      throw new Error("finish_current_recording_first");
+    }
+    if (mode === preferences.asrBackend) return;
+    if (state.running) {
+      await control("backend_action", { action: "quit" });
+      if (!await waitForBackendExit(30_000)) throw new Error("backend_did_not_stop");
+    }
+    preferences = saveDesktopPreferences(preferencesFile, preferences, { asrBackend: mode });
+    if (mode === "turbo" && !(await control("accurate_status")).ready) {
+      await loadPreparation("accurate_setup");
+      return;
+    }
+    await control("start_backend", { asr_backend: mode });
   });
   ipcMain.handle("desktop:cancel-preparation", () => control("cancel_prepare"));
   ipcMain.handle("desktop:engine-preferences", () => control("preferences"));
@@ -409,10 +477,14 @@ function registerIpc(): void {
     if (!granted) granted = await systemPreferences.askForMediaAccess("microphone");
     return { granted, status: systemPreferences.getMediaAccessStatus("microphone") };
   });
-  ipcMain.handle("desktop:start-backend", () => control("start_backend"));
+  ipcMain.handle("desktop:start-backend", () => {
+    requireAcceptedAgreement();
+    return control("start_backend", { asr_backend: preferences.asrBackend });
+  });
   ipcMain.handle("desktop:restart-backend", async () => {
+    requireAcceptedAgreement();
     controllerError = undefined;
-    return control("start_backend");
+    return control("start_backend", { asr_backend: preferences.asrBackend });
   });
   ipcMain.handle("desktop:quit", () => requestApplicationQuit());
   ipcMain.handle("desktop:set-ui-locale", (_event, value: "en" | "ru") => {

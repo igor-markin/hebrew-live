@@ -1,0 +1,12 @@
+Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+Hebrew Live bundles the text-only, 4-bit MLX conversion of MiLMMT-46-4B-v1.0
+published by translate-studio at revision 24877ecba801e4b198a5679445501022682d867c.
+MiLMMT is credited to Xiaomi Inc.; its Gemma 3 base is credited to Google.
+The model remains subject to the Gemma Terms of Use and Prohibited Use Policy:
+https://ai.google.dev/gemma/terms
+https://ai.google.dev/gemma/prohibited_use_policy
+
+The complete agreement text copied from the official page on 2026-09-23 is
+included beside this notice as gemma_terms.txt. The model weights are not
+licensed under Hebrew Live's Apache-2.0 code license.

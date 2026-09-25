@@ -30,10 +30,23 @@ def desktop_arguments(config: dict[str, str] | None = None) -> list[str]:
     config = config if config is not None else _bundled_launch_config()
     home = Path(config.get("data_home") or os.environ.get("HEBREW_LIVE_HOME") or
                 Path.home() / "Library" / "Application Support" / "Hebrew Live CLI").expanduser().resolve()
-    models = Path(config.get("models") or home / "models").expanduser().resolve()
+    from .desktop_preflight import bundled_models
+    packaged = bundled_models()
+    if getattr(sys, "frozen", False) and packaged is None:
+        raise RuntimeError("The packaged app is missing its bundled models")
+    if config.get("models"):
+        models = Path(config["models"]).expanduser().resolve()
+    else:
+        from .desktop_locations import resolve_model_locations
+        models = resolve_model_locations(home, home / "models", bundled=packaged).external
     logs = Path(config.get("logs") or home / "logs").expanduser().resolve()
     os.environ["HEBREW_LIVE_HOME"] = str(home)
-    return ["--models", str(models), "--log-dir", str(logs), "listen", "--ui", "browser", "--start-paused"]
+    if packaged and not config.get("models"):
+        os.environ["HEBREW_LIVE_DESKTOP_MANAGED"] = "1"
+    result = ["--models", str(models), "--log-dir", str(logs), "listen", "--ui", "browser", "--start-paused"]
+    if packaged and not config.get("models"):
+        result += ["--asr-backend", "fast"]
+    return result
 
 
 def _bootstrap_event(event: str, **data) -> None:

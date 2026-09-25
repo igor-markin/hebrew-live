@@ -81,40 +81,65 @@ def persist_target_preference(folder, target, save, session):
 def run_session(args, session, browser_ui=None):
     import sounddevice as sd
     import soundfile as sf
-    from .cli import VAD, Inbox, Fragment, segment, verify, validate_custom_models
+    from .cli import VAD, Inbox, Fragment, segment, verify, validate_custom_models, preference_folder as model_preference_folder
     from .remote_engine import RemoteEngine
     from .feed import inference,RetryRequest
     custom_models=validate_custom_models(args.models,getattr(args,'asr_model',None),
-                                         getattr(args,'translation_model',None),getattr(args,'vad_model',None))
+                                         getattr(args,'translation_model',None),getattr(args,'vad_model',None),
+                                         getattr(args,'asr_backend','turbo'))
+    bridge_models = getattr(args, 'bridge_models', None)
+    if bridge_models:
+        from .bridge_preview import validate_bridge_models
+        bridge_models = validate_bridge_models(*bridge_models)
     from .preferences import read as read_preferences,save as save_preferences
     from .model_selection import ASR,TRANSLATION
-    preference_folder=args.models.parent/'.local-settings'
+    preference_folder=model_preference_folder(args.models)
     if browser_ui:browser_ui.preference_folder=preference_folder
     preferences=read_preferences(preference_folder)
     preference_notices=preferences.get('preference_notices',())
     for notice in preference_notices:session.event('preference_migrated',message=notice)
     draft_limit=preferences.get('draft_max_audio_seconds',20.0)
-    session.event('draft_config',max_audio_seconds=draft_limit,catchup_enabled=preferences.get('draft_catchup_enabled',False))
     if preferences.get('models') and not custom_models:
         # Explicit command-line choices override saved browser selections.
         if not any(x=='--asr-backend' or x.startswith('--asr-backend=') for x in sys.argv):args.asr_backend=preferences['models']['asr']
     asr_backend=getattr(args,'asr_backend','turbo')
+    if asr_backend=='fast' and draft_limit>20.0:
+        session.event('draft_limit_model_cap',requested_seconds=draft_limit,applied_seconds=20.0)
+        draft_limit=20.0
+    session.event('draft_config',max_audio_seconds=draft_limit,catchup_enabled=preferences.get('draft_catchup_enabled',False))
     from .languages import split_direction,target_language_options
     source_language,target_language=split_direction(args.direction)
+    if bridge_models and (asr_backend != 'fast' or args.direction not in ('he-en', 'he-ru') or
+                          custom_models.get('translation')):
+        raise ValueError('Bridge preview requires fast Hebrew ASR, he-en or he-ru, and no MLX translation override')
+    target_options = ([option for option in target_language_options()
+                       if option['code'] in ('en', 'ru')] if bridge_models
+                      else target_language_options())
+    if asr_backend=='fast' and source_language!='he':
+        raise ValueError('Fast Hebrew ASR supports Hebrew source audio only')
     required=set()
-    if not custom_models.get('asr'):required.add('asr_multilingual' if asr_backend=='multilingual' else 'asr')
-    if not custom_models.get('translation'):required.add('translation')
+    if not custom_models.get('asr') and asr_backend!='fast':required.add('asr_multilingual' if asr_backend=='multilingual' else 'asr')
+    if not custom_models.get('translation') and not bridge_models:required.add('translation')
     if not custom_models.get('vad'):required.add('vad')
-    if required:verify(args.models,required)
-    asr_label='Custom local MLX Whisper' if custom_models.get('asr') else ASR[asr_backend][0]
-    translation_label=('Custom local MLX-LM · MiLMMT prompt contract'
+    if required:
+        if os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED') == '1' and asr_backend in ('fast','turbo') and not bridge_models:
+            from .desktop_download import verify_accurate_asr,verify_desktop_external
+            from .desktop_preflight import load_inventory
+            verify_desktop_external(args.models, load_inventory())
+            if asr_backend == 'turbo':verify_accurate_asr(args.models)
+        else:
+            verify(args.models,required)
+    asr_label=('Custom local ONNX Hebrew' if asr_backend=='fast' else 'Custom local MLX Whisper') if custom_models.get('asr') else ASR[asr_backend][0]
+    translation_label=('HPLT Hebrew→English + tiny English→Russian · preview'
+                       if bridge_models else 'Custom local MLX-LM · MiLMMT prompt contract'
                        if custom_models.get('translation') else TRANSLATION['milmmt'][0])
     if browser_ui:browser_ui.details(models={'Распознавание':asr_label,'Перевод':translation_label,'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},
-        target_language=target_language,target_languages=target_language_options(),
+        target_language=target_language,target_languages=target_options,
         target_capabilities_assumed=bool(custom_models.get('translation')),
         ui_locale=preferences.get('ui_locale','en'),target_error=None,
         model_message=' '.join(preference_notices) if preference_notices else None)
-    session.event('effective_models',asr=getattr(args,'asr_backend','turbo'),translation='milmmt',
+    session.event('effective_models',asr=getattr(args,'asr_backend','turbo'),
+                  translation='bridge-preview' if bridge_models else 'milmmt',
                   custom_asr=bool(custom_models.get('asr')),custom_translation=bool(custom_models.get('translation')),
                   custom_vad=bool(custom_models.get('vad')))
     stop=threading.Event();cancel=threading.Event()
@@ -122,7 +147,7 @@ def run_session(args, session, browser_ui=None):
     engine=RemoteEngine(args.models,session,args.language or source_language,backend=asr_backend,
                   asr_path=custom_models.get('asr'),
                   translation_path=custom_models.get('translation'),direction=args.direction,
-                  topic=args.topic,stop=stop,cancel=cancel)
+                  topic=args.topic,stop=stop,cancel=cancel,bridge_models=bridge_models)
     try:
         from dataclasses import replace
         session.event('language_check_mode',mode='off')
@@ -226,12 +251,19 @@ def run_session(args, session, browser_ui=None):
     terminal=browser_ui is not None or (getattr(args,'ui','auto')!='plain' and sys.stdout.isatty() and sys.stdin.isatty())
     stopping='';interrupts=0;done=False;switching_models=False
     shutdown_started=None;cancel_started=None;forced_deadline=None;deadline_error=False;partial_published=False
-    if browser_ui and not custom_models:
+    if browser_ui and not custom_models and not bridge_models:
         from .model_selection import ASR,TRANSLATION
-        browser_ui.details(model_selection=dict(asr=engine.backend,translation=engine.translation_size),model_options={'asr':{k:v[0] for k,v in ASR.items() if (args.models/v[1]).is_dir()},'translation':{k:v[0] for k,v in TRANSLATION.items() if (args.models/v[1]).is_dir()}})
+        from .fast_asr import bundled_model
+        asr_options={k:v[0] for k,v in ASR.items()
+                     if (args.models/v[1]).is_dir() or (k=='fast' and bundled_model())}
+        browser_ui.details(model_selection=dict(asr=engine.backend,translation=engine.translation_size),
+                           model_options={'asr':asr_options,
+                                          'translation':{k:v[0] for k,v in TRANSLATION.items()
+                                                         if (args.models/v[1]).is_dir()}})
     elif browser_ui:
         browser_ui.details(model_selection=None,model_options={'asr':{},'translation':{}},
-                           model_message='Runtime model switching is disabled for explicit local model paths.')
+                           model_message='Runtime model switching is disabled for this local preview.'
+                           if bridge_models else 'Runtime model switching is disabled for explicit local model paths.')
     pipe_finals={}
 
     def request_stop():
@@ -295,7 +327,7 @@ def run_session(args, session, browser_ui=None):
                                             browser_ui.state.update(retrying_group=None,retry_error='Состояние сессии изменилось или исходная запись фрагмента недоступна.')
                             continue
                         if isinstance(key,dict) and 'model_selection' in key:
-                            if custom_models:
+                            if custom_models or bridge_models:
                                 session.event('model_switch_rejected',reason='custom_local_model_paths')
                                 continue
                             if switching_models or stop.is_set():continue
@@ -309,6 +341,9 @@ def run_session(args, session, browser_ui=None):
                             continue
                         if isinstance(key,dict) and 'target_language' in key:
                             target=key['target_language']
+                            if bridge_models and target not in ('en', 'ru'):
+                                session.event('target_language_rejected',target=target,reason='bridge_preview_unsupported')
+                                continue
                             blocker=target_action_blocker(switching_models,stop,cancel)
                             if blocker:
                                 session.event('target_language_rejected',target=target,reason=blocker)
@@ -350,6 +385,9 @@ def run_session(args, session, browser_ui=None):
                             continue
                         if key in ('q','Q','\x03'):
                             request_stop()
+                            continue
+                        if bridge_models and key == '\x14':
+                            session.event('target_language_rejected',reason='bridge_preview_unsupported_direction')
                             continue
                         if control.key(key):
                             if key=='\x0c':screen.clear(control.settings.generation)

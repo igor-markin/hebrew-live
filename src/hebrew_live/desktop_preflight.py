@@ -17,7 +17,13 @@ from typing import Any, Iterable
 REFERENCE_MEMORY_BYTES = 16 * 1024**3
 RESERVE_BYTES = 2 * 1024**3
 DOWNLOAD_TEMP_BYTES = 64 * 1024**2
-MINIMUM_MACOS = (26, 2)
+MINIMUM_MACOS = (27, 0)
+
+
+def bundled_models() -> Path | None:
+    """Return the read-only ASR/VAD model set inside a packaged app."""
+    candidate = Path(__file__).with_name("bundled_models")
+    return candidate if (candidate / "manifest.json").is_file() else None
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,7 @@ class FileState:
 class SpacePlan:
     files: tuple[FileState, ...]
     download_bytes: int
+    copy_bytes: int
     temporary_bytes: int
     reserve_bytes: int
     required_free_bytes: int
@@ -46,6 +53,26 @@ def load_inventory(path: Path | None = None) -> dict[str, Any]:
     if value.get("schema_version") != 1 or not isinstance(value.get("components"), list):
         raise ValueError("Unsupported desktop model inventory")
     return value
+
+
+def accurate_inventory() -> dict[str, Any]:
+    """Extend the default inventory only when accurate recognition is selected."""
+    from .cli import SPEC
+
+    base = load_inventory()
+    optional = load_inventory(Path(__file__).with_name("desktop_accurate_model.json"))
+    if len(optional["components"]) != 1 or optional["components"][0]["key"] != "asr":
+        raise ValueError("Invalid optional recognition inventory")
+    asr = optional["components"][0]
+    if (asr.get("repo"), asr.get("revision")) != (SPEC["asr"]["repo"], SPEC["asr"]["revision"]):
+        raise ValueError("Optional recognition revision differs from the CLI")
+    if sum(item["bytes"] for item in asr["files"]) != optional["total_bytes"]:
+        raise ValueError("Optional recognition inventory total is inconsistent")
+    return {
+        "schema_version": 1,
+        "total_bytes": base["total_bytes"] + optional["total_bytes"],
+        "components": [*base["components"], *optional["components"]],
+    }
 
 
 def _requirements(inventory: dict[str, Any]) -> Iterable[tuple[str, Path, dict[str, Any]]]:
@@ -74,6 +101,7 @@ def _existing_parent(path: Path) -> Path:
 
 
 def plan_model_space(models: Path, inventory: dict[str, Any] | None = None, *,
+                     bundled_root: Path | None = None,
                      resumable_confirmed: bool = False, verify_hashes: bool = True,
                      temporary_bytes: int = DOWNLOAD_TEMP_BYTES,
                      reserve_bytes: int = RESERVE_BYTES) -> SpacePlan:
@@ -81,18 +109,39 @@ def plan_model_space(models: Path, inventory: dict[str, Any] | None = None, *,
     models = models.expanduser().resolve()
     states: list[FileState] = []
     download_bytes = 0
+    copy_bytes = 0
     for component, relative, expected in _requirements(inventory):
         target = models / relative
         size = target.stat().st_size if target.is_file() else 0
         verified = size == expected["bytes"] and (not verify_hashes or _digest(target) == expected["sha256"])
+        if bundled_root is not None and component in ("fast_asr", "vad"):
+            source = bundled_root / relative
+            source_size = source.stat().st_size if source.is_file() else 0
+            source_ok = source_size == expected["bytes"] and (
+                not verify_hashes or _digest(source) == expected["sha256"])
+            if component == "fast_asr":
+                states.append(FileState(component, str(relative), expected["bytes"], source_size,
+                                        "verified" if source_ok else "corrupt_bundle"))
+            elif not source_ok:
+                states.append(FileState(component, str(relative), expected["bytes"], source_size, "corrupt_bundle"))
+            elif verified:
+                states.append(FileState(component, str(relative), expected["bytes"], size, "verified"))
+            else:
+                states.append(FileState(component, str(relative), expected["bytes"], size, "copy_required"))
+                copy_bytes += expected["bytes"]
+            continue
         if verified:
             states.append(FileState(component, str(relative), expected["bytes"], size, "verified"))
             continue
         partial = target.with_name(target.name + ".part")
         partial_size = partial.stat().st_size if partial.is_file() else 0
-        if 0 < partial_size < expected["bytes"]:
+        complete_partial = (partial_size == expected["bytes"] and verify_hashes
+                            and _digest(partial) == expected["sha256"])
+        if complete_partial or 0 < partial_size < expected["bytes"]:
             state = "partial"
-            needed = expected["bytes"] - partial_size if resumable_confirmed else expected["bytes"]
+            needed = (0 if complete_partial else expected["bytes"] - partial_size)
+            if not resumable_confirmed and not complete_partial:
+                needed = expected["bytes"]
             present = partial_size
         else:
             state = "corrupt" if target.is_file() else "missing"
@@ -101,8 +150,9 @@ def plan_model_space(models: Path, inventory: dict[str, Any] | None = None, *,
         states.append(FileState(component, str(relative), expected["bytes"], present, state))
         download_bytes += needed
     available = shutil.disk_usage(_existing_parent(models)).free
-    required = download_bytes + temporary_bytes + reserve_bytes
-    return SpacePlan(tuple(states), download_bytes, temporary_bytes, reserve_bytes, required, available,
+    required = (download_bytes + copy_bytes + temporary_bytes + reserve_bytes
+                if download_bytes or copy_bytes else 0)
+    return SpacePlan(tuple(states), download_bytes, copy_bytes, temporary_bytes, reserve_bytes, required, available,
                      resumable_confirmed)
 
 
@@ -154,6 +204,7 @@ def metal_available() -> bool:
 
 
 def check_computer(models: Path, *, inventory: dict[str, Any] | None = None,
+                   bundled_root: Path | None = None,
                    verify_hashes: bool = True) -> dict[str, Any]:
     system = platform.system()
     machine = platform.machine()
@@ -164,17 +215,19 @@ def check_computer(models: Path, *, inventory: dict[str, Any] | None = None,
     load = os.getloadavg()[0]
     high_load = load >= logical_cpus * 0.75 or pressure in (2, 4)
     metal = metal_available() if system == "Darwin" and machine == "arm64" else False
-    space = plan_model_space(models, inventory, verify_hashes=verify_hashes)
+    space = plan_model_space(models, inventory, bundled_root=bundled_root, verify_hashes=verify_hashes)
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     if system != "Darwin" or machine != "arm64":
         blockers.append({"code": "unsupported_architecture", "message": "Hebrew Live requires native Apple Silicon macOS."})
     if system == "Darwin" and _version(macos) < MINIMUM_MACOS:
-        blockers.append({"code": "unsupported_macos", "message": "This build requires macOS 26.2 or later because of its pinned MLX binaries."})
+        blockers.append({"code": "unsupported_macos", "message": "This build requires macOS 27.0 or later because of its bundled native libraries."})
     if not metal:
         blockers.append({"code": "metal_unavailable", "message": "MLX could not use Apple Metal."})
     if space.available_bytes < space.required_free_bytes:
         blockers.append({"code": "disk_space", "message": "The target disk does not have enough free space for models, temporary data, and the 2 GiB reserve."})
+    if any(item.state == "corrupt_bundle" for item in space.files):
+        blockers.append({"code": "corrupt_bundle", "message": "A built-in recognition or voice-detection file is missing or damaged."})
     if memory is not None and memory < REFERENCE_MEMORY_BYTES:
         warnings.append({"code": "memory_below_reference", "message": "16 GiB is the tested reference, not a proven minimum. Continue only by explicit choice."})
     if high_load:

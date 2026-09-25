@@ -10,7 +10,7 @@ import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,l
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
 declare global {
-  interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
+  interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>;setRecognitionMode:(mode:'fast'|'turbo')=>Promise<void>}}
 }
 
 type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
@@ -59,15 +59,18 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   const previous=live?.history.find(snapshot=>snapshot.translation.trim());
   const start=shown.start??live?.start;const end=shown.end??live?.end;
   const interval=start!==undefined?` · ${start.toFixed(1)}${end!==undefined?'–'+end.toFixed(1):''} s`:'';
+  const unfinished=live?.stage==='unavailable'&&issue==='Завершённая версия недоступна; ранний текст не подтверждён';
+  const shortMiss=unfinished&&empty&&start!==undefined&&end!==undefined&&end-start<=2;
+  const unconfirmedDraft=unfinished&&!empty&&Boolean(shown.translation.trim());
   const [,target]=directionParts(group.direction);
-  return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty?'chat-bubble--issue':''}`} data-group={group.id}>
+  return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id}>
     {empty
-      ? <p className="fragment-failed"><Icon kind="warning"/><span>{tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
+      ? <p className={`fragment-failed ${shortMiss?'fragment-muted':''}`}><Icon kind="warning"/><span>{shortMiss?tx('speechMissing'):tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
       : <BubbleText pair={shown} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}
-    {issue&&<p className="unavailable bubble-issue">{issueText(locale,issue)}</p>}
+    {issue&&!shortMiss&&(unconfirmedDraft?<span className="bubble-status bubble-unconfirmed">{issueText(locale,issue)}</span>:<p className="unavailable bubble-issue">{issueText(locale,issue)}</p>)}
     {issue&&onRetry&&<div className="fragment-retry"><Button variant="tertiary" isDisabled={!retryEnabled||retrying} onPress={()=>onRetry(group.id)}>{retrying?tx('retrying'):tx('retry')}</Button>{!retryEnabled&&!retrying&&<small>{tx('pauseFirst')}</small>}</div>}
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}
   </article>;
@@ -117,7 +120,7 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
-function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
+function RecordingControls({state,pending,localePending,modePending,selected,onAction,onRecognitionMode,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;modePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;onRecognitionMode:(mode:'fast'|'turbo')=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
   const busy=pending||loading||state.finished||state.stopping||state.model_switching;
@@ -142,6 +145,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
         <div className="live-settings-panel">
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
+          {state.desktop_mode&&window.hebrewLive&&<label className="settings-field"><span>{tx('recognitionMode')}</span><select value={state.model_selection?.asr==='turbo'?'turbo':'fast'} disabled={pending||modePending||selected||loading||state.stopping||!!state.model_switching||!!state.recording_started&&!state.finished} onChange={event=>onRecognitionMode(event.target.value as 'fast'|'turbo')}><option value="fast">{tx('fastRecognition')}</option><option value="turbo">{tx('accurateRecognition')}</option></select><small>{state.model_selection?.asr==='turbo'?tx('accurateRecognitionHint'):tx('fastRecognitionHint')}</small></label>}
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
@@ -177,6 +181,7 @@ export default function Live(){
   const [lastSuccess,setLastSuccess]=useState<number>();
   const [clock,setClock]=useState(Date.now());
   const [pending,setPending]=useState(false);
+  const [modePending,setModePending]=useState(false);
   const [closed,setClosed]=useState(false);
   const [deleting,setDeleting]=useState('');
   const [deleteError,setDeleteError]=useState('');
@@ -338,6 +343,11 @@ export default function Live(){
     finally{actionBusy.current=false;setPending(false);}
   },[tx]);
   const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
+  const onRecognitionMode=useCallback((mode:'fast'|'turbo')=>{
+    if(!window.hebrewLive||modePending)return;
+    setModePending(true);setActionError('');
+    void window.hebrewLive.setRecognitionMode(mode).catch(()=>setActionError(tx('recognitionChangeError'))).finally(()=>setModePending(false));
+  },[modePending,tx]);
   const retryFragment=useCallback((id:string)=>{void act('retry_fragment',id);},[act]);
   const changeLocale=useCallback(async(value:UiLocale)=>{
     const request=beginLocaleRequest(locale,state.ui_locale,value,localeRequested.current);
@@ -373,7 +383,7 @@ export default function Live(){
     </aside>
     <main className="conversation-pane">
       <div className="conversation-title"><Button ref={openSidebarRef} variant="tertiary" className="show-sessions" onPress={()=>setSidebar(true)}><Icon kind="folder"/>{tx('sessions')}</Button><div><strong>{selected?sessions.find(item=>item.id===selected)?.label||tx('savedConversation'):tx('liveTitle')}</strong><small>{selected?tx('readOnly'):tx('onThisMac')}</small></div>{selected&&<Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button>}</div>
-      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
+      <RecordingControls state={state} pending={pending} localePending={localePending} modePending={modePending} selected={!!selected} onAction={onAction} onRecognitionMode={onRecognitionMode} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
       {!selected&&state.retry_error&&<p className="unavailable global-error" role="alert">{issueText(locale,state.retry_error)}</p>}
@@ -383,7 +393,7 @@ export default function Live(){
       {selected&&partialNotice&&<p role="status" className="unavailable global-error">{partialNotice}</p>}
       {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
-        <MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>
+        <MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>
         {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx('readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
         {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>

@@ -1,4 +1,4 @@
-import type { BootstrapData, ControllerEvent, DesktopPreferences, HebrewLiveBridge, UiLocale } from "../shared.js";
+import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type HebrewLiveBridge, type UiLocale } from "../shared.js";
 import { preferredTargetLanguage } from "../security.js";
 
 declare global {
@@ -42,7 +42,7 @@ interface Preflight {
   warnings: Issue[];
 }
 
-type Step = "loading" | "welcome" | "preflight" | "prepare" | "languages" | "audio" |
+type Step = "loading" | "welcome" | "legal" | "preflight" | "prepare" | "accurate" | "languages" | "audio" |
   "launching" | "help" | "error";
 
 const api = window.hebrewLive as HebrewLiveBridge;
@@ -52,6 +52,7 @@ if (!api || !root) throw new Error("desktop_bridge_unavailable");
 let bootstrap: (BootstrapData & { viewReason?: string }) | null = null;
 let desktopPreferences: DesktopPreferences | null = null;
 let inventory: Inventory | null = null;
+let accurateInfo: { ready: boolean; total_bytes: number; terms_url: string } | null = null;
 let languages: Languages | null = null;
 let enginePreferences: Record<string, unknown> = {};
 let preflight: Preflight | null = null;
@@ -61,12 +62,16 @@ let skipWelcomeNextTime = true;
 let locale: UiLocale = "en";
 let preflightLoading = false;
 let warningAccepted = false;
-let downloadConsent = false;
+let legalConsent = false;
+let legalDocument: "app" | "gemma" = "app";
+let legalCopy = "";
 let preparationPhase = "idle";
 let preparationDetail = "";
 let preparationCode = "";
-let downloadedBytes = 0;
-let downloadBytes = 0;
+let transferredBytes = 0;
+let stagedBytes = 0;
+let verifiedBytes = 0;
+let totalDownloadBytes = 0;
 let bytesPerSecond = 0;
 let selectedTarget = "en";
 let selectedUiLocale: UiLocale = "en";
@@ -87,14 +92,21 @@ const text = {
       ["A local archive you can return to", "Open earlier sessions without starting the microphone, then return to a new recording when you choose."],
     ],
     dontShow: "Do not show this introduction next time",
-    checkingTitle: "Checking this Mac", checkingBody: "Architecture, Metal, memory pressure, and model storage are checked before anything is downloaded.",
+    legalTitle: "Software agreement", legalBody: "Read the agreement before using the included models and downloading MiLMMT or optional Whisper. It includes the Gemma use restrictions and limits on translation accuracy and liability.",
+    appAgreement: "Hebrew Live agreement", gemmaAgreement: "Gemma terms", prohibitedPolicy: "Gemma prohibited-use policy",
+    legalConsent: "I have read and agree to the Hebrew Live agreement, including the Gemma use restrictions and prohibited-use policy.",
+    acceptContinue: "Accept and continue",
+    checkingTitle: "Checking this Mac", checkingBody: "Architecture, Metal, memory pressure, and available disk space are checked before the models are loaded.",
     memory: "Memory", disk: "Disk space", compatibility: "Compatibility", load: "Current load", metal: "Metal available",
     recheck: "Check again", proceedWarning: "I understand the warning and want to continue", blocked: "Resolve the blocking item, then check again.",
-    prepareTitle: "Prepare local models", prepareBody: "Three pinned components stay outside the application and are verified before use.",
-    total: "Total model files", location: "Stored in Hebrew Live's existing local data folder", terms: "Terms", consent: "Allow Hebrew Live to download the missing pinned files",
-    prepare: "Download and prepare", verifyWarm: "Verify and warm up", current: "Current component", speed: "Speed",
+    prepareTitle: "Prepare local models", prepareBody: "Recognition and voice detection are included. MiLMMT downloads on first preparation or to repair missing or damaged files. After preparation, translation works offline.",
+    accurateTitle: "Accurate Hebrew recognition", accurateBody: "Whisper Turbo may recognize difficult Hebrew and numbers more accurately. It runs more slowly and downloads separately; fast mode stays available.",
+    accurateModel: "ivrit.ai Whisper Turbo · optional download", accuratePrepare: "Prepare accurate mode", accurateFast: "Use fast mode", accurateReady: "Ready. Opening accurate mode…",
+    total: "Download when needed", location: "MiLMMT translation model", included: "Included in the app", downloaded: "Downloaded to this Mac", terms: "Terms",
+    prepare: "Prepare models", verifyWarm: "Prepare models", current: "Current component", speed: "Speed",
+    received: "Transferred", staged: "Partial file", verified: "Verified files",
     verifying: "Checking files without an estimated percentage…", warming: "Warming the models without an estimated percentage…",
-    paused: "Download paused", retry: "Continue", exit: "Exit", cancelDownload: "Stop download",
+    paused: "Preparation paused", retry: "Try again", exit: "Exit", cancelDownload: "Stop preparation",
     languagesTitle: "Choose your languages", languagesBody: "The interface and translation target are independent. Hebrew remains the qualified spoken source.",
     interfaceLanguage: "Interface language", translationLanguage: "Translate Hebrew into", saveLanguages: "Save and continue",
     english: "English", russian: "Russian",
@@ -118,14 +130,21 @@ const text = {
       ["Локальный архив под рукой", "Открывай прошлые сессии без запуска микрофона и возвращайся к новой записи, когда решишь."],
     ],
     dontShow: "Не показывать знакомство при следующем запуске",
-    checkingTitle: "Проверяю этот Mac", checkingBody: "До загрузки проверяются архитектура, Metal, текущая нагрузка памяти и место для моделей.",
+    legalTitle: "Пользовательское соглашение", legalBody: "Прочитай соглашение до использования встроенных моделей и загрузки MiLMMT или необязательного Whisper. В нём есть ограничения Gemma, предупреждение о точности перевода и пределы ответственности.",
+    appAgreement: "Соглашение Hebrew Live", gemmaAgreement: "Условия Gemma", prohibitedPolicy: "Политика запрещённого использования Gemma",
+    legalConsent: "Я прочитал и принимаю соглашение Hebrew Live, включая ограничения использования Gemma и политику запрещённого использования.",
+    acceptContinue: "Принять и продолжить",
+    checkingTitle: "Проверяю этот Mac", checkingBody: "До загрузки моделей проверяются архитектура, Metal, текущая нагрузка памяти и свободное место.",
     memory: "Память", disk: "Место на диске", compatibility: "Совместимость", load: "Текущая нагрузка", metal: "Metal доступен",
     recheck: "Проверить снова", proceedWarning: "Я понимаю предупреждение и хочу продолжить", blocked: "Исправь блокирующую проблему и повтори проверку.",
-    prepareTitle: "Подготовка локальных моделей", prepareBody: "Три закреплённых компонента хранятся вне приложения и проверяются перед использованием.",
-    total: "Объём файлов моделей", location: "Хранятся в существующем локальном каталоге Hebrew Live", terms: "Условия", consent: "Разрешаю Hebrew Live загрузить недостающие закреплённые файлы",
-    prepare: "Загрузить и подготовить", verifyWarm: "Проверить и прогреть", current: "Текущий компонент", speed: "Скорость",
+    prepareTitle: "Подготовка локальных моделей", prepareBody: "Распознавание и определение речи встроены. MiLMMT загружается при первой подготовке или восстановлении отсутствующих и повреждённых файлов. После подготовки перевод работает без сети.",
+    accurateTitle: "Точное распознавание иврита", accurateBody: "Whisper Turbo может точнее распознавать сложную речь и числа. Он работает медленнее и загружается отдельно; быстрый режим остаётся доступен.",
+    accurateModel: "ivrit.ai Whisper Turbo · загрузка по выбору", accuratePrepare: "Подготовить точный режим", accurateFast: "Вернуться к быстрому режиму", accurateReady: "Готово. Открываю точный режим…",
+    total: "Загрузка при необходимости", location: "Модель перевода MiLMMT", included: "Встроена в приложение", downloaded: "Загружается на этот Mac", terms: "Условия",
+    prepare: "Подготовить модели", verifyWarm: "Подготовить модели", current: "Текущий компонент", speed: "Скорость",
+    received: "Передано", staged: "Частичный файл", verified: "Проверенные файлы",
     verifying: "Проверяю файлы без выдуманного процента…", warming: "Прогреваю модели без выдуманного процента…",
-    paused: "Загрузка приостановлена", retry: "Продолжить", exit: "Выйти", cancelDownload: "Остановить загрузку",
+    paused: "Подготовка приостановлена", retry: "Повторить", exit: "Выйти", cancelDownload: "Остановить подготовку",
     languagesTitle: "Выбери языки", languagesBody: "Язык интерфейса и язык перевода независимы. Поддержанный источник речи — иврит.",
     interfaceLanguage: "Язык интерфейса", translationLanguage: "Переводить с иврита на", saveLanguages: "Сохранить и продолжить",
     english: "Английский", russian: "Русский",
@@ -162,7 +181,7 @@ function escapeHtml(value: string): string {
 
 function shell(content: string): void {
   document.documentElement.lang = locale;
-  root.innerHTML = `<div class="shell">
+  root.innerHTML = `<div class="shell${step === "legal" ? " legal-shell" : ""}">
     <header class="topbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">א</span><span>Hebrew Live</span></div>
       <div class="top-actions"><button class="text" id="help-button">${t().help}</button><button class="text" id="quit-button">${t().quit}</button></div>
@@ -201,13 +220,45 @@ function renderWelcome(): void {
   });
   setButton("back", () => { welcomeSlide -= 1; render(); });
   const finish = async () => {
-    await saveStep("preflight", { showWelcome: !skipWelcomeNextTime });
-    await runPreflight();
+    await saveStep("legal", { showWelcome: !skipWelcomeNextTime });
+    await showLegal();
   };
   setButton("skip", finish);
   setButton("next", async () => {
     if (welcomeSlide < 2) { welcomeSlide += 1; render(); }
     else await finish();
+  });
+}
+
+async function showLegal(document: "app" | "gemma" = "app"): Promise<void> {
+  legalDocument = document;
+  legalCopy = "";
+  step = "legal";
+  render();
+  try { legalCopy = await api.legalText(document === "gemma" ? "gemma" : locale); }
+  catch (error) { runtimeError = String(error); step = "error"; }
+  render();
+}
+
+function renderLegal(): void {
+  shell(`<div class="narrow legal-layout"><p class="eyebrow">2 / 6 · ${escapeHtml(AGREEMENT_VERSION)}</p><h2>${t().legalTitle}</h2><p class="lede">${t().legalBody}</p>
+    <div class="legal-tabs"><button class="${legalDocument === "app" ? "secondary" : "text"}" id="legal-app">${t().appAgreement}</button><button class="${legalDocument === "gemma" ? "secondary" : "text"}" id="legal-gemma">${t().gemmaAgreement}</button><button class="text" id="legal-policy">${t().prohibitedPolicy} ↗</button></div>
+    <div class="legal-copy" role="document" tabindex="0">${escapeHtml(legalCopy || t().working)}</div>
+    <label class="check notice"><input id="legal-consent" type="checkbox" ${legalConsent ? "checked" : ""}><span>${t().legalConsent}</span></label>
+    <div class="actions"><button id="legal-accept" ${legalConsent && legalCopy ? "" : "disabled"}>${t().acceptContinue}</button></div></div>`);
+  setButton("legal-app", () => showLegal("app"));
+  setButton("legal-gemma", () => showLegal("gemma"));
+  setButton("legal-policy", () => api.openExternal("https://ai.google.dev/gemma/prohibited_use_policy"));
+  document.querySelector<HTMLInputElement>("#legal-consent")?.addEventListener("change", (event) => {
+    legalConsent = (event.currentTarget as HTMLInputElement).checked;
+    const accept = document.querySelector<HTMLButtonElement>("#legal-accept");
+    if (accept) accept.disabled = !legalConsent || !legalCopy;
+  });
+  setButton("legal-accept", async () => {
+    if (!legalConsent) return;
+    desktopPreferences = await api.acceptAgreement();
+    await saveStep("preflight");
+    await runPreflight();
   });
 }
 
@@ -220,7 +271,8 @@ function issueText(issue: Issue): string {
   const known: Record<string, { en: string; ru: string }> = {
     memory_below_reference: { en: "This Mac has less than the tested 16 GiB reference. This is a warning, not a proven minimum.", ru: "На этом Mac меньше проверенного ориентира 16 ГиБ. Это предупреждение, а не доказанный минимум." },
     current_load_high: { en: "Current CPU or memory pressure is high. Close other applications and check again.", ru: "Текущая нагрузка CPU или памяти высокая. Закрой лишние приложения и повтори проверку." },
-    disk_space: { en: "There is not enough space for missing files, temporary data, and the 2 GiB reserve.", ru: "Не хватает места для недостающих файлов, временных данных и резерва 2 ГиБ." },
+    disk_space: { en: "There is not enough space for MiLMMT, temporary data and the 2 GiB reserve.", ru: "Не хватает места для MiLMMT, временных файлов и резерва 2 ГиБ." },
+    corrupt_bundle: { en: "An included recognition or voice-detection file is damaged. Reinstall the app.", ru: "Встроенный файл распознавания или определения речи повреждён. Переустанови приложение." },
     metal_unavailable: { en: "Apple Metal is unavailable. Restart the Mac or update macOS before trying again.", ru: "Apple Metal недоступен. Перезагрузи Mac или обнови macOS перед повторной попыткой." },
     unsupported_architecture: { en: "This build requires an Apple Silicon Mac.", ru: "Эта сборка требует Mac с Apple Silicon." },
     unsupported_macos: { en: "This build is not compatible with the installed macOS version.", ru: "Эта сборка несовместима с установленной версией macOS." },
@@ -251,7 +303,7 @@ function renderPreflight(): void {
   const issues = [...current.blockers, ...current.warnings]
     .map((item) => `<div class="notice ${current.blockers.includes(item) ? "error" : "warning"}">${escapeHtml(issueText(item))}</div>`).join("");
   const canContinue = current.compatible && (current.warnings.length === 0 || warningAccepted);
-  shell(`<div class="narrow"><p class="eyebrow">2 / 5</p><h2>${t().checkingTitle}</h2><p class="lede">${t().checkingBody}</p>
+  shell(`<div class="narrow"><p class="eyebrow">3 / 6</p><h2>${t().checkingTitle}</h2><p class="lede">${t().checkingBody}</p>
     <div class="results">${rows}</div>${issues}
     ${current.blockers.length ? `<div class="notice error">${t().blocked}</div>` : ""}
     ${current.warnings.length ? `<label class="check notice warning"><input id="warning-accept" type="checkbox" ${warningAccepted ? "checked" : ""}><span>${t().proceedWarning}</span></label>` : ""}
@@ -287,44 +339,68 @@ function modelsVerified(): boolean {
 function renderPreparation(): void {
   const components = (inventory?.components ?? []).map((component, index) => {
     const size = component.files.reduce((sum, file) => sum + file.bytes, 0);
-    return `<article class="component"><span class="component-number">0${index + 1}</span><h3>${escapeHtml(component.label)}</h3><p>${formatBytes(size)}</p><button class="text terms" data-url="${escapeHtml(component.terms_url)}">${t().terms}</button></article>`;
+    const location = component.key === "translation" ? t().downloaded : t().included;
+    return `<article class="component"><span class="component-number">0${index + 1}</span><h3>${escapeHtml(component.label)}</h3><p>${formatBytes(size)} · ${location}</p><button class="text terms" data-url="${escapeHtml(component.terms_url)}">${t().terms}</button></article>`;
   }).join("");
   const active = !["idle", "paused", "failed", "complete"].includes(preparationPhase);
-  const percent = downloadBytes > 0 ? Math.min(100, downloadedBytes / downloadBytes * 100) : 0;
+  const percent = totalDownloadBytes > 0 ? Math.min(100, (verifiedBytes + stagedBytes) / totalDownloadBytes * 100) : 0;
+  const translationBytes = (inventory?.components ?? []).filter((component) => component.key === "translation")
+    .flatMap((component) => component.files).reduce((sum, file) => sum + file.bytes, 0);
   let status = "";
   if (preparationPhase === "verifying") status = `<div class="status-panel"><div class="status-row"><strong>${t().verifying}</strong><span class="spinner"></span></div><div class="progress indeterminate"><span></span></div></div>`;
   else if (preparationPhase === "warming") status = `<div class="status-panel"><div class="status-row"><strong>${t().warming}</strong><span class="spinner"></span></div><div class="progress indeterminate"><span></span></div></div>`;
-  else if (preparationPhase === "downloading" || preparationPhase === "retrying") status = `<div class="status-panel"><div class="status-row"><div><strong>${t().current}</strong><div class="small muted">${escapeHtml(preparationDetail)}</div></div><div>${formatBytes(downloadedBytes)} / ${formatBytes(downloadBytes)}<div class="small muted">${t().speed}: ${formatBytes(bytesPerSecond)}/s</div></div></div><div class="progress" style="--progress:${percent.toFixed(1)}%"><span></span></div></div>`;
+  else if (preparationPhase === "downloading" || preparationPhase === "retrying") status = `<div class="status-panel"><div class="status-row"><div><strong>${t().current}</strong><div class="small muted">${escapeHtml(preparationDetail)}</div></div><div>${t().verified}: ${formatBytes(verifiedBytes)} / ${formatBytes(totalDownloadBytes)}<div class="small muted">${t().staged}: ${formatBytes(stagedBytes)} · ${t().received}: ${formatBytes(transferredBytes)} · ${t().speed}: ${formatBytes(bytesPerSecond)}/s</div></div></div><div class="progress" style="--progress:${percent.toFixed(1)}%"><span></span></div></div>`;
   else if (preparationPhase === "paused" || preparationPhase === "failed") status = `<div class="notice error"><strong>${t().paused}</strong><div class="small">${escapeHtml(preparationMessage(preparationCode))}</div></div>`;
-  const needsDownload = !modelsVerified();
-  const canStart = !active && (modelsVerified() || downloadConsent);
-  shell(`<div><p class="eyebrow">3 / 5</p><h2>${t().prepareTitle}</h2><p class="lede">${t().prepareBody}</p>
+  const canStart = !active;
+  shell(`<div><p class="eyebrow">4 / 6</p><h2>${t().prepareTitle}</h2><p class="lede">${t().prepareBody}</p>
     <div class="components">${components}</div>
-    <div class="result"><span class="result-icon">↓</span><div><h3>${t().total}</h3><p>${t().location}</p></div><span class="result-value">${formatBytes(inventory?.total_bytes ?? 0)}</span></div>
-    ${needsDownload && !active ? `<label class="check notice"><input id="download-consent" type="checkbox" ${downloadConsent ? "checked" : ""}><span>${t().consent}</span></label>` : ""}
+    <div class="result"><span class="result-icon">↓</span><div><h3>${t().total}</h3><p>${t().location}</p></div><span class="result-value">${formatBytes(translationBytes)}</span></div>
     ${status}
     <div class="actions">
-      ${(preparationPhase === "paused" || preparationPhase === "failed") ? `<button class="secondary" id="prep-exit">${t().exit}</button><button id="prepare-start">${t().retry}</button>` : active ? `<button class="secondary" id="prepare-cancel">${t().cancelDownload}</button>` : `<button id="prepare-start" ${canStart ? "" : "disabled"}>${modelsVerified() ? t().verifyWarm : t().prepare}</button>`}
+      ${(preparationPhase === "paused" || preparationPhase === "failed") ? `<button class="secondary" id="prep-exit">${t().exit}</button><button id="prepare-start">${t().retry}</button>` : active ? `<button class="secondary" id="prepare-cancel">${t().cancelDownload}</button>` : `<button id="prepare-start" ${canStart ? "" : "disabled"}>${t().verifyWarm}</button>`}
     </div>
   </div>`);
   document.querySelectorAll<HTMLButtonElement>(".terms").forEach((button) => button.addEventListener("click", () => void api.openExternal(button.dataset.url ?? "")));
-  document.querySelector<HTMLInputElement>("#download-consent")?.addEventListener("change", (event) => {
-    downloadConsent = (event.currentTarget as HTMLInputElement).checked; render();
-  });
   setButton("prepare-start", startPreparation);
   setButton("prepare-cancel", () => api.cancelPreparation());
   setButton("prep-exit", () => api.exitDuringPreparation());
 }
 
+function renderAccuratePreparation(): void {
+  const active = !["idle", "paused", "failed", "complete"].includes(preparationPhase);
+  const percent = totalDownloadBytes > 0 ? Math.min(100, (verifiedBytes + stagedBytes) / totalDownloadBytes * 100) : 0;
+  let status = "";
+  if (preparationPhase === "verifying" || preparationPhase === "warming") {
+    status = `<div class="status-panel"><div class="status-row"><strong>${preparationPhase === "warming" ? t().warming : t().verifying}</strong><span class="spinner"></span></div><div class="progress indeterminate"><span></span></div></div>`;
+  } else if (preparationPhase === "downloading" || preparationPhase === "retrying") {
+    status = `<div class="status-panel"><div class="status-row"><div><strong>${t().current}</strong><div class="small muted">${escapeHtml(preparationDetail)}</div></div><div>${t().verified}: ${formatBytes(verifiedBytes)} / ${formatBytes(totalDownloadBytes)}<div class="small muted">${t().staged}: ${formatBytes(stagedBytes)} · ${t().received}: ${formatBytes(transferredBytes)} · ${t().speed}: ${formatBytes(bytesPerSecond)}/s</div></div></div><div class="progress" style="--progress:${percent.toFixed(1)}%"><span></span></div></div>`;
+  } else if (preparationPhase === "paused" || preparationPhase === "failed") {
+    status = `<div class="notice error"><strong>${t().paused}</strong><div class="small">${escapeHtml(preparationMessage(preparationCode))}</div></div>`;
+  } else if (preparationPhase === "complete") {
+    status = `<div class="notice">${t().accurateReady}</div>`;
+  }
+  shell(`<div class="narrow"><p class="eyebrow">Hebrew Live</p><h2>${t().accurateTitle}</h2><p class="lede">${t().accurateBody}</p>
+    <div class="result"><span class="result-icon">↓</span><div><h3>${t().accurateModel}</h3><p><button class="text" id="accurate-terms">${t().terms}</button></p></div><span class="result-value">${formatBytes(accurateInfo?.total_bytes ?? 0)}</span></div>
+    ${status}<div class="actions"><button class="secondary" id="accurate-fast" ${active ? "disabled" : ""}>${t().accurateFast}</button>
+    ${active ? `<button class="secondary" id="accurate-cancel">${t().cancelDownload}</button>` : `<button id="accurate-start">${preparationPhase === "paused" || preparationPhase === "failed" ? t().retry : t().accuratePrepare}</button>`}</div></div>`);
+  setButton("accurate-terms", () => api.openExternal(accurateInfo?.terms_url ?? ""));
+  setButton("accurate-fast", () => api.setRecognitionMode("fast"));
+  setButton("accurate-cancel", () => api.cancelPreparation());
+  setButton("accurate-start", startAccuratePreparation);
+}
+
 function preparationMessage(code: string): string {
   const messages: Record<string, { en: string; ru: string }> = {
-    network_exhausted: { en: "The network retry budget was exhausted. Continue when the connection is stable.", ru: "Попытки сети исчерпаны. Продолжи, когда соединение станет стабильным." },
-    cancelled: { en: "Preparation stopped. Completed and partial files were kept.", ru: "Подготовка остановлена. Готовые и частичные файлы сохранены." },
+    network_exhausted: { en: "The model download stopped. Check the connection and retry; completed files are kept.", ru: "Загрузка модели остановилась. Проверь соединение и повтори; готовые файлы сохранены." },
+    cancelled: { en: "Preparation stopped. Verified files and partial downloads are kept.", ru: "Подготовка остановлена. Проверенные файлы и частичные загрузки сохранены." },
     disk_space: { en: "There is not enough free space, including the 2 GiB reserve.", ru: "Недостаточно свободного места с учётом резерва 2 ГиБ." },
-    disk_full: { en: "The disk became full during the download.", ru: "Во время загрузки диск заполнился." },
+    disk_full: { en: "The disk became full during preparation.", ru: "Во время подготовки закончилось место на диске." },
     permission_denied: { en: "Hebrew Live cannot write to the model folder.", ru: "Hebrew Live не может записывать в каталог моделей." },
-    corrupt_download: { en: "A downloaded file failed its checksum and was isolated.", ru: "Контрольная сумма файла не совпала; повреждённый файл изолирован." },
-    corrupt_file: { en: "A local model file is damaged and must be downloaded again.", ru: "Локальный файл модели повреждён, его нужно загрузить заново." },
+    corrupt_download: { en: "The MiLMMT download failed its checksum. Retry the download.", ru: "Контрольная сумма загруженной MiLMMT не совпала. Повтори загрузку." },
+    corrupt_file: { en: "A prepared model file is damaged. Retry preparation to repair it.", ru: "Подготовленный файл модели повреждён. Повтори подготовку для восстановления." },
+    corrupt_bundle: { en: "An included model file is damaged. Reinstall the app.", ru: "Встроенный файл модели повреждён. Переустанови приложение." },
+    invalid_range: { en: "The model server returned an invalid partial response. Retry later.", ru: "Сервер модели вернул неверный частичный ответ. Повтори позже." },
+    incompatible_cache: { en: "The shared model cache is incompatible. Restart Hebrew Live to use a separate folder.", ru: "Общий кэш моделей несовместим. Перезапусти Hebrew Live для отдельного каталога." },
     runtime: { en: "The model warm-up failed. Safe diagnostics may help identify the cause.", ru: "Прогрев моделей завершился ошибкой. Причину можно уточнить по безопасной диагностике." },
   };
   return messages[code]?.[locale] ?? preparationDetail ?? code;
@@ -338,9 +414,17 @@ async function startPreparation(): Promise<void> {
   catch (error) { preparationPhase = "failed"; preparationCode = String(error).split(":", 1)[0]; render(); }
 }
 
+async function startAccuratePreparation(): Promise<void> {
+  preparationPhase = "verifying";
+  preparationCode = "";
+  render();
+  try { await api.prepareAccurate(); }
+  catch (error) { preparationPhase = "failed"; preparationCode = String(error).split(":", 1)[0]; render(); }
+}
+
 function renderLanguages(): void {
   const options = languages?.targets ?? [];
-  shell(`<div class="narrow"><p class="eyebrow">4 / 5</p><h2>${t().languagesTitle}</h2><p class="lede">${t().languagesBody}</p>
+  shell(`<div class="narrow"><p class="eyebrow">5 / 6</p><h2>${t().languagesTitle}</h2><p class="lede">${t().languagesBody}</p>
     <div class="fields">
       <label class="field"><span>${t().interfaceLanguage}</span><select id="ui-locale"><option value="en" ${selectedUiLocale === "en" ? "selected" : ""}>${t().english}</option><option value="ru" ${selectedUiLocale === "ru" ? "selected" : ""}>${t().russian}</option></select></label>
       <label class="field"><span>${t().translationLanguage}</span><select id="target-language">${options.map((item) => `<option value="${escapeHtml(item.code)}" ${item.code === selectedTarget ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
@@ -376,7 +460,7 @@ function audioMessage(): string {
 function renderAudio(): void {
   const showStatus = audioStatus !== "idle";
   const error = ["permission", "device", "error"].includes(audioStatus);
-  shell(`<div class="narrow"><p class="eyebrow">5 / 5</p><h2>${t().audioTitle}</h2><p class="lede">${t().audioBody}</p>
+  shell(`<div class="narrow"><p class="eyebrow">6 / 6</p><h2>${t().audioTitle}</h2><p class="lede">${t().audioBody}</p>
     <label class="check notice"><input id="save-audio" type="checkbox" ${saveAudio ? "checked" : ""}><span><strong>${t().saveAudio}</strong><br><span class="small">${t().audioExplain}</span></span></label>
     ${showStatus ? `<div class="notice ${error ? "error" : audioStatus === "silent" ? "warning" : ""}"><div class="status-row"><strong>${escapeHtml(audioMessage())}</strong>${audioStatus === "checking" ? `<span class="spinner"></span>` : ""}</div>${audioDevice ? `<p class="small">${t().device}: ${escapeHtml(audioDevice)}</p>` : ""}<div class="meter" aria-label="Microphone level" style="--level:${Math.round(audioLevel * 100)}%"><span></span></div></div>` : ""}
     <div class="actions">
@@ -477,6 +561,11 @@ function renderHelp(): void {
 }
 
 async function resumeAfterHelp(): Promise<void> {
+  if (desktopPreferences?.acceptedAgreementVersion !== AGREEMENT_VERSION) { await showLegal(); return; }
+  if (desktopPreferences?.asrBackend === "turbo") {
+    accurateInfo = await api.accurateStatus();
+    if (!accurateInfo.ready) { step = "accurate"; render(); return; }
+  }
   if (desktopPreferences?.onboardingComplete && modelsVerified()) await finishOnboarding();
   else if (!desktopPreferences?.onboardingComplete) await resumeOnboarding();
   else await runPreflight();
@@ -496,8 +585,10 @@ function renderError(): void {
 function render(): void {
   if (step === "loading") { shell(`<div class="center"><div><span class="spinner"></span><p>${t().working}</p></div></div>`); return; }
   if (step === "welcome") renderWelcome();
+  else if (step === "legal") renderLegal();
   else if (step === "preflight") renderPreflight();
   else if (step === "prepare") renderPreparation();
+  else if (step === "accurate") renderAccuratePreparation();
   else if (step === "languages") renderLanguages();
   else if (step === "audio") renderAudio();
   else if (step === "launching") renderLaunching();
@@ -506,6 +597,7 @@ function render(): void {
 }
 
 async function resumeOnboarding(): Promise<void> {
+  if (desktopPreferences?.acceptedAgreementVersion !== AGREEMENT_VERSION) { await showLegal(); return; }
   const last = desktopPreferences?.lastStep ?? "welcome";
   if (last === "prepare") { step = "prepare"; render(); return; }
   if (last === "languages" && modelsVerified()) { step = "languages"; render(); return; }
@@ -542,7 +634,17 @@ async function initialize(): Promise<void> {
   saveAudio = enginePreferences.save_raw_audio !== false;
   audioSaved = desktopPreferences.audioConfirmed;
   if (bootstrap.viewReason === "help") { step = "help"; render(); return; }
+  if (desktopPreferences.acceptedAgreementVersion !== AGREEMENT_VERSION &&
+      (desktopPreferences.onboardingComplete || desktopPreferences.lastStep !== "welcome" || desktopPreferences.showWelcome === false)) {
+    await showLegal(); return;
+  }
   if (bootstrap.viewReason === "backend_crash") { runtimeError = bootstrap.controllerError ?? "backend_stopped_unexpectedly"; step = "error"; render(); return; }
+  if (desktopPreferences.asrBackend === "turbo" && desktopPreferences.onboardingComplete) {
+    accurateInfo = await api.accurateStatus();
+    if (bootstrap.viewReason === "accurate_setup" || !accurateInfo.ready) {
+      step = "accurate"; render(); return;
+    }
+  }
   if (!desktopPreferences.onboardingComplete && desktopPreferences.lastStep === "welcome" &&
       desktopPreferences.showWelcome !== false) {
     step = "welcome"; render(); return;
@@ -560,6 +662,13 @@ async function initialize(): Promise<void> {
 
 api.onEvent((event: ControllerEvent) => {
   const data = event.data;
+  if (event.event === "download_file_started" || event.event === "download_progress" ||
+      event.event === "download_file_complete") {
+    transferredBytes = Number(data.transferred_bytes ?? 0);
+    stagedBytes = Number(data.staged_bytes ?? 0);
+    verifiedBytes = Number(data.verified_bytes ?? 0);
+    totalDownloadBytes = Number(data.total_bytes ?? 0);
+  }
   if (event.event === "preparation_phase") {
     preparationPhase = String(data.phase ?? "verifying");
     render();
@@ -570,15 +679,13 @@ api.onEvent((event: ControllerEvent) => {
   } else if (event.event === "download_file_started") {
     preparationPhase = "downloading";
     preparationDetail = String(data.label ?? data.file ?? "");
-    downloadedBytes = Number(data.downloaded_bytes ?? 0);
-    downloadBytes = Number(data.download_bytes ?? 0);
     render();
   } else if (event.event === "download_progress") {
     preparationPhase = "downloading";
     preparationDetail = String(data.file ?? "");
-    downloadedBytes = Number(data.downloaded_bytes ?? 0);
-    downloadBytes = Number(data.download_bytes ?? 0);
     bytesPerSecond = Number(data.bytes_per_second ?? 0);
+    render();
+  } else if (event.event === "download_file_complete") {
     render();
   } else if (event.event === "download_retry") {
     preparationPhase = "retrying";
@@ -591,6 +698,11 @@ api.onEvent((event: ControllerEvent) => {
     render();
   } else if (event.event === "preparation_complete") {
     preparationPhase = "complete";
+    if (step === "accurate") {
+      step = "launching"; render();
+      void api.startBackend().catch((error) => { runtimeError = String(error); step = "error"; render(); });
+      return;
+    }
     void (async () => {
       preflight = await api.preflight() as unknown as Preflight;
       await saveStep("languages");

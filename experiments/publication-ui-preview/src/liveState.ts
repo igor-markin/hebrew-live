@@ -10,6 +10,7 @@ export type LiveState = {
   target_capabilities_assumed?:boolean;
   publication?:string;paused:boolean;finished:boolean;stopping?:boolean;cancelling?:boolean;
   model_switching?:boolean;direction:string;input_kind?:string;device?:string;session?:string;
+  model_selection?:{asr:string;translation:string}|null;
   generation?:number;exports?:{id:string;name:string;label:string}[];warning?:string;
   retrying_group?:string|null;retry_error?:string|null;
   retry_supported?:boolean;
@@ -41,6 +42,7 @@ export function parseLiveState(value:unknown):LiveState {
   if(!record(value)||!Array.isArray(value.groups)||!value.groups.every(group)||typeof value.status!=='string'||typeof value.paused!=='boolean'||typeof value.finished!=='boolean'||typeof value.direction!=='string')throw new Error('Invalid local API snapshot');
   if(!optionalString(value.session_path)||!optionalString(value.publication)||!optionalString(value.input_kind)||!optionalString(value.device)||!optionalString(value.session)||!optionalString(value.warning)||!optionalString(value.integrity_warning)||!optionalString(value.retrying_group)||!optionalString(value.retry_error)||!optionalString(value.status_code)||!optionalString(value.target_language)||!optionalString(value.target_error)||!optionalString(value.target_error_code))throw new Error('Invalid local API snapshot');
   if(value.ui_locale!==undefined&&!['en','ru','he'].includes(String(value.ui_locale)))throw new Error('Invalid local API snapshot');
+  if(value.model_selection!==undefined&&value.model_selection!==null&&(!record(value.model_selection)||typeof value.model_selection.asr!=='string'||typeof value.model_selection.translation!=='string'))throw new Error('Invalid local API snapshot');
   if(value.target_languages!==undefined&&(!Array.isArray(value.target_languages)||!value.target_languages.every(item=>record(item)&&typeof item.code==='string'&&typeof item.name==='string'&&typeof item.rtl==='boolean')))throw new Error('Invalid local API snapshot');
   if(value.partial_kind!==undefined&&value.partial_kind!==null&&!['known_unprocessed','capture_unknown','mixed'].includes(String(value.partial_kind)))throw new Error('Invalid local API snapshot');
   if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');

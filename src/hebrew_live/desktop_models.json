@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "total_bytes": 3833075730,
+  "total_bytes": 3104518950,
   "components": [
     {
-      "key": "asr",
-      "label": "Hebrew speech recognition",
-      "folder": "asr",
-      "repo": "mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx",
-      "revision": "53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
-      "terms_url": "https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f",
+      "key": "fast_asr",
+      "label": "GigaAM-He Hebrew speech recognition",
+      "folder": "fast-asr",
+      "revision": "f374969f14a6c7b9d5a829f8bfb80de041931f8b",
+      "terms_url": "https://huggingface.co/asfberlin/fast-hebrew-asr",
       "files": [
-        {"path": "config.json", "bytes": 268, "sha256": "b34fc29e4e11e0a25e812775dd67f4dd16fc2c8eb43d28ae25ff7d660ecb6379"},
-        {"path": "weights.safetensors", "bytes": 1613977612, "sha256": "f69cfdd61a6169f4b29a7813e32f9d7f128b5bc07f0b6c09dbf2ef44ac3fb13f"}
+        {"path": "multilingual_ctc_ft.onnx", "bytes": 885379394, "sha256": "c3eb86ac825073c5fb534c0a0a697146b0f12a13b0ccc67c5baca96ab506d0f5"},
+        {"path": "mel_filters.npy", "bytes": 41344, "sha256": "ac30ff8055ddc55da655145f00b806d3cd3b083332afabffddcbf1ca8e7f026c"},
+        {"path": "vocab.json", "bytes": 362, "sha256": "07acb4a43069bcaba4b49b317ccbbc9020d364401b6ff5021c78411dce15a380"}
       ]
     },
     {

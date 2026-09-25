@@ -52,11 +52,17 @@ def _engine_process(receive, send, config, engine_factory=None):
         handler = LibraryHandler(log)
         logging.getLogger().addHandler(handler)
         if engine_factory is None:
-            from .cli import Engine
-            engine_factory = Engine
-        engine = engine_factory(config["folder"], log, config["language"],
-                                backend=config["backend"], asr_path=config["asr_path"],
-                                translation_path=config["translation_path"])
+            if config.get("bridge_models"):
+                from .bridge_preview import BridgePreviewEngine
+                engine_factory = BridgePreviewEngine
+            else:
+                from .cli import Engine
+                engine_factory = Engine
+        kwargs = dict(backend=config["backend"], asr_path=config["asr_path"],
+                      translation_path=config["translation_path"])
+        if config.get("bridge_models"):
+            kwargs["bridge_models"] = config["bridge_models"]
+        engine = engine_factory(config["folder"], log, config["language"], **kwargs)
         engine.direction = config["direction"]
         engine.topic = config["topic"]
         engine.warmup()
@@ -128,7 +134,8 @@ class RemoteEngine:
                  translation_path=None, direction="he-en", topic="none", stop=None,
                  cancel=None, startup_timeout=STARTUP_TIMEOUT,
                  shutdown_grace=SHUTDOWN_GRACE, cancel_grace=CANCEL_GRACE,
-                 engine_factory=None,worker_target=_engine_process):
+                 engine_factory=None,worker_target=_engine_process,
+                 bridge_models=None):
         self.log = log
         self.language = language;self.direction = direction;self.topic = topic
         self.translation_context = []
@@ -147,14 +154,15 @@ class RemoteEngine:
         self._send = parent_send;self._receive = parent_receive
         config = dict(folder=folder, language=language, backend=backend,
                       asr_path=asr_path, translation_path=translation_path,
-                      direction=direction, topic=topic)
+                      direction=direction, topic=topic, bridge_models=bridge_models)
         self._process = context.Process(target=worker_target,
-            args=(child_receive, child_send, config, engine_factory), name="mlx-inference")
+            args=(child_receive, child_send, config, engine_factory),
+            name="bridge-preview-inference" if bridge_models else "mlx-inference")
         try:
             self._process.start();child_receive.close();child_send.close()
             message = self._receive_until(None, startup_timeout, allow_shutdown=False)
             if message[0] != "ready":
-                raise RemoteEngineError(self._format_failure(message, "MLX engine startup failed"))
+                raise RemoteEngineError(self._format_failure(message, "Inference engine startup failed"))
             for key, value in message[1].items():setattr(self, key, value)
         except BaseException:
             self._abort_process();self._close_resources();raise
@@ -187,7 +195,7 @@ class RemoteEngine:
                     continue
                 if message[0]=="fatal":
                     self._abort_process()
-                    raise RemoteEngineError(self._format_failure(message,"MLX engine process failed"))
+                    raise RemoteEngineError(self._format_failure(message,"Inference engine process failed"))
                 if request_id is None or (len(message)>1 and message[1]==request_id):return message
             if not self._process.is_alive():
                 # A child can send its final diagnostic and exit before the
@@ -197,7 +205,7 @@ class RemoteEngine:
                 if self._receive.poll(FINAL_DRAIN_GRACE):
                     continue
                 self._abort_process()
-                raise RemoteEngineError("MLX engine process exited unexpectedly")
+                raise RemoteEngineError("Inference engine process exited unexpectedly")
 
     def _bounded_send(self, payload, timeout, allow_shutdown=True):
         finished=threading.Event();failure=[]

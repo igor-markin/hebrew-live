@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parents[1]
@@ -18,24 +18,43 @@ datas = [
     (str(PACKAGE_ROOT / "browser.js"), "hebrew_live"),
     (str(PACKAGE_ROOT / "models.json"), "hebrew_live"),
     (str(PACKAGE_ROOT / "desktop_models.json"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "desktop_accurate_model.json"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "fast_asr_manifest.json"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "fast_asr_notice.txt"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "gemma_notice.txt"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "gemma_terms.txt"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "silero_notice.txt"), "hebrew_live"),
     # Retranslation hashes the prompt source at import time for diagnostic
     # provenance.  PyInstaller's PYZ archive does not expose that source as a
     # normal filesystem path, so keep the exact file beside the frozen package.
     (str(PACKAGE_ROOT / "translation.py"), "hebrew_live"),
     (str(PACKAGE_ROOT / "web"), "hebrew_live/web"),
 ]
+bundle_models = os.environ.get("HEBREW_LIVE_BUNDLE_MODELS")
+bundle_manifest = os.environ.get("HEBREW_LIVE_BUNDLE_MANIFEST")
+if not bundle_models or not bundle_manifest:
+    raise RuntimeError("The desktop build requires verified ASR/VAD files")
+import json
+inventory = json.loads((PACKAGE_ROOT / "desktop_models.json").read_text())
+for component in inventory["components"]:
+    if component["key"] not in ("fast_asr", "vad"):
+        continue
+    folder = component.get("folder", "")
+    for item in component["files"]:
+        relative = Path(folder) / item["path"]
+        datas.append((str(Path(bundle_models) / relative),
+                      str(Path("hebrew_live/bundled_models") / relative.parent)))
+datas.append((bundle_manifest, "hebrew_live/bundled_models"))
 binaries = []
 hiddenimports = [
     "mlx_lm.models.gemma3_text",
     "hebrew_live.model_selection",
 ]
 
-# Native libraries and dynamically selected model/tokenizer modules need an
-# explicit collection pass. mlx-whisper itself is statically reachable; keeping
-# it out of this list avoids pulling its conversion-only torch helper into the app.
-datas += collect_data_files("mlx_whisper", includes=["assets/*"])
+# Bundle the Whisper runtime, but download its large weights only on request.
 for package in (
     "mlx",
+    "mlx_whisper",
     "mlx_lm",
     "onnxruntime",
     "sounddevice",
@@ -53,7 +72,6 @@ for package in (
 for distribution in (
     "hebrew-live-cli",
     "mlx",
-    "mlx-whisper",
     "mlx-lm",
     "onnxruntime",
     "sounddevice",
@@ -85,7 +103,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["torch", "torchaudio", "torchvision", "tensorflow", "jax", "jaxlib"],
+    excludes=["torch", "torchaudio", "torchvision", "tensorflow", "jax", "jaxlib",
+              "librosa"],
     noarchive=False,
     optimize=0,
 )

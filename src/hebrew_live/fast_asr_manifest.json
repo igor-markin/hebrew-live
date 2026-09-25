@@ -1,0 +1,13 @@
+{
+  "model": "GigaAM-He",
+  "source_repo": "asfberlin/fast-hebrew-asr",
+  "source_revision": "f374969f14a6c7b9d5a829f8bfb80de041931f8b",
+  "source_checkpoint_sha256": "0efc83a957cfd1aba9a1e61e5b97408e0903c822b5994d90b6227649b1b6efbd",
+  "export_source_commit": "7447938d791c4f3e643386ee22c33777004293a5",
+  "license": "MIT",
+  "files": {
+    "multilingual_ctc_ft.onnx": {"bytes": 885379394, "sha256": "c3eb86ac825073c5fb534c0a0a697146b0f12a13b0ccc67c5baca96ab506d0f5"},
+    "mel_filters.npy": {"bytes": 41344, "sha256": "ac30ff8055ddc55da655145f00b806d3cd3b083332afabffddcbf1ca8e7f026c"},
+    "vocab.json": {"bytes": 362, "sha256": "07acb4a43069bcaba4b49b317ccbbc9020d364401b6ff5021c78411dce15a380"}
+  }
+}

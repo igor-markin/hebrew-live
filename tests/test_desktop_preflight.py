@@ -22,6 +22,31 @@ def inventory(payload: bytes = b"model"):
 
 
 class DesktopPreflightTests(unittest.TestCase):
+    def test_bundled_asr_and_vad_require_only_translation_download_and_vad_copy(self):
+        payload = b"mt"
+        vad = b"vad"
+        asr = b"asr"
+        selected = {"schema_version": 1, "components": [
+            {"key": "fast_asr", "folder": "fast-asr", "files": [
+                {"path": "model.onnx", "bytes": len(asr), "sha256": hashlib.sha256(asr).hexdigest()}]},
+            {"key": "translation", "folder": "milmmt-4b-4bit", "files": [
+                {"path": "model.safetensors", "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}]},
+            {"key": "vad", "files": [
+                {"path": "silero.onnx", "bytes": len(vad), "sha256": hashlib.sha256(vad).hexdigest()}]},
+        ]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle, models = root / "bundle", root / "models"
+            (bundle / "fast-asr").mkdir(parents=True)
+            (bundle / "fast-asr/model.onnx").write_bytes(asr)
+            (bundle / "silero.onnx").write_bytes(vad)
+            plan = plan_model_space(models, selected, bundled_root=bundle,
+                                    temporary_bytes=0, reserve_bytes=0)
+            self.assertEqual([item.state for item in plan.files],
+                             ["verified", "missing", "copy_required"])
+            self.assertEqual(plan.download_bytes, len(payload))
+            self.assertEqual(plan.copy_bytes, len(vad))
+
     def test_less_than_16_gib_is_a_warning_not_a_blocker(self):
         with tempfile.TemporaryDirectory() as tmp, \
              patch("hebrew_live.desktop_preflight.platform.system", return_value="Darwin"), \

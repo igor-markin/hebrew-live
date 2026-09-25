@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "dist:mac": "npm run build && electron-builder --mac dir --arm64"
+    "dist:mac": "npm run build && node -e 'require(\"electron\")' && electron-builder --mac dir --arm64",
+    "dist:dmg": "npm run build && node -e 'require(\"electron\")' && electron-builder --mac dmg --arm64 && node scripts/check-dmg-size.mjs"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
@@ -38,6 +39,46 @@
         "to": "engine"
       },
       {
+        "from": "../../docs/legal",
+        "to": "legal"
+      },
+      {
+        "from": "../../src/hebrew_live/gemma_terms.txt",
+        "to": "legal/gemma_terms.txt"
+      },
+      {
+        "from": "../../src/hebrew_live/gemma_notice.txt",
+        "to": "legal/gemma_notice.txt"
+      },
+      {
+        "from": "../../src/hebrew_live/fast_asr_notice.txt",
+        "to": "legal/fast_asr_notice.txt"
+      },
+      {
+        "from": "../../src/hebrew_live/silero_notice.txt",
+        "to": "legal/silero_notice.txt"
+      },
+      {
+        "from": "../../docs/THIRD_PARTY.md",
+        "to": "legal/THIRD_PARTY.md"
+      },
+      {
+        "from": "../../PRIVACY.md",
+        "to": "legal/PRIVACY.md"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "legal/LICENSE.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSE",
+        "to": "legal/ELECTRON-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSES.chromium.html",
+        "to": "legal/LICENSES.chromium.html"
+      },
+      {
         "from": "../../docs/images/live-translation.jpg",
         "to": "onboarding/live-translation.jpg"
       },
@@ -60,9 +101,15 @@
       "category": "public.app-category.productivity",
       "icon": "icon.png",
       "identity": null,
-      "minimumSystemVersion": "26.2",
+      "minimumSystemVersion": "27.0",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Hebrew Live uses the microphone only when you start a live translation or run the input test."
+      }
+    },
+    "dmg": {
+      "license": {
+        "en_US": "../../docs/legal/EULA.en.txt",
+        "ru_RU": "../../docs/legal/EULA.ru.txt"
       }
     }
   }

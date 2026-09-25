@@ -25,12 +25,14 @@ test("external and backend URLs are strictly constrained", () => {
   assert.equal(allowedBackendUrl("http://127.0.0.1:43111/abcdefghijklmnopqrstuvwxyzABCDEFGH/live/?token=x"), null);
 });
 
-test("working renderer preload exposes only lifecycle and locale commands", () => {
+test("working renderer preload exposes only lifecycle, locale, and guarded mode selection", () => {
   const source = readFileSync(new URL("../src/preload.cts", import.meta.url), "utf8");
   const block = source.match(/const workingBridge = \{([\s\S]*?)\n\};/)?.[1] ?? "";
   const commands = [...block.matchAll(/^\s*(\w+):/gm)].map((match) => match[1]).sort();
-  assert.deepEqual(commands, ["requestQuit", "setUiLocale", "showHelp"]);
+  assert.deepEqual(commands, ["requestQuit", "setRecognitionMode", "setUiLocale", "showHelp"]);
   assert.doesNotMatch(block, /prepare|openExternal|copyDiagnostics|startBackend/);
+  const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+  assert.match(main, /desktop:set-recognition-mode[\s\S]*?finish_current_recording_first/);
 });
 
 test("controller process exit returns the shell to crash recovery", () => {
