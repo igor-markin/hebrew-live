@@ -51,7 +51,7 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   const {locale,tx}=useI18n();
   const live=group.live;
   const issue=live?.issue||group.final?.issue;
-  const pair=live?.current||group.final||group.final_progress;
+  const pair=group.stream||live?.current||group.final||group.final_progress;
   if(!pair&&!issue)return null;
   const shown=pair||{source:'',translation:''};
   const empty=group.complete&&!shown.source.trim()&&!shown.translation.trim();

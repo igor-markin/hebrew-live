@@ -74,7 +74,10 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
                 continue
             if f.settings is None or f.settings.mode!='phrases':
                 raise ValueError('Only phrases mode is supported')
-            log.event('asr_job_start',segment=f.id,queue_wait=max(0.,time.monotonic()-getattr(f,'queued_at',time.monotonic())))
+            now=time.monotonic()
+            log.event('asr_job_start',segment=f.id,
+                      queue_wait=max(0.,now-getattr(f,'queued_at',now)),
+                      capture_age=max(0.,now-f.end))
             if f.settings.publication in ('revisable','draft'):
                 draft.process(f)
             else:

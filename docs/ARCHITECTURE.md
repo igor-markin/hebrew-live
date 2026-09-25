@@ -75,6 +75,17 @@ new recording. Its pinned model files are prepared outside the app and verified
 separately; the inference worker then uses one ASR backend, never a concurrent
 Whisper refinement pass. The default remains fast.
 
+During a revisable translation, complete generated words may appear as a
+transient draft at most once per 100 ms. The UI replaces that text with the
+completed paired publication, or clears it if generation fails. Transient words
+are not added to the session archive or revision history. The loopback UI polls
+every 200 ms while recording, so a very short preview may finish before the
+next poll. Diagnostics record the ASR queue age, repeated audio work, first MT
+token, first transient draft, and completed translation separately. An optional
+`HEBREW_LIVE_TEXT_ONLY_DRAFT=1` experiment skips Whisper word alignment for
+nonfinal drafts; it remains off by default because a same-window benchmark did
+not establish a reliable speed gain. Final recognition still uses word timing.
+
 The process boundary bounds native inference startup, shutdown, and close hangs. A
 native call is not given a new wall-clock SLA while recording remains active; the
 deadline begins at stop or cancel. Python queue delivery and joins also have deadlines,

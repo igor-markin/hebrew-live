@@ -1,6 +1,7 @@
 import queue,threading,time,unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import patch
 import numpy as np
 from hebrew_live.cli import Fragment
 from hebrew_live.stream import Settings,Control,Boundary
@@ -36,6 +37,69 @@ class LiveTests(unittest.TestCase):
   self.assertEqual(len(self.mt),2)
   self.assertEqual(self.pubs()[-1]['stage'],'closed')
   self.assertEqual(self.pubs()[-1]['history'],[first])
+ def test_streaming_translation_is_transient_and_replaced_by_verified_result(self):
+  self.results.append(('שלום','unused','accepted'))
+  self.e.translate=lambda text:iter([('Первый ',None),('текст ',None),('готов.','stop')])
+  with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
+   self.p.process(self.f(0,16000))
+  updates=list(self.q.queue)
+  streams=[value for kind,_,value in updates if kind=='live_stream']
+  self.assertEqual([value['translation'] for value in streams],['Первый','Первый текст'])
+  self.assertEqual([name for name,_ in self.events].count('mt_first_preview'),1)
+  self.assertEqual(len([item for item in self.saved if item[0]=='source']),2)
+  screen=TranslationScreen()
+  for kind,sid,value in updates:
+   screen.update(kind,sid,value)
+   if kind=='live_stream':self.assertEqual(screen.groups[sid]['stream']['translation'],value['translation'])
+  self.assertNotIn('stream',next(iter(screen.groups.values())))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Первый текст готов.')
+  self.assertFalse(any(value['translation'] for value in self.pubs()[-1]['history']))
+ def test_failed_stream_restores_previous_translation_without_archiving_preview(self):
+  self.runf(self.f(0,16000),'a','Первый')
+  saved_before=len(self.saved)
+  self.results.append(('b','unused','accepted'))
+  self.e.translate=lambda text:iter([('Неверный ',None),('текст','length')])
+  with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
+   self.p.process(self.f(0,32000))
+  self.assertTrue(any(kind=='live_stream_clear' for kind,_,_ in self.q.queue))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Первый')
+  self.assertEqual(len(self.saved),saved_before)
+  screen=TranslationScreen()
+  for item in self.q.queue:screen.update(*item)
+  self.assertNotIn('stream',next(iter(screen.groups.values())))
+ def test_stream_clears_if_durable_publication_fails(self):
+  self.results.append(('שלום','unused','accepted'))
+  self.e.translate=lambda text:iter([('Новый ',None),('текст.','stop')])
+  publish=self.p.publish
+  def fail_target(source,target,*args,**kwargs):
+   if target:raise OSError('archive full')
+   return publish(source,target,*args,**kwargs)
+  self.p.publish=fail_target
+  with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
+   with self.assertRaisesRegex(OSError,'archive full'):
+    self.p.process(self.f(0,16000))
+  screen=TranslationScreen()
+  for item in self.q.queue:screen.update(*item)
+  self.assertNotIn('stream',next(iter(screen.groups.values())))
+ def test_stream_clears_if_diagnostics_write_fails(self):
+  self.results.append(('שלום','unused','accepted'))
+  self.e.translate=lambda text:iter([('Новый ',None),('текст.','stop')])
+  event=self.log.event
+  def fail_mt(name,**values):
+   if name=='live_mt':raise OSError('diagnostics full')
+   return event(name,**values)
+  self.log.event=fail_mt
+  with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
+   with self.assertRaisesRegex(OSError,'diagnostics full'):
+    self.p.process(self.f(0,16000))
+  screen=TranslationScreen()
+  for item in self.q.queue:screen.update(*item)
+  self.assertNotIn('stream',next(iter(screen.groups.values())))
+ def test_text_only_draft_keeps_word_alignment_for_final(self):
+  self.e.backend='turbo';self.p.text_only_draft=True
+  self.runf(self.f(0,16000),'a','Один')
+  self.runf(self.f(0,32000,True,'silence'),'a','unused')
+  self.assertEqual([kw['align_words'] for _,kw in self.pcm],[False,True])
  def test_live_draft_rejected_or_empty_does_not_erase(self):
   self.settings=replace(self.settings,publication='draft')
   self.runf(self.f(0,16000),'a','Первый черновик')

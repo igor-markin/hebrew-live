@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, asdict, replace
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 import numpy as np
 
 _PROMPT_HASH = hashlib.sha256(Path(__file__).with_name('translation.py').read_bytes()).hexdigest()
+STREAM_PREVIEW_INTERVAL = 0.1
 
 def common_prefix(left, right):
     """Exact adjacent prefix, including punctuation, at word boundaries."""
@@ -22,6 +24,13 @@ def common_prefix(left, right):
         if old.rstrip()!=new.rstrip():break
         result.append(new)
     return ''.join(result).rstrip()
+
+def streamable_prefix(value):
+    """Only show complete words while an unfinished translation is growing."""
+    if value.rstrip().endswith(('.', '!', '?', '…', '。', '！', '？')):
+        return value.strip()
+    match = re.search(r'\s+\S*$', value)
+    return value[:match.start()].strip() if match else ''
 
 @dataclass(frozen=True)
 class DraftMT:
@@ -52,6 +61,7 @@ class RetranslationProcessor:
         self.mt_counter = 0
         self.catchup_inbox = None
         self.catchup_parent = None
+        self.text_only_draft = os.environ.get('HEBREW_LIVE_TEXT_ONLY_DRAFT','0') == '1'
         self.reset()
 
     def reset(self):
@@ -222,12 +232,13 @@ class RetranslationProcessor:
         self.deferred_tail = False
         e = self.engine
         began = time.monotonic()
-        text = e.recognize(self.audio, 0., preliminary=not final, mode='phrases')
+        align_words = final or not self.text_only_draft or getattr(e,'backend',None) not in ('turbo','multilingual')
+        text = e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words)
         self.last_status = getattr(e, 'recognition_status', None) or ('accepted' if text else 'empty')
         self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
                        seconds=time.monotonic()-began, input_seconds=len(self.audio)/16000,
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
-                       final=final, closing=closing, source=text)
+                       final=final, closing=closing, source=text,word_alignment=align_words)
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'
             if closing and self.catchup_parent:
@@ -250,7 +261,8 @@ class RetranslationProcessor:
                 job=replace(job,catchup_used=True)
                 self.mt_event('mt_deferred_for_asr',job,asr_fragment=newer.id,asr_revision=newer.revision)
                 self.log.event('asr_job_start',segment=newer.id,revision=newer.revision,
-                               queue_wait=max(0.,time.monotonic()-newer.queued_at),catchup=True)
+                               queue_wait=max(0.,time.monotonic()-newer.queued_at),
+                               capture_age=max(0.,time.monotonic()-newer.end),catchup=True)
                 self.catchup_parent=job
                 try:self.process(newer)
                 finally:self.catchup_parent=None
@@ -280,26 +292,55 @@ class RetranslationProcessor:
         e.translation_context = []
         output = ''; end_reason = None; issue = None
         began = time.monotonic()
+        last_preview_at = began-STREAM_PREVIEW_INTERVAL
+        preview = ''
+        first_token = False
+        def clear_preview():
+            if preview:self.updates.put(('live_stream_clear',self.sid,{}))
         from .cli import repetition_loop
-        for piece, end_reason in e.translate(text):
-            if self.cancel.is_set():
-                self.mt_event('mt_discarded',job,reason='cancelled');return
-            output += piece
-            if repetition_loop(output): issue = 'Повтор генерации'; break
-        if end_reason == 'repetition': issue = issue or 'Повтор генерации'
-        elif end_reason != 'stop': issue = issue or 'Перевод не завершён'
-        if not output.strip(): issue = issue or 'Пустой перевод'
-        self.log.event('live_mt', segment=self.sid, source=text, translation=output,
-                       seconds=time.monotonic()-began, finish_reason=end_reason, issue=issue)
-        self.mt_event('mt_finished',job,seconds=time.monotonic()-began,finish_reason=end_reason,issue=issue)
-        if not self.job_current(job):return
-        if issue:
-            self.source = self.draft = ''  # Failed work is never cache evidence.
-            if closing: self.finish(closing, valid=False)
-            return
-        output = output.strip()
-        self.source, self.draft = text, output
-        if closing:
-            self.finish(closing, valid=True,job=job)
-        else:
-            self.publish(text, output,job=job)
+        try:
+            for piece, end_reason in e.translate(text):
+                if self.cancel.is_set():
+                    clear_preview()
+                    self.mt_event('mt_discarded',job,reason='cancelled');return
+                output += piece
+                if repetition_loop(output): issue = 'Повтор генерации'; break
+                now = time.monotonic()
+                if piece and not first_token:
+                    self.mt_event('mt_first_token',job,seconds=now-began)
+                    first_token = True
+                if end_reason != 'stop' and now-last_preview_at >= STREAM_PREVIEW_INTERVAL:
+                    candidate = streamable_prefix(output)
+                    if candidate and candidate != preview:
+                        self.updates.put(('live_stream',self.sid,dict(
+                            source=text,translation=candidate,start=job.start/16000,end=job.end/16000)))
+                        if not preview:
+                            self.mt_event('mt_first_preview',job,seconds=now-began,
+                                          audio_lag=max(0.,now-job.captured_at+job.captured_offset-job.end/16000))
+                        preview = candidate
+                        last_preview_at = now
+        except BaseException:
+            clear_preview()
+            raise
+        try:
+            if end_reason == 'repetition': issue = issue or 'Повтор генерации'
+            elif end_reason != 'stop': issue = issue or 'Перевод не завершён'
+            if not output.strip(): issue = issue or 'Пустой перевод'
+            self.log.event('live_mt', segment=self.sid, source=text, translation=output,
+                           seconds=time.monotonic()-began, finish_reason=end_reason, issue=issue)
+            self.mt_event('mt_finished',job,seconds=time.monotonic()-began,finish_reason=end_reason,issue=issue)
+            if not self.job_current(job):return
+            if issue:
+                self.source = self.draft = ''  # Failed work is never cache evidence.
+                if closing: self.finish(closing, valid=False)
+                return
+            output = output.strip()
+            self.source, self.draft = text, output
+            if closing:
+                self.finish(closing, valid=True,job=job)
+            else:
+                self.publish(text, output,job=job)
+        finally:
+            # A durable publication normally replaces the preview. Clear it
+            # explicitly when publication is unchanged or fails halfway through.
+            clear_preview()

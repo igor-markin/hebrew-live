@@ -96,6 +96,17 @@ class TranslationScreen:
         if settings and settings.generation < self.generation:
             if kind in ('final','group_final','live_publication'):self.contexts.pop(sid, None)
             return
+        if kind == 'live_stream':
+            group=self.groups.get(sid)
+            if group and not group['complete']:
+                group['stream']=dict(value)
+                group['revision']=group.get('revision',0)+1
+            return
+        if kind == 'live_stream_clear':
+            group=self.groups.get(sid)
+            if group and group.pop('stream',None) is not None:
+                group['revision']=group.get('revision',0)+1
+            return
         if kind == 'live_publication':
             from copy import deepcopy
             revision=self.groups.get(sid,{}).get('revision',0)+1

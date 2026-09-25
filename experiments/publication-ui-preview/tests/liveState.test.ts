@@ -30,6 +30,15 @@ test('accepts nullable issue and reason emitted by the Python backend',()=>{
   assert.equal(parsed.groups[0].live?.current.translation,'Привет');
 });
 
+test('accepts a transient streaming pair without changing the durable version',()=>{
+  const current={source:'שלום',translation:'Старый перевод'};
+  const group={id:'1',direction:'he-ru',complete:false,live:{current,history:[],stage:'open'},stream:{source:'שלום חדש',translation:'Новый'}};
+  const parsed=parseLiveState({...state,groups:[group]});
+  assert.equal(parsed.groups[0].stream?.translation,'Новый');
+  assert.equal(parsed.groups[0].live?.current.translation,'Старый перевод');
+  assert.throws(()=>parseLiveState({...state,groups:[{...group,stream:{source:'שלום'}}]}));
+});
+
 test('retains unchanged group objects by revision',()=>{
   const first={id:'1',revision:3,direction:'he-ru',complete:false};
   const next={...first};

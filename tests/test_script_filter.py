@@ -21,6 +21,17 @@ class ScriptFilterTests(unittest.TestCase):
   e=self.engine('שלום');self.assertEqual(e.recognize([]),'שלום')
   e=self.engine('Здравствуйте');e.direction='ru-he';e.language='ru'
   self.assertEqual(e.recognize([]),'Здравствуйте');self.assertEqual(e.recognition_status,'accepted')
+ def test_text_only_draft_reads_segments_without_word_alignment(self):
+  e=self.engine('unused');e.backend='turbo';calls=[]
+  def transcribe(*args,**kwargs):
+   calls.append(kwargs['word_timestamps'])
+   return dict(language='he',segments=[dict(text='שלום עולם',words=[dict(word='שלום',start=0,end=1)])])
+  e.asr.transcribe=transcribe
+  self.assertEqual(e.recognize([],align_words=False),'שלום עולם')
+  self.assertEqual(e.recognition_words,[])
+  self.assertEqual(calls,[False])
+  self.assertEqual(e.recognize([],prefix=.2,align_words=False),'שלום')
+  self.assertEqual(calls,[False,True])
  def test_rejected_foreign_final_does_not_publish_stale_draft(self):
   import queue,threading,time,numpy as np
   from hebrew_live.retranslation import RetranslationProcessor

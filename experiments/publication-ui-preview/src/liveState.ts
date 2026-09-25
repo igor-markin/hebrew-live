@@ -1,6 +1,6 @@
 export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null};
 export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number};
-export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;final?:Pair;final_progress?:Pair};
+export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair};
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
@@ -31,7 +31,7 @@ function pair(value:unknown): value is Pair {
 function group(value:unknown): value is Group {
   if(!record(value)||typeof value.id!=='string'||typeof value.direction!=='string'||typeof value.complete!=='boolean')return false;
   if(value.revision!==undefined&&typeof value.revision!=='number')return false;
-  if(value.final!==undefined&&!pair(value.final)||value.final_progress!==undefined&&!pair(value.final_progress))return false;
+  if(value.final!==undefined&&!pair(value.final)||value.final_progress!==undefined&&!pair(value.final_progress)||value.stream!==undefined&&!pair(value.stream))return false;
   if(value.live!==undefined){
     if(!record(value.live)||!pair(value.live.current)||!Array.isArray(value.live.history)||!value.live.history.every(pair)||typeof value.live.stage!=='string'||!optionalString(value.live.issue)||!optionalString(value.live.reason)||!optionalNumber(value.live.start)||!optionalNumber(value.live.end))return false;
   }
@@ -82,7 +82,7 @@ export function mergeLiveState(previous:LiveState,next:LiveState):LiveState {
 }
 
 export function isVisibleGroup(group:Group):boolean {
-  const pair=group.live?.current||group.final||group.final_progress;
+  const pair=group.stream||group.live?.current||group.final||group.final_progress;
   const issue=group.live?.issue||group.final?.issue;
   return Boolean(issue||!group.complete||pair&&(pair.source.trim()||pair.translation.trim()));
 }

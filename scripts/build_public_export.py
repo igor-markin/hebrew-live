@@ -22,13 +22,15 @@ ROOT_FILES=(
 DOC_FILES=(
     'ARCHITECTURE.md','CLI.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
     'RELEASE_READINESS.md','THIRD_PARTY.md','DESKTOP_BUILD.md','DESKTOP_TEST_REPORT.md',
+    'ACCURATE_LATENCY_STAGE1.md',
     'DISTRIBUTION.md','legal/EULA.en.txt','legal/EULA.ru.txt',
     'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
 )
 SCRIPT_FILES=('build_public_export.py','check_public_tree.py','ci_clean_smoke.py','generate_dependency_inventory.py',
               'probe_installed_package.py','build_macos_engine_app.py','export_fast_hebrew_onnx.py',
               'prepare_desktop_proof_models.py',
-              'prepare_desktop_proof_app.py','macos_bundle_report.py','measure_macos_processes.py')
+              'prepare_desktop_proof_app.py','macos_bundle_report.py','measure_macos_processes.py',
+              'diagnose_latency.py')
 FRONTEND_FILES=(
     'README.md','package.json','package-lock.json','tsconfig.json','vite.config.ts','index.html','live.html',
     'src/App.tsx','src/Live.tsx','src/i18n.ts','src/live.css','src/liveMain.tsx','src/liveState.ts',

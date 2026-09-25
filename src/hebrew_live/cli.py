@@ -418,7 +418,7 @@ class Engine:
         self.warmup()
         self.log.event('model_load_complete',**values)
 
-    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None):
+    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True):
         self.recognition_status='empty'
         self.recognition_issue=None
         self.raw_recognition=''
@@ -428,6 +428,7 @@ class Engine:
         early=(preliminary and mode=='phrases' and getattr(self,'early_reject',False)
                and getattr(self,'backend',None)=='turbo' and self.language=='he'
                and source_language=='he')
+        word_timestamps = align_words or prefix > 0 or getattr(self,'backend','turbo')=='fast'
         if getattr(self,'backend','turbo')=='fast':
             result=self.asr.transcribe(audio)
         else:
@@ -435,9 +436,9 @@ class Engine:
             from .whisper_repetition import reject_repeated_decode, RepeatedDecode
             try:
                 with reject_repeated_decode(early,self.log.event):
-                    with reuse_alignment(getattr(self,'encoder_reuse',False),self.log.event):
+                    with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
                         result=self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
-                            temperature=0.0,word_timestamps=True,condition_on_previous_text=False,verbose=None)
+                            temperature=0.0,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
             except RepeatedDecode as exc:
                 self.recognition_status='rejected';self.recognition_issue='early repeated recognition'
                 self.recognition_words=[]
@@ -446,9 +447,11 @@ class Engine:
                                raw_text=exc.text,tokens=exc.tokens)
                 return ''
         self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
-        words=[w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
+        words=([w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
+               if word_timestamps else [])
         self.recognition_words=words
-        text=''.join(w['word'] for w in words).strip()
+        text=(''.join(w['word'] for w in words) if word_timestamps else
+              ''.join(s.get('text','') for s in result.get('segments',[]))).strip()
         self.raw_recognition=text
         from .script_filter import clearly_non_hebrew
         if self.language=='he' and source_language=='he' and clearly_non_hebrew(text):
