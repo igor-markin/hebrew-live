@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ControllerEvent, DesktopPreferences, HebrewLiveBridge, RecognitionMode, UiLocale } from "./shared.js";
+import type { ControllerEvent, DesktopPreferences, HebrewLiveBridge, UiLocale } from "./shared.js";
 
 const bridge: HebrewLiveBridge = {
   bootstrap: () => ipcRenderer.invoke("desktop:bootstrap"),
@@ -7,9 +7,6 @@ const bridge: HebrewLiveBridge = {
   languages: () => ipcRenderer.invoke("desktop:languages"),
   preflight: () => ipcRenderer.invoke("desktop:preflight"),
   prepare: () => ipcRenderer.invoke("desktop:prepare"),
-  prepareAccurate: () => ipcRenderer.invoke("desktop:prepare-accurate"),
-  accurateStatus: () => ipcRenderer.invoke("desktop:accurate-status"),
-  setRecognitionMode: (mode: RecognitionMode) => ipcRenderer.invoke("desktop:set-recognition-mode", mode),
   legalText: (locale: string) => ipcRenderer.invoke("desktop:legal-text", locale),
   acceptAgreement: () => ipcRenderer.invoke("desktop:accept-agreement"),
   cancelPreparation: () => ipcRenderer.invoke("desktop:cancel-preparation"),
@@ -38,7 +35,6 @@ const workingBridge = {
   requestQuit: bridge.requestQuit,
   showHelp: bridge.showHelp,
   setUiLocale: bridge.setUiLocale,
-  setRecognitionMode: bridge.setRecognitionMode,
 };
 
 contextBridge.exposeInMainWorld("hebrewLive", window.location.protocol === "file:" ? bridge : workingBridge);

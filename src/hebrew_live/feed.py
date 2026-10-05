@@ -28,12 +28,17 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
     age_scheduler=getattr(engine,'phrase_scheduler','batch')=='age'
     try:
         while not cancel.is_set():
+            draft.poll_mt()
             phrases.service_deadlines()
             if phrases.jobs and (not age_scheduler or not inbox.asr_due_before_translation(phrases.jobs[0].ready_at)):
                 phrases.translate_next();continue
-            f = inbox.get(deadline_at=phrases.next_deadline()) if phrases.budgets else inbox.get()
+            deadline=phrases.next_deadline() if phrases.budgets else None
+            if draft.async_mt and draft._mt_outstanding:
+                poll_deadline=time.monotonic()+.05
+                deadline=min(deadline,poll_deadline) if deadline is not None else poll_deadline
+            f = inbox.get(deadline_at=deadline)
             if f is getattr(inbox,"TIMEOUT",False):
-                phrases.service_deadlines();continue
+                phrases.service_deadlines();draft.poll_mt();continue
             if f is None:
                 phrases.flush('eof');draft.flush('eof');break
             if isinstance(f,Boundary):
@@ -42,7 +47,7 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
                 # A retry is an explicit, isolated model job. It gets a new
                 # visible group and durable records while the original failed
                 # group and the live processor state remain untouched.
-                retry=RetranslationProcessor(engine,updates,log,cancel)
+                retry=RetranslationProcessor(engine,updates,log,cancel,async_mt=False)
                 retry.counter=draft.counter;retry.export_counter=draft.export_counter;retry.mt_counter=draft.mt_counter
                 try:
                     retry.process(f.fragment)
@@ -89,4 +94,5 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
         try:log.error(exc)
         except Exception:pass
     finally:
+        draft.shutdown_mt()
         updates.put(('done',0,''))

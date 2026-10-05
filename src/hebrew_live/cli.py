@@ -45,12 +45,12 @@ RETIRED_MODEL_DIRS={'translation-7b'}
 
 
 def model_download_keys():
-    return ['asr','asr_multilingual','translation','vad']
+    return ['asr','translation','vad']
 
 
 def desktop_model_download_keys():
-    """Return the fast desktop components prepared after first launch."""
-    return ['fast_asr','translation','vad']
+    """Return the required desktop components prepared after first launch."""
+    return ['asr','translation','vad']
 
 
 def preference_folder(models):
@@ -227,11 +227,6 @@ def verify(folder,required_assets=()):
     if not required.issubset(declared):raise RuntimeError('Selected model is absent from the setup manifest; run setup')
     coverage=declared
     names=set(files)
-    if 'fast_asr' in manifest.get('assets', ()):
-        from .fast_asr import MODEL_FILES
-        pinned=json.loads(Path(__file__).with_name('fast_asr_manifest.json').read_text())['files']
-        if any(files.get('fast-asr/'+name)!=pinned[name]['sha256'] for name in MODEL_FILES):
-            raise RuntimeError('Fast ASR manifest does not match the pinned export; run setup')
     for asset in coverage:
         exact,alternatives=required_model_files(asset)
         if not exact.issubset(names):raise RuntimeError(f'Model manifest omits critical {asset} files; run setup')
@@ -264,10 +259,9 @@ def validate_custom_models(models,asr=None,translation=None,vad=None,asr_backend
         if kind=='file' and not path.is_file():raise ValueError(f'Custom {name} model file does not exist')
         values[name.lower()]=path
     if asr is not None:
-        if asr_backend=='fast':
-            from .fast_asr import model_at
-            model_at(models,values['asr'])
-        elif not (values['asr']/'config.json').is_file() or not (values['asr']/'weights.safetensors').is_file():
+        if asr_backend != 'turbo':
+            raise ValueError('Only Whisper Turbo is supported')
+        if not (values['asr']/'config.json').is_file() or not (values['asr']/'weights.safetensors').is_file():
             raise ValueError('Custom ASR model must be an MLX Whisper directory with config.json and weights.safetensors')
     if translation is not None:
         path=values['translation']
@@ -347,7 +341,11 @@ def repetition_loop(text):
 
 class Engine:
     def __init__(self, folder, log, language='he', backend='turbo',
-                 asr_path=None, translation_path=None):
+                 asr_path=None, translation_path=None, role='both'):
+        if role not in ('both', 'asr', 'mt'):
+            raise ValueError('Unknown inference role')
+        self.role=role
+        if backend!='turbo':raise ValueError('Only Whisper Turbo is supported')
         self.encoder_reuse=True
         self.early_reject=os.environ.get('HEBREW_LIVE_EARLY_REJECT','1')!='0'
         self.backend=backend
@@ -356,40 +354,38 @@ class Engine:
         self.direction="he-en"
         self.topic="none"
         import mlx.core as mx
-        from mlx_lm import load
         from transformers.utils import logging as transformer_logging
         transformer_logging.disable_default_handler()
         transformer_logging.enable_propagation()
         self.mx=mx;self.log=log
         self.custom_models=asr_path is not None or translation_path is not None
-        if backend=='fast':
-            from .fast_asr import FastHebrewOnnx, model_at
-            self.asr_path=str(model_at(folder,asr_path))
-            self.asr=FastHebrewOnnx(Path(self.asr_path))
-        else:
-            import mlx_whisper
-            self.asr=mlx_whisper
-            self.asr_path=str(asr_path or folder/({'multilingual':'asr-multilingual'}.get(backend,'asr')))
-        self.log.event('asr_early_reject_config',enabled=self.early_reject,
-                       scope='phrases/preliminary/he-source/he/turbo')
-        t=time.monotonic()
+        self.asr=None;self.model=None;self.tokenizer=None
+        self.asr_path=str(asr_path or folder/'asr')
         from .model_selection import TRANSLATION, validate
         validate(dict(asr=backend,translation='milmmt'))
-        if backend!='fast' and asr_path is None and not (folder/({'multilingual':'asr-multilingual'}.get(backend,'asr'))).is_dir():
-            raise ValueError('Model not installed')
-        if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
-            raise ValueError('Model not installed')
-        self.model,self.tokenizer=load(str(translation_path or folder/TRANSLATION['milmmt'][1]))
-        from .translation import configure
-        configure(self.tokenizer,'milmmt')
-        self.log.event('translation_loaded',seconds=time.monotonic()-t)
+        if role!='mt':
+            import mlx_whisper
+            self.asr=mlx_whisper
+            if asr_path is None and not (folder/'asr').is_dir():
+                raise ValueError('Model not installed')
+            self.log.event('asr_early_reject_config',enabled=self.early_reject,
+                           scope='phrases/preliminary/he-source/he/turbo')
+        if role!='asr':
+            if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
+                raise ValueError('Model not installed')
+            t=time.monotonic()
+            from mlx_lm import load
+            self.model,self.tokenizer=load(str(translation_path or folder/TRANSLATION['milmmt'][1]))
+            from .translation import configure
+            configure(self.tokenizer,'milmmt')
+            self.log.event('translation_loaded',seconds=time.monotonic()-t)
         self.models_folder=folder
         self.context=deque(maxlen=2)
     def close(self):
         """Release native model state before Python starts tearing down MLX locks."""
         import gc,importlib
         self.mx.synchronize()
-        if self.backend!='fast':
+        if getattr(self,'role','both')!='mt':
             holder=importlib.import_module('mlx_whisper.transcribe').ModelHolder
             holder.model=None;holder.model_path=None
         self.asr=None
@@ -401,24 +397,23 @@ class Engine:
         from .model_selection import validate
         import gc,importlib
         values=validate(selection,self.models_folder)
-        if values['asr']=='fast' and not self.direction.startswith('he-'):
-            raise ValueError('Fast Hebrew ASR supports Hebrew source audio only')
         direction,topic=self.direction,self.topic
         self.log.event('model_load_start',**values)
         self.mx.synchronize()
-        if self.backend!='fast':
+        if getattr(self,'role','both')!='mt':
             holder=importlib.import_module('mlx_whisper.transcribe').ModelHolder
             holder.model=None;holder.model_path=None
         self.asr=None
         self.model=None;self.tokenizer=None
         gc.collect();self.mx.clear_cache()
         # Runs only in the inference worker, after all preceding final jobs.
-        self.__init__(self.models_folder,self.log,self.language,values['asr'])
+        self.__init__(self.models_folder,self.log,self.language,values['asr'],role=getattr(self,'role','both'))
         self.direction,self.topic=direction,topic
         self.warmup()
         self.log.event('model_load_complete',**values)
 
     def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True):
+        if getattr(self,'role','both')=='mt':raise RuntimeError('MT worker cannot recognize audio')
         self.recognition_status='empty'
         self.recognition_issue=None
         self.raw_recognition=''
@@ -428,24 +423,21 @@ class Engine:
         early=(preliminary and mode=='phrases' and getattr(self,'early_reject',False)
                and getattr(self,'backend',None)=='turbo' and self.language=='he'
                and source_language=='he')
-        word_timestamps = align_words or prefix > 0 or getattr(self,'backend','turbo')=='fast'
-        if getattr(self,'backend','turbo')=='fast':
-            result=self.asr.transcribe(audio)
-        else:
-            from .whisper_reuse import reuse_alignment
-            from .whisper_repetition import reject_repeated_decode, RepeatedDecode
-            try:
-                with reject_repeated_decode(early,self.log.event):
-                    with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
-                        result=self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
-                            temperature=0.0,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
-            except RepeatedDecode as exc:
-                self.recognition_status='rejected';self.recognition_issue='early repeated recognition'
-                self.recognition_words=[]
-                self.raw_recognition=exc.text
-                self.log.event('recognition_early_repetition',reason=self.recognition_issue,
-                               raw_text=exc.text,tokens=exc.tokens)
-                return ''
+        word_timestamps = align_words or prefix > 0
+        from .whisper_reuse import reuse_alignment
+        from .whisper_repetition import reject_repeated_decode, RepeatedDecode
+        try:
+            with reject_repeated_decode(early,self.log.event):
+                with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
+                    result=self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
+                        temperature=0.0,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
+        except RepeatedDecode as exc:
+            self.recognition_status='rejected';self.recognition_issue='early repeated recognition'
+            self.recognition_words=[]
+            self.raw_recognition=exc.text
+            self.log.event('recognition_early_repetition',reason=self.recognition_issue,
+                           raw_text=exc.text,tokens=exc.tokens)
+            return ''
         self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
         words=([w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
                if word_timestamps else [])
@@ -470,6 +462,7 @@ class Engine:
         self.recognition_status='accepted' if text else 'empty'
         return text
     def translate(self, text):
+        if getattr(self,'role','both')=='asr':raise RuntimeError('ASR worker cannot translate text')
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
         from .translation import prompt
@@ -486,13 +479,12 @@ class Engine:
         import numpy as np
         t=time.monotonic()
         silence=np.zeros(16000,dtype=np.float32)
-        if self.backend=='fast':
-            self.asr.transcribe(silence)
-        else:
+        if getattr(self,'role','both')!='mt':
             self.asr.transcribe(silence,path_or_hf_repo=self.asr_path,language=self.language,
                                temperature=0.,word_timestamps=True,condition_on_previous_text=False,verbose=None)
-        list(self.translate('שלום.'))
-        self.log.event('warmup_finished',seconds=time.monotonic()-t,peak_memory=self.mx.get_peak_memory())
+        if getattr(self,'role','both')!='asr':list(self.translate('שלום.'))
+        self.log.event('warmup_finished',role=getattr(self,'role','both'),seconds=time.monotonic()-t,
+                       peak_memory=self.mx.get_peak_memory())
 
 @dataclass
 class Fragment:
@@ -704,7 +696,7 @@ def run(args, log):
         from .browser_ui import BrowserUI
         with BrowserUI(open_browser=not getattr(args,'no_open_browser',False),live=getattr(args,'publication',None) in ('revisable','draft')) as browser:
             from .model_selection import ASR,TRANSLATION
-            asr_label=('Custom local ONNX Hebrew' if args.asr_backend=='fast' else 'Custom local MLX Whisper') if getattr(args,'asr_model',None) else ASR[args.asr_backend][0]
+            asr_label='Custom local MLX Whisper' if getattr(args,'asr_model',None) else ASR[args.asr_backend][0]
             translation_label=('Custom local MLX-LM' if getattr(args,'translation_model',None)
                                else TRANSLATION['milmmt'][0])
             browser.details(direction=args.direction,models={'Распознавание':asr_label,
@@ -758,20 +750,16 @@ def main():
     listen=sub.add_parser('listen');listen.add_argument('--device',type=int)
     bench=sub.add_parser('benchmark');bench.add_argument('file',type=Path)
     for command in (doctor,listen,bench):
-        command.add_argument('--asr-model',type=Path,help='Compatible local ASR directory outside the managed models folder (ONNX for fast, MLX Whisper otherwise)')
+        command.add_argument('--asr-model',type=Path,help='Compatible local Whisper Turbo MLX directory outside the managed models folder')
         command.add_argument('--translation-model',type=Path,help='Compatible local MLX-LM directory outside the managed models folder')
         command.add_argument('--vad-model',type=Path,help='Compatible local Silero VAD ONNX file outside the managed models folder')
-    doctor.add_argument('--asr-backend',choices=('fast','turbo','multilingual'),default='turbo',help='Recognition contract for the selected ASR model')
+    doctor.add_argument('--asr-backend',choices=('turbo',),default='turbo',help='Recognition contract for the selected ASR model')
     for command in (listen,bench):
-        command.add_argument('--preview-he-en-model',type=Path,
-                             help='Experimental local CTranslate2 Hebrew→English model')
-        command.add_argument('--preview-en-ru-model',type=Path,
-                             help='Experimental local CTranslate2 English→Russian model')
         command.add_argument('--publication',choices=('draft',),default=None)
         command.add_argument('--start-paused',action='store_true')
         command.add_argument('--no-open-browser',action='store_true')
         command.add_argument('--translation-mode',choices=('phrases',),default=None)
-        command.add_argument('--asr-backend',choices=('fast','turbo','multilingual'),default='turbo')
+        command.add_argument('--asr-backend',choices=('turbo',),default='turbo')
         command.add_argument('--ui',choices=('auto','browser','terminal','plain'),default='auto')
         command.add_argument('--language',choices=('he','en','ru'),default=None)
         from .languages import target_languages
@@ -800,26 +788,14 @@ def main():
             print(f'Wrote privacy-filtered report: {args.output}')
         else:print(rendered,end='')
         return 0
-    preview_requested=(args.command in ('listen','benchmark') and
-                       bool(getattr(args,'preview_he_en_model',None) or
-                            getattr(args,'preview_en_ru_model',None)))
-    try:require_supported_platform(require_metal=args.command!='devices' and not preview_requested)
+    try:require_supported_platform(require_metal=args.command!='devices')
     except RuntimeError as exc:parser.error(str(exc))
     custom_models={}
     if args.command in ('doctor','listen','benchmark'):
         try:custom_models=validate_custom_models(args.models,args.asr_model,args.translation_model,args.vad_model,args.asr_backend)
         except ValueError as exc:parser.error(str(exc))
     if args.command in ('listen','benchmark'):
-        preview_paths=(args.preview_he_en_model,args.preview_en_ru_model)
-        if any(preview_paths) and not all(preview_paths):
-            parser.error('Both --preview-he-en-model and --preview-en-ru-model are required')
-        args.bridge_models=preview_paths if all(preview_paths) else None
-        if args.bridge_models:
-            if args.translation_model or args.asr_backend!='fast':
-                parser.error('Bridge preview requires --asr-backend fast and no --translation-model')
-            from .bridge_preview import validate_bridge_models
-            try:args.bridge_models=validate_bridge_models(*args.bridge_models)
-            except ValueError as exc:parser.error(str(exc))
+        args.bridge_models=None
         from .preferences import read as read_preferences
         saved_preferences=read_preferences(preference_folder(args.models))
         args.save_raw_audio_explicit=args.save_raw_audio is not None
@@ -836,21 +812,9 @@ def main():
         from .languages import validate_direction
         try:validate_direction(args.direction)
         except ValueError as exc:parser.error(str(exc))
-        if args.bridge_models and args.direction not in ('he-en','he-ru'):
-            parser.error('Bridge preview supports --direction he-en or he-ru only')
-        if args.asr_backend=='fast' and (args.language not in (None,'he') or not args.direction.startswith('he-')):
-            parser.error('Fast Hebrew ASR supports Hebrew source audio only')
     active_models={'asr':dict(SPEC['asr']),'translation':dict(SPEC['translation'])}
-    if getattr(args,'asr_backend','turbo')=='multilingual':
-        active_models['asr']=dict(SPEC['asr_multilingual'])
-    elif getattr(args,'asr_backend','turbo')=='fast':
-        active_models['asr']=json.loads(Path(__file__).with_name('fast_asr_manifest.json').read_text())
-
-    if custom_models.get('asr'):active_models['asr']={'source':'custom local ONNX' if args.asr_backend=='fast' else 'custom local MLX Whisper','contract':getattr(args,'asr_backend','turbo')}
+    if custom_models.get('asr'):active_models['asr']={'source':'custom local MLX Whisper','contract':getattr(args,'asr_backend','turbo')}
     if custom_models.get('translation'):active_models['translation']={'source':'custom local MLX-LM','contract':'milmmt'}
-    if getattr(args,'bridge_models',None):
-        active_models['translation']={'source':'local HPLT Hebrew→English + tiny English→Russian',
-                                      'contract':'bridge-preview-int8'}
     metadata=dict(asr_backend=getattr(args,'asr_backend','turbo'),models=active_models, python=sys.version,
                   code_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.iterdir() if p.suffix in ('.py','.html','.js','.css')},
                   versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')})
@@ -872,7 +836,7 @@ def main():
                 print(sd.query_devices())
             elif args.command=='doctor':
                 required=set()
-                if not custom_models.get('asr') and args.asr_backend!='fast':required.add('asr_multilingual' if args.asr_backend=='multilingual' else 'asr')
+                if not custom_models.get('asr'):required.add('asr')
                 if not custom_models.get('translation'):required.add('translation')
                 if not custom_models.get('vad'):required.add('vad')
                 if required:verify(args.models,required)

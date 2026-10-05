@@ -15,10 +15,10 @@ class CleanupTests(unittest.TestCase):
    for mode in ('both','full','blocks','pauses'):
     data=dict(schema_version=2,mode=mode,timing=as_dict(DEFAULTS),models=dict(asr='multilingual',translation='7b'))
     p.write_text(json.dumps(data));before=p.read_bytes();m=read(d)
-    self.assertEqual(m['mode'],'phrases');self.assertEqual(m['timing'],data['timing']);self.assertEqual(m['models'],dict(asr='multilingual',translation='milmmt'));self.assertIn('no longer supported',m['preference_notices'][0]);self.assertEqual(p.read_bytes(),before)
+    self.assertEqual(m['mode'],'phrases');self.assertEqual(m['timing'],data['timing']);self.assertEqual(m['models'],dict(asr='turbo',translation='milmmt'));self.assertIn('no longer supported',m['preference_notices'][0]);self.assertEqual(p.read_bytes(),before)
     with self.assertRaises(ValueError):save(d,mode=mode)
     self.assertEqual(p.read_bytes(),before)
-    save(d,mode='phrases');self.assertEqual(read(d)['models'],dict(asr='multilingual',translation='milmmt'));self.assertNotIn('preference_notices',read(d))
+    save(d,mode='phrases');self.assertEqual(read(d)['models'],dict(asr='turbo',translation='milmmt'));self.assertNotIn('preference_notices',read(d))
  def test_browser_rejects_retired_modes_and_has_no_mode_selector(self):
   with BrowserUI(open_browser=False) as ui:
    try:

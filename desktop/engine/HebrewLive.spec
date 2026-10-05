@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
+from scripts.desktop_bundle_policy import public_bundle_datas
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parents[1]
@@ -18,9 +19,6 @@ datas = [
     (str(PACKAGE_ROOT / "browser.js"), "hebrew_live"),
     (str(PACKAGE_ROOT / "models.json"), "hebrew_live"),
     (str(PACKAGE_ROOT / "desktop_models.json"), "hebrew_live"),
-    (str(PACKAGE_ROOT / "desktop_accurate_model.json"), "hebrew_live"),
-    (str(PACKAGE_ROOT / "fast_asr_manifest.json"), "hebrew_live"),
-    (str(PACKAGE_ROOT / "fast_asr_notice.txt"), "hebrew_live"),
     (str(PACKAGE_ROOT / "gemma_notice.txt"), "hebrew_live"),
     (str(PACKAGE_ROOT / "gemma_terms.txt"), "hebrew_live"),
     (str(PACKAGE_ROOT / "silero_notice.txt"), "hebrew_live"),
@@ -37,7 +35,7 @@ if not bundle_models or not bundle_manifest:
 import json
 inventory = json.loads((PACKAGE_ROOT / "desktop_models.json").read_text())
 for component in inventory["components"]:
-    if component["key"] not in ("fast_asr", "vad"):
+    if component["key"] != "vad":
         continue
     folder = component.get("folder", "")
     for item in component["files"]:
@@ -51,7 +49,7 @@ hiddenimports = [
     "hebrew_live.model_selection",
 ]
 
-# Bundle the Whisper runtime, but download its large weights only on request.
+# Bundle the required Whisper runtime; Whisper and MiLMMT weights download on first preparation.
 for package in (
     "mlx",
     "mlx_whisper",
@@ -82,6 +80,8 @@ for distribution in (
     "transformers",
     "tokenizers",
     "sentencepiece",
+    "numba",
+    "llvmlite",
 ):
     try:
         datas += copy_metadata(distribution)
@@ -93,6 +93,9 @@ for distribution in (
 proof_config = os.environ.get("HEBREW_LIVE_PROOF_CONFIG")
 if proof_config:
     datas.append((proof_config, "hebrew_live"))
+source_identity = os.environ.get("HEBREW_LIVE_SOURCE_IDENTITY")
+if source_identity:
+    datas.append((source_identity, "hebrew_live"))
 
 a = Analysis(
     [str(PACKAGE_ROOT / "desktop_entry.py")],
@@ -104,10 +107,12 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=["torch", "torchaudio", "torchvision", "tensorflow", "jax", "jaxlib",
-              "librosa"],
+              "librosa", "numba.np.ufunc.omppool", "hebrew_live.fast_asr",
+              "hebrew_live.coreml_encoder", "hebrew_live.bridge_preview"],
     noarchive=False,
     optimize=0,
 )
+a.datas = public_bundle_datas(a.datas)
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -141,11 +146,11 @@ app = BUNDLE(
     name="Hebrew Live.app",
     icon=None,
     bundle_identifier="com.igormarkin.hebrewlive",
-    version="0.1.0-alpha.1",
+    version="0.1.0-alpha.2",
     info_plist={
         "CFBundleDisplayName": "Hebrew Live",
         "CFBundleName": "Hebrew Live",
-        "LSMinimumSystemVersion": "26.2",
+        "LSMinimumSystemVersion": "27.0",
         "LSApplicationCategoryType": "public.app-category.productivity",
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "Hebrew Live uses the microphone only for local speech recognition and translation.",

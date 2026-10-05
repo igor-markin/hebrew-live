@@ -213,7 +213,100 @@ class LiveTests(unittest.TestCase):
   self.assertIn(('retry_done',0,'0:3000001'),list(updates.queue))
 if __name__=='__main__':unittest.main()
 
+class IndependentMTTests(unittest.TestCase):
+ def setUp(self):
+  self.started=threading.Event();self.release=threading.Event()
+  self.seen=[];self.translated=[];self.events=[];self.saved=[];self.unprocessed=[]
+  self.updates=queue.Queue();self.cancel=threading.Event()
+  owner=self
+  class Engine:
+   independent_mt=True
+   backend='turbo';asr_path='test-asr';translation_size='milmmt'
+   direction='he-ru';language='he';topic='none'
+   recognition_status='accepted'
+   def recognize(self,audio,*args,**kwargs):
+    text=owner.seen.pop(0)
+    owner.events.append(('asr_returned',dict(text=text)))
+    return text
+   def translate_for(self,text,settings):
+    owner.translated.append((text,settings.direction))
+    if text=='first':owner.started.set();owner.release.wait(3)
+    yield 'Перевод '+text,'stop'
+  self.engine=Engine()
+  part=SimpleNamespace(text=lambda kind,f,text:self.saved.append((kind,f.id,text)))
+  self.log=SimpleNamespace(event=lambda name,**v:self.events.append((name,v)),parts={1:part},
+   note_unprocessed=lambda *args:self.unprocessed.append(args))
+  self.p=RetranslationProcessor(self.engine,self.updates,self.log,self.cancel)
+  self.settings=Settings(publication='draft',direction='he-ru')
+  self.audio=np.ones(100000,dtype=np.float32)
+ def tearDown(self):
+  self.release.set()
+  try:self.p.drain_mt()
+  except RuntimeError:pass
+  self.p.shutdown_mt()
+ def f(self,start,end,final=False):
+  return Fragment(1,1,self.audio[start:end].copy(),0,time.monotonic(),final,
+                  self.settings,end/16000,0,'silence' if final else '')
+ def pubs(self):
+  return [(sid,value) for kind,sid,value in self.updates.queue if kind=='live_publication']
+ def test_asr_continues_while_first_mt_runs_and_closed_groups_complete(self):
+  self.seen=['first','closing','next']
+  self.p.process(self.f(0,16000))
+  self.assertTrue(self.started.wait(1))
+  self.p.process(self.f(0,32000,True))
+  self.p.process(self.f(32000,48000,True))
+  self.assertEqual([v['text'] for n,v in self.events if n=='asr_returned'],['first','closing','next'])
+  self.assertEqual(len(self.translated),1)
+  self.release.set();self.p.flush()
+  final=[v for _,v in self.pubs() if v['stage']=='closed']
+  self.assertEqual([v['current']['translation'] for v in final],['Перевод closing','Перевод next'])
+  self.assertEqual(len({sid for sid,_ in self.pubs()}),2)
+  group=self.pubs()[0][0]
+  self.assertEqual([v['current']['source'] for sid,v in self.pubs() if sid==group],
+                   ['first','first','closing'])
+ def test_superseded_queued_refresh_is_removed_but_closing_is_kept(self):
+  self.seen=['first','old','new','closing']
+  self.p.process(self.f(0,16000));self.assertTrue(self.started.wait(1))
+  self.p.process(self.f(0,32000))
+  self.p.process(self.f(0,48000))
+  self.p.process(self.f(0,64000,True))
+  self.release.set();self.p.flush()
+  self.assertEqual([text for text,_ in self.translated],['first','closing'])
+  self.assertEqual(self.pubs()[-1][1]['current']['translation'],'Перевод closing')
+ def test_mt_worker_failure_surfaces_to_inference_thread(self):
+  self.seen=['failure','closing']
+  def fail(text,settings):
+   self.started.set();self.release.wait(3)
+   raise RuntimeError('translation failed');yield
+  self.engine.translate_for=fail
+  self.p.process(self.f(0,16000))
+  self.assertTrue(self.started.wait(1))
+  self.p.process(self.f(0,32000,True))
+  self.release.set()
+  with self.assertRaisesRegex(RuntimeError,'translation failed'):
+   self.p.drain_mt()
+  self.assertEqual(len(self.unprocessed),2)
+
 class LiveTransportTests(unittest.TestCase):
+ def test_ui_preview_acknowledges_current_rendered_preview_only(self):
+  import json,urllib.request,tempfile
+  from hebrew_live.browser_ui import BrowserUI
+  received=[]
+  with tempfile.TemporaryDirectory() as folder, BrowserUI(open_browser=False) as ui:
+   ui.on_preview_seen=lambda event,**data:received.append((event,data))
+   ui.state['groups']=[dict(id='0:3000001',part=1,stream=dict(
+    preview_id='7:1',preview_emitted_at=time.monotonic()-.05))]
+   def send(identity):
+    request=urllib.request.Request(ui.url+'action',
+     data=json.dumps(dict(action='ui_preview_seen',group='0:3000001',preview_id=identity)).encode(),
+     headers={'Origin':'http://'+ui.host,'Content-Type':'application/json'})
+    return urllib.request.urlopen(request)
+   with send('7:1') as response:self.assertEqual(response.status,200)
+   with send('7:1') as response:self.assertEqual(response.status,200)
+   self.assertEqual(len(received),1)
+   self.assertGreaterEqual(received[0][1]['backend_to_dom_ack'],.05)
+   with self.assertRaises(__import__('urllib.error',fromlist=['HTTPError']).HTTPError):send('7:2')
+   ui.finished_seen.set()
  def test_assets_and_publication_action(self):
   import json,urllib.request,urllib.error,tempfile
   from pathlib import Path

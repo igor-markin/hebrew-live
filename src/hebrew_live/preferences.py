@@ -24,6 +24,9 @@ def read(folder):
   if isinstance(models,dict) and models.get('translation')=='7b':
    models=dict(models,translation='milmmt')
    result['preference_notices']=[RETIRED_TRANSLATION_NOTICE]
+  if isinstance(models,dict) and models.get('asr') in ('fast','multilingual'):
+   models=dict(models,asr='turbo')
+   result.setdefault('preference_notices',[]).append('This release uses Whisper Turbo. Previous model files were not deleted.')
   result['models']=model_validate(models)
  if 'target_language' in data:
   from .languages import LANGUAGES

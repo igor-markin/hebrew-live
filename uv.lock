@@ -230,9 +230,10 @@ wheels = [
 
 [[package]]
 name = "hebrew-live-cli"
-version = "0.1.0a1"
+version = "0.1.0a2"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "huggingface-hub" },
     { name = "mlx-lm" },
     { name = "mlx-whisper" },
@@ -252,6 +253,7 @@ desktop-build = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = "==2026.7.22" },
     { name = "huggingface-hub", specifier = "==1.30.0" },
     { name = "mlx-lm", specifier = "==0.31.3" },
     { name = "mlx-whisper", specifier = "==0.4.3" },

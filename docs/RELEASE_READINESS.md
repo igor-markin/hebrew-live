@@ -1,5 +1,13 @@
 # Public-alpha release readiness
 
+Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
+are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
+CoreML helpers/models and experimental recognition selection are excluded.
+The alpha is unsigned and not notarized. Older measurements and build profiles
+below are historical; they are not acceptance evidence for the alpha.2 DMG.
+
+
 Status date: 2026-09-25 (Asia/Jerusalem).
 
 The repository has a reviewable alpha distribution design: allowlisted source export,

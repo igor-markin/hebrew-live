@@ -3,11 +3,13 @@ import io
 import errno
 import multiprocessing
 import os
+import ssl
 from pathlib import Path
 import socket
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from unittest.mock import patch
 
 from hebrew_live.desktop_download import (
@@ -15,6 +17,7 @@ from hebrew_live.desktop_download import (
     ModelFile,
     download_one,
     prepare_models,
+    _open,
 )
 from hebrew_live.model_store import preparation_lock
 
@@ -70,6 +73,16 @@ def _crash_during_download(folder: str):
 
 
 class DesktopDownloadTests(unittest.TestCase):
+    def test_download_tls_works_without_external_ca_paths_and_keeps_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            environment = {"SSL_CERT_FILE": str(Path(tmp) / "absent.pem"), "SSL_CERT_DIR": tmp}
+            with patch.dict(os.environ, environment), patch("urllib.request.urlopen") as urlopen:
+                _open(urllib.request.Request("https://example.invalid/model"), 30)
+                context = urlopen.call_args.kwargs["context"]
+                self.assertGreater(context.cert_store_stats()["x509_ca"], 0)
+                self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+                self.assertTrue(context.check_hostname)
+
     def test_forced_process_exit_keeps_part_and_releases_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             process = multiprocessing.get_context("spawn").Process(
@@ -88,42 +101,37 @@ class DesktopDownloadTests(unittest.TestCase):
                                               progress=lambda _size: None,
                                               opener=lambda *_args: self.fail("unexpected network request")), 0)
 
-    def test_desktop_preparation_downloads_translation_and_copies_bundled_vad(self):
-        selected = {"schema_version": 1, "total_bytes": 5, "components": [
-            {"key": "fast_asr", "label": "ASR", "folder": "fast-asr", "files": [
-                {"path": "model.onnx", "bytes": 1, "sha256": hashlib.sha256(b"a").hexdigest()}]},
-            {"key": "translation", "label": "MT", "folder": "milmmt-4b-4bit",
-             "url": "https://example.invalid/model", "files": [
-                {"path": "model.safetensors", "bytes": 1, "sha256": hashlib.sha256(b"b").hexdigest()}]},
-            {"key": "vad", "label": "VAD", "files": [
-                {"path": "silero.onnx", "bytes": 3, "sha256": hashlib.sha256(b"vad").hexdigest()}]},
+    def test_preparation_downloads_whisper_and_translation_and_only_copies_vad(self):
+        payloads = {"config.json": b"c", "weights.safetensors": b"a", "model.safetensors": b"b"}
+        def file(name):
+            data = payloads[name]
+            return {"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                    "url": "https://example.invalid/" + name}
+        selected = {"schema_version": 1, "total_bytes": 6, "components": [
+            {"key": "asr", "label": "Whisper", "folder": "asr", "files": [file("config.json"), file("weights.safetensors")]},
+            {"key": "translation", "label": "MT", "folder": "milmmt-4b-4bit", "files": [file("model.safetensors")]},
+            {"key": "vad", "label": "VAD", "files": [{"path": "silero.onnx", "bytes": 3,
+                "sha256": hashlib.sha256(b"vad").hexdigest()}]},
         ]}
-        with tempfile.TemporaryDirectory() as tmp, patch(
-            "hebrew_live.desktop_download.ensure_free_space", return_value=None
-        ):
-            root = Path(tmp)
-            bundle = root / "bundle"
-            (bundle / "fast-asr").mkdir(parents=True)
-            (bundle / "fast-asr/model.onnx").write_bytes(b"a")
+        with tempfile.TemporaryDirectory() as tmp, patch("hebrew_live.desktop_download.ensure_free_space", return_value=None):
+            root = Path(tmp); bundle = root / "bundle"; bundle.mkdir()
             (bundle / "silero.onnx").write_bytes(b"vad")
             requests, events = [], []
-
             def opener(request, _timeout):
                 requests.append(request)
-                return Response(b"b")
-
+                return Response(payloads[request.full_url.rsplit("/", 1)[-1]])
             models = root / "models"
-            prepare_models(models, cancelled=lambda: False,
-                           emit=lambda event, data: events.append((event, data)),
-                           inventory=selected, bundled_root=bundle, opener=opener)
-            self.assertEqual(len(requests), 1)
+            result = prepare_models(models, cancelled=lambda: False,
+                emit=lambda event, data: events.append((event, data)), inventory=selected,
+                bundled_root=bundle, opener=opener)
+            self.assertEqual(len(requests), 3)
             self.assertEqual((models / "silero.onnx").read_bytes(), b"vad")
+            self.assertEqual((models / "asr/weights.safetensors").read_bytes(), b"a")
             self.assertFalse((models / "fast-asr").exists())
-            self.assertEqual((models / "milmmt-4b-4bit/model.safetensors").read_bytes(), b"b")
-            progress = [data for event, data in events if event == "download_file_complete"][-1]
-            self.assertEqual(progress["transferred_bytes"], 1)
-            self.assertEqual(progress["verified_bytes"], 1)
-            self.assertEqual(progress["staged_bytes"], 0)
+            self.assertEqual(result["downloaded_bytes"], 3)
+            second = prepare_models(models, cancelled=lambda: False, emit=lambda *_: None,
+                inventory=selected, bundled_root=bundle, opener=lambda *_: self.fail("unexpected request"))
+            self.assertEqual(second["downloaded_bytes"], 0)
 
     def test_partial_download_survives_restart_and_uses_range(self):
         item = model_file()

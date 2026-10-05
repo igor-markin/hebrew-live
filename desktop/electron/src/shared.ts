@@ -1,8 +1,8 @@
 export const PROTOCOL_VERSION = 1;
-export const AGREEMENT_VERSION = "2026-09-25";
+export const AGREEMENT_VERSION = "2026-10-05";
 
 export type UiLocale = "en" | "ru";
-export type RecognitionMode = "fast" | "turbo";
+export type RecognitionMode = "turbo";
 
 export interface DesktopPreferences {
   schemaVersion: 1;
@@ -40,9 +40,6 @@ export interface HebrewLiveBridge {
   languages(): Promise<Record<string, unknown>>;
   preflight(): Promise<Record<string, unknown>>;
   prepare(): Promise<Record<string, unknown>>;
-  prepareAccurate(): Promise<Record<string, unknown>>;
-  accurateStatus(): Promise<{ ready: boolean; total_bytes: number; terms_url: string }>;
-  setRecognitionMode(mode: RecognitionMode): Promise<void>;
   legalText(document: UiLocale | "gemma"): Promise<string>;
   acceptAgreement(): Promise<DesktopPreferences>;
   cancelPreparation(): Promise<Record<string, unknown>>;

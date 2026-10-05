@@ -36,14 +36,12 @@ def _tiny_inventory():
 
 
 class DesktopModelStoreTests(unittest.TestCase):
-    def test_optional_inventory_does_not_change_default_download(self):
-        default = load_inventory()
-        combined = accurate_inventory()
-        self.assertEqual([item["key"] for item in default["components"]],
-                         ["fast_asr", "translation", "vad"])
-        self.assertEqual([item["key"] for item in combined["components"]][-1], "asr")
-        self.assertEqual(combined["total_bytes"] - default["total_bytes"], 1613977880)
-        self.assertEqual(combined["components"][-1]["revision"], SPEC["asr"]["revision"])
+    def test_one_required_inventory_pins_whisper_translation_and_vad(self):
+        selected = load_inventory()
+        self.assertEqual(accurate_inventory(), selected)
+        self.assertEqual([item["key"] for item in selected["components"]], ["asr", "translation", "vad"])
+        self.assertEqual(selected["components"][0]["revision"], SPEC["asr"]["revision"])
+        self.assertEqual(sum(item["bytes"] for item in selected["components"][0]["files"]), 1613977880)
 
     def test_accurate_verification_is_pinned_and_ignores_unrelated_cli_damage(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -17,7 +17,7 @@ import { pathToFileURL } from "node:url";
 import { DesktopControllerClient } from "./protocol.js";
 import { acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "./preferences.js";
 import { allowedBackendUrl, allowedExternalUrl, preferredUiLocale } from "./security.js";
-import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type RecognitionMode, type UiLocale } from "./shared.js";
+import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type UiLocale } from "./shared.js";
 import { quitSituation, type BackendState } from "./lifecycle.js";
 import { navigateBackend } from "./backendNavigation.js";
 
@@ -56,7 +56,7 @@ let allowWindowClose = false;
 let quitInProgress = false;
 let microphoneExpectedUntil = 0;
 let backendBase: string | null = null;
-let prepViewReason: "normal" | "help" | "backend_crash" | "accurate_setup" = "normal";
+let prepViewReason: "normal" | "help" | "backend_crash" = "normal";
 let navigationGeneration = 0;
 
 function publicError(error: unknown): string {
@@ -431,34 +431,6 @@ function registerIpc(): void {
     preparing = true;
     try { return await control("prepare"); }
     catch (error) { preparing = false; throw error; }
-  });
-  ipcMain.handle("desktop:prepare-accurate", async () => {
-    requireAcceptedAgreement();
-    if (preferences.asrBackend !== "turbo") throw new Error("accurate_mode_not_selected");
-    preparing = true;
-    try { return await control("prepare", { asr_backend: "turbo" }); }
-    catch (error) { preparing = false; throw error; }
-  });
-  ipcMain.handle("desktop:accurate-status", () => control("accurate_status"));
-  ipcMain.handle("desktop:set-recognition-mode", async (_event, mode: RecognitionMode) => {
-    requireAcceptedAgreement();
-    if (mode !== "fast" && mode !== "turbo") throw new Error("unsupported_recognition_mode");
-    if (preparing) throw new Error("model_preparation_running");
-    const state = await control("backend_state") as BackendState;
-    if (state.running && (!state.ready || (!state.finished && state.recording_started !== false))) {
-      throw new Error("finish_current_recording_first");
-    }
-    if (mode === preferences.asrBackend) return;
-    if (state.running) {
-      await control("backend_action", { action: "quit" });
-      if (!await waitForBackendExit(30_000)) throw new Error("backend_did_not_stop");
-    }
-    preferences = saveDesktopPreferences(preferencesFile, preferences, { asrBackend: mode });
-    if (mode === "turbo" && !(await control("accurate_status")).ready) {
-      await loadPreparation("accurate_setup");
-      return;
-    }
-    await control("start_backend", { asr_backend: mode });
   });
   ipcMain.handle("desktop:cancel-preparation", () => control("cancel_prepare"));
   ipcMain.handle("desktop:engine-preferences", () => control("preferences"));

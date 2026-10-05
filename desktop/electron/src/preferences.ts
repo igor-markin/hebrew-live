@@ -9,7 +9,7 @@ export const DEFAULT_PREFERENCES: DesktopPreferences = {
   lastStep: "welcome",
   languageConfigured: false,
   audioConfirmed: false,
-  asrBackend: "fast",
+  asrBackend: "turbo",
 };
 
 export function readDesktopPreferences(file: string): DesktopPreferences {
@@ -20,7 +20,7 @@ export function readDesktopPreferences(file: string): DesktopPreferences {
       ...DEFAULT_PREFERENCES,
       ...parsed,
       uiLocale: parsed.uiLocale === "ru" || parsed.uiLocale === "en" ? parsed.uiLocale : undefined,
-      asrBackend: parsed.asrBackend === "turbo" ? "turbo" : "fast",
+      asrBackend: "turbo",
       schemaVersion: 1,
     };
   } catch {
@@ -37,7 +37,7 @@ export function saveDesktopPreferences(file: string, current: DesktopPreferences
   if (patch.uiLocale !== undefined && patch.uiLocale !== "en" && patch.uiLocale !== "ru") {
     throw new Error("unsupported_interface_language");
   }
-  if (patch.asrBackend !== undefined && patch.asrBackend !== "fast" && patch.asrBackend !== "turbo") {
+  if (patch.asrBackend !== undefined && patch.asrBackend !== "turbo") {
     throw new Error("unsupported_recognition_mode");
   }
   const result: DesktopPreferences = { ...current, ...patch, schemaVersion: 1 };

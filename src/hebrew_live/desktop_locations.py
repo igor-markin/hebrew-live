@@ -15,10 +15,6 @@ class ModelLocations:
     external: Path
 
     @property
-    def fast_asr(self) -> Path:
-        return self.bundled or self.external
-
-    @property
     def vad_source(self) -> Path:
         return (self.bundled or self.external) / "silero.onnx"
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 import multiprocessing
 import logging
 import os
+import resource
+import sys
 import threading
 import time
 import traceback
@@ -15,6 +17,18 @@ CANCEL_GRACE = 3.0
 JOIN_GRACE = 2.0
 TRANSPORT_TIMEOUT = 5.0
 FINAL_DRAIN_GRACE = 0.25
+
+
+def _rss_bytes():
+    value=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return value if sys.platform=='darwin' else value*1024
+
+
+def _best_effort_event(log,name,**values):
+    try:
+        if hasattr(log,'try_event'):log.try_event(name,**values)
+        else:log.event(name,**values)
+    except Exception:pass
 
 
 class RemoteEngineError(RuntimeError):
@@ -51,6 +65,7 @@ def _engine_process(receive, send, config, engine_factory=None):
         log = _ChildLog(send.send)
         handler = LibraryHandler(log)
         logging.getLogger().addHandler(handler)
+        builtin_engine=engine_factory is None and not config.get("bridge_models")
         if engine_factory is None:
             if config.get("bridge_models"):
                 from .bridge_preview import BridgePreviewEngine
@@ -62,6 +77,8 @@ def _engine_process(receive, send, config, engine_factory=None):
                       translation_path=config["translation_path"])
         if config.get("bridge_models"):
             kwargs["bridge_models"] = config["bridge_models"]
+        elif builtin_engine:
+            kwargs["role"] = config.get("role", "both")
         engine = engine_factory(config["folder"], log, config["language"], **kwargs)
         engine.direction = config["direction"]
         engine.topic = config["topic"]
@@ -77,7 +94,7 @@ def _engine_process(receive, send, config, engine_factory=None):
             if method == "close":
                 engine.close()
                 engine = None
-                send.send(("done", request_id, None, {}))
+                send.send(("done", request_id, None, {"peak_rss":_rss_bytes()}))
                 return
             try:
                 if method == "translate":
@@ -95,6 +112,7 @@ def _engine_process(receive, send, config, engine_factory=None):
                     snapshot["peak_memory"] = engine.mx.get_peak_memory()
                 except Exception:
                     snapshot["peak_memory"] = 0
+                snapshot["peak_rss"]=_rss_bytes()
                 send.send(("done", request_id, value, snapshot))
             except BaseException as exc:
                 send.send(("failed", request_id, type(exc).__name__, str(exc),
@@ -135,7 +153,7 @@ class RemoteEngine:
                  cancel=None, startup_timeout=STARTUP_TIMEOUT,
                  shutdown_grace=SHUTDOWN_GRACE, cancel_grace=CANCEL_GRACE,
                  engine_factory=None,worker_target=_engine_process,
-                 bridge_models=None):
+                 bridge_models=None,role="both"):
         self.log = log
         self.language = language;self.direction = direction;self.topic = topic
         self.translation_context = []
@@ -143,7 +161,8 @@ class RemoteEngine:
         self.recognition_words = [];self.raw_recognition = ""
         self.recognition_guard_due = False
         self.phrase_scheduler = "batch"
-        self._peak_memory = 0;self.mx = _Memory(self)
+        self._peak_memory = 0;self._peak_rss=0;self.mx = _Memory(self)
+        self._role=role
         self._stop = stop or threading.Event();self._cancel = cancel or threading.Event()
         self._shutdown_grace = shutdown_grace;self._cancel_grace = cancel_grace
         self._shutdown_started = None;self._request_id = 0;self._closed = False
@@ -154,10 +173,11 @@ class RemoteEngine:
         self._send = parent_send;self._receive = parent_receive
         config = dict(folder=folder, language=language, backend=backend,
                       asr_path=asr_path, translation_path=translation_path,
-                      direction=direction, topic=topic, bridge_models=bridge_models)
+                      direction=direction, topic=topic, bridge_models=bridge_models,
+                      role=role)
         self._process = context.Process(target=worker_target,
             args=(child_receive, child_send, config, engine_factory),
-            name="bridge-preview-inference" if bridge_models else "mlx-inference")
+            name="bridge-preview-inference" if bridge_models else f"mlx-{role}-inference")
         try:
             self._process.start();child_receive.close();child_send.close()
             message = self._receive_until(None, startup_timeout, allow_shutdown=False)
@@ -230,15 +250,16 @@ class RemoteEngine:
         return {key:getattr(self,key) for key in (
             "language","direction","topic","translation_context","recognition_guard_due")}
 
-    def _request_locked(self, method, *args, timeout=24*60*60, **kwargs):
+    def _request_locked(self, method, *args, timeout=24*60*60, state_override=None, **kwargs):
         if self._closed:raise RemoteEngineInterrupted("MLX engine is closed")
         self._request_id+=1;request_id=self._request_id
-        self._bounded_send((request_id,method,self._state(),args,kwargs),timeout)
+        self._bounded_send((request_id,method,self._state() if state_override is None else state_override,args,kwargs),timeout)
         return request_id,self._receive_until(request_id,timeout)
 
     def _apply(self, snapshot):
         for key,value in snapshot.items():
             if key=="peak_memory":self._peak_memory=value
+            elif key=="peak_rss":self._peak_rss=value
             else:setattr(self,key,value)
 
     def recognize(self, *args, **kwargs):
@@ -251,7 +272,8 @@ class RemoteEngine:
         self._rpc_lock.acquire()
         request_id=None;complete=False
         try:
-            request_id,message=self._request_locked("translate",*args,**kwargs)
+            state_override=kwargs.pop("_remote_state",None)
+            request_id,message=self._request_locked("translate",*args,state_override=state_override,**kwargs)
             while True:
                 if message[0]=="yield":
                     yield message[2]
@@ -320,13 +342,93 @@ class RemoteEngine:
                 try:
                     self._request_id+=1;request_id=self._request_id
                     self._bounded_send((request_id,"close",{},(),{}),JOIN_GRACE,allow_shutdown=False)
-                    self._receive_until(request_id,JOIN_GRACE,allow_shutdown=False)
+                    message=self._receive_until(request_id,JOIN_GRACE,allow_shutdown=False)
+                    if message[0]=="done":self._apply(message[3])
                 except Exception:self._abort_process()
         finally:
             if acquired:self._rpc_lock.release()
         if process.is_alive():self._abort_process()
         self._close_resources()
+        _best_effort_event(self.log,'worker_memory',role=self._role,
+                           peak_mlx=self._peak_memory,peak_rss=self._peak_rss)
 
     @property
     def alive(self):
         return not self._closed and self._process.is_alive()
+
+
+class _SplitMemory:
+    def __init__(self, owner):self.owner=owner
+    def get_peak_memory(self):
+        return self.owner.asr.mx.get_peak_memory()+self.owner.mt.mx.get_peak_memory()
+
+
+class SplitRemoteEngine:
+    """One process owns ASR, another owns MT; only immutable job state crosses stages."""
+    independent_mt=True
+
+    def __init__(self, folder, log, language="he", backend="turbo", asr_path=None,
+                 translation_path=None, direction="he-en", topic="none", stop=None,
+                 cancel=None, engine_factory=None, startup_timeout=STARTUP_TIMEOUT,
+                 bridge_models=None):
+        if bridge_models is not None:raise ValueError('Split MLX workers do not support bridge preview')
+        self.log=log;self.language=language;self.direction=direction;self.topic=topic
+        self.translation_context=[];self.recognition_status='empty'
+        self.recognition_issue=None;self.recognition_words=[];self.raw_recognition=''
+        self.recognition_guard_due=False;self.phrase_scheduler='batch'
+        self.asr=RemoteEngine(folder,log,language,backend,asr_path,translation_path,
+                              direction,topic,stop,cancel,startup_timeout=startup_timeout,
+                              engine_factory=engine_factory,role='asr')
+        try:
+            self.mt=RemoteEngine(folder,log,language,backend,asr_path,translation_path,
+                                 direction,topic,stop,cancel,startup_timeout=startup_timeout,
+                                 engine_factory=engine_factory,role='mt')
+        except BaseException:
+            self.asr.close()
+            raise
+        self.backend=self.asr.backend
+        self.asr_path=self.asr.asr_path
+        self.translation_size=self.mt.translation_size
+        self.custom_models=self.asr.custom_models or self.mt.custom_models
+        self.mx=_SplitMemory(self)
+        self.log.event('split_engine_ready',asr_pid=self.asr._process.pid,
+                       mt_pid=self.mt._process.pid)
+
+    def recognize(self,*args,**kwargs):
+        self.asr.language=self.language;self.asr.direction=self.direction
+        self.asr.topic=self.topic;self.asr.recognition_guard_due=self.recognition_guard_due
+        value=self.asr.recognize(*args,**kwargs)
+        for key in ('recognition_status','recognition_issue','recognition_words','raw_recognition'):
+            setattr(self,key,getattr(self.asr,key))
+        return value
+
+    def translate_for(self,text,settings):
+        state=dict(language=settings.language,direction=settings.direction,
+                   topic=settings.topic,translation_context=[],recognition_guard_due=False)
+        yield from self.mt.translate(text,_remote_state=state)
+
+    def translate(self,text):
+        state=dict(language=self.language,direction=self.direction,topic=self.topic,
+                   translation_context=list(self.translation_context),recognition_guard_due=False)
+        yield from self.mt.translate(text,_remote_state=state)
+
+    def switch_models(self,selection):
+        self.asr.switch_models(selection)
+        self.backend=self.asr.backend;self.asr_path=self.asr.asr_path
+
+    def warmup(self):return None
+
+    def interrupt(self):
+        self.asr.interrupt();self.mt.interrupt()
+
+    def close(self):
+        try:self.asr.close()
+        finally:
+            self.mt.close()
+            _best_effort_event(self.log,'split_engine_memory',
+                               asr_peak=self.asr.mx.get_peak_memory(),
+                               mt_peak=self.mt.mx.get_peak_memory(),
+                               asr_rss=self.asr._peak_rss,mt_rss=self.mt._peak_rss)
+
+    @property
+    def alive(self):return self.asr.alive and self.mt.alive

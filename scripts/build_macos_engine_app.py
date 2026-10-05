@@ -11,6 +11,8 @@ import platform
 import subprocess
 import sys
 
+from desktop_bundle_policy import verify_source_manifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "experiments" / "publication-ui-preview"
@@ -32,10 +34,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proof-models", type=Path, help="Embed a local stage-one model path (never copies model files)")
     parser.add_argument("--proof-home", type=Path, help="Embed an isolated stage-one data root for settings and recordings")
     parser.add_argument("--bundle-models", type=Path, default=ROOT / "models",
-                        help="Verified GigaAM-He and Silero build assets; MiLMMT stays external")
+                        help="Verified Silero VAD build asset; Whisper and MiLMMT stay external")
     parser.add_argument("--build-root", type=Path, help="Use a separate PyInstaller work directory")
     parser.add_argument("--dist-root", type=Path, help="Use a separate output directory")
     parser.add_argument("--build-log", type=Path, help="Keep complete PyInstaller output for build diagnosis")
+    parser.add_argument("--source-manifest", type=Path,
+                        help="Verify and attach the immutable alpha source snapshot identity")
     args = parser.parse_args()
     if bool(args.proof_models) != bool(args.proof_home):
         parser.error("--proof-models and --proof-home must be provided together")
@@ -60,11 +64,19 @@ def main() -> int:
     build_root.mkdir(parents=True, exist_ok=True)
     dist_root.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
+    source_manifest = None
+    if args.source_manifest:
+        source_manifest = json.loads(args.source_manifest.read_text())
+        identity = verify_source_manifest(ROOT, source_manifest)
+        identity["manifest_sha256"] = hashlib.sha256(args.source_manifest.read_bytes()).hexdigest()
+        identity_path = build_root / "source-identity.json"
+        identity_path.write_text(json.dumps(identity, indent=2, sort_keys=True) + "\n")
+        environment["HEBREW_LIVE_SOURCE_IDENTITY"] = str(identity_path)
     model_root = checked_path(args.bundle_models)
     inventory = json.loads((ROOT / "src" / "hebrew_live" / "desktop_models.json").read_text())
     hashes: dict[str, str] = {}
     for component in inventory["components"]:
-        if component["key"] not in ("fast_asr", "vad"):
+        if component["key"] != "vad":
             continue
         for item in component["files"]:
             relative = Path(component.get("folder", "")) / item["path"]
@@ -81,7 +93,7 @@ def main() -> int:
     bundle_manifest = build_root / "manifest.json"
     bundle_manifest.write_text(json.dumps({
         "schema_version": 1,
-        "assets": ["fast_asr", "vad"],
+        "assets": ["vad"],
         "files": hashes,
     }, indent=2, sort_keys=True) + "\n")
     environment["HEBREW_LIVE_BUNDLE_MODELS"] = str(model_root)
@@ -119,6 +131,8 @@ def main() -> int:
                            stdout=output, stderr=subprocess.STDOUT)
     else:
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
+    if source_manifest:
+        verify_source_manifest(ROOT, source_manifest)
     app = dist_root / "Hebrew Live.app"
     if not app.is_dir():
         raise SystemExit(f"PyInstaller finished without the expected app: {app}")

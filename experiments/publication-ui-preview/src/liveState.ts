@@ -1,4 +1,4 @@
-export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null};
+export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number};
 export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number};
 export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair};
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
@@ -25,7 +25,7 @@ const optionalBoolean = (value:unknown) => value===undefined||typeof value==='bo
 const optionalNumber = (value:unknown) => value===undefined||typeof value==='number'&&Number.isFinite(value);
 
 function pair(value:unknown): value is Pair {
-  return record(value)&&typeof value.source==='string'&&typeof value.translation==='string'&&optionalString(value.label)&&optionalString(value.issue)&&optionalNumber(value.start)&&optionalNumber(value.end);
+  return record(value)&&typeof value.source==='string'&&typeof value.translation==='string'&&optionalString(value.label)&&optionalString(value.issue)&&optionalNumber(value.start)&&optionalNumber(value.end)&&optionalString(value.preview_id)&&optionalNumber(value.preview_emitted_at);
 }
 
 function group(value:unknown): value is Group {

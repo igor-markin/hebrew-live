@@ -45,7 +45,7 @@ def desktop_arguments(config: dict[str, str] | None = None) -> list[str]:
         os.environ["HEBREW_LIVE_DESKTOP_MANAGED"] = "1"
     result = ["--models", str(models), "--log-dir", str(logs), "listen", "--ui", "browser", "--start-paused"]
     if packaged and not config.get("models"):
-        result += ["--asr-backend", "fast"]
+        result += ["--asr-backend", "turbo"]
     return result
 
 

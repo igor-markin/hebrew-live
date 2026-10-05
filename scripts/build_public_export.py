@@ -22,15 +22,17 @@ ROOT_FILES=(
 DOC_FILES=(
     'ARCHITECTURE.md','CLI.md','DEPENDENCY_INVENTORY.json','DOCKER.md','LICENSE_DECISION.md',
     'RELEASE_READINESS.md','THIRD_PARTY.md','DESKTOP_BUILD.md','DESKTOP_TEST_REPORT.md',
-    'ACCURATE_LATENCY_STAGE1.md',
+    'ACCURATE_LATENCY_STAGE1.md','ACCURATE_LATENCY_STAGE2.md',
     'DISTRIBUTION.md','legal/EULA.en.txt','legal/EULA.ru.txt',
+    'legal/BUNDLED-RUNTIME-NOTICES.txt',
     'images/language-settings.jpg','images/live-translation.jpg','images/session-archive.jpg',
 )
 SCRIPT_FILES=('build_public_export.py','check_public_tree.py','ci_clean_smoke.py','generate_dependency_inventory.py',
-              'probe_installed_package.py','build_macos_engine_app.py','export_fast_hebrew_onnx.py',
+              'probe_installed_package.py','build_macos_engine_app.py',
               'prepare_desktop_proof_models.py',
               'prepare_desktop_proof_app.py','macos_bundle_report.py','measure_macos_processes.py',
               'diagnose_latency.py')
+SCRIPT_FILES += ('desktop_bundle_policy.py',)
 FRONTEND_FILES=(
     'README.md','package.json','package-lock.json','tsconfig.json','vite.config.ts','index.html','live.html',
     'src/App.tsx','src/Live.tsx','src/i18n.ts','src/live.css','src/liveMain.tsx','src/liveState.ts',
@@ -46,6 +48,7 @@ ELECTRON_FILES=(
     'desktop/electron/scripts/copy-assets.mjs','desktop/electron/scripts/cdp-qa.mjs',
     'desktop/electron/scripts/cdp-preparation-qa.mjs',
     'desktop/electron/scripts/check-dmg-size.mjs',
+    'desktop/electron/scripts/ensure-electron.mjs',
     'desktop/electron/src/backendNavigation.ts','desktop/electron/src/lifecycle.ts',
     'desktop/electron/src/main.ts','desktop/electron/src/preferences.ts',
     'desktop/electron/src/preload.cts','desktop/electron/src/protocol.ts','desktop/electron/src/security.ts',
@@ -101,8 +104,10 @@ def build(destination:Path,archive:Path|None=None)->dict:
     for name in SCRIPT_FILES:copy_file(Path('scripts')/name,destination)
     copy_file(Path('.github/workflows/ci.yml'),destination)
     copy_file(Path('.github/ISSUE_TEMPLATE/bug_report.md'),destination)
-    add_tree(Path('src/hebrew_live'),destination,{'.py','.json','.html','.js','.css','.woff','.woff2','.txt'})
-    add_tree(Path('tests'),destination,{'.py','.json'},exclude_names={'model_smoke.py'})
+    add_tree(Path('src/hebrew_live'),destination,{'.py','.json','.html','.js','.css','.woff','.woff2','.txt'},
+             exclude_names={'fast_asr.py','fast_asr_manifest.json','fast_asr_notice.txt',
+                            'coreml_encoder.py','bridge_preview.py','desktop_accurate_model.json'})
+    add_tree(Path('tests'),destination,{'.py','.json'},exclude_names={'model_smoke.py','test_fast_asr.py'})
     for name in ELECTRON_FILES:copy_file(Path(name),destination)
     frontend=Path('experiments/publication-ui-preview')
     for name in FRONTEND_FILES:copy_file(frontend/name,destination)
@@ -115,7 +120,7 @@ def build(destination:Path,archive:Path|None=None)->dict:
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--output',type=Path,default=ROOT/'build/public/hebrew-live-cli-0.1.0-alpha.1-source')
+    parser.add_argument('--output',type=Path,default=ROOT/'build/public/hebrew-live-cli-0.1.0-alpha.2-source')
     parser.add_argument('--archive',type=Path)
     args=parser.parse_args()
     result=build(args.output,args.archive)

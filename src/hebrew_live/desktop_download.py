@@ -14,12 +14,15 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import ssl
 import tempfile
 import time
 from typing import Any, Callable, Iterable
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import certifi
 
 from .desktop_preflight import DOWNLOAD_TEMP_BYTES, RESERVE_BYTES, load_inventory
 from .model_store import atomic_json, file_digest, preparation_lock
@@ -144,7 +147,11 @@ def _classify_os(error: BaseException) -> DesktopDownloadError:
 
 
 def _open(request: urllib.request.Request, timeout: int):
-    return urllib.request.urlopen(request, timeout=timeout)
+    # The frozen Homebrew-derived OpenSSL otherwise looks for its build host's
+    # CA directory. Use the copied certifi roots explicitly, including redirects,
+    # while retaining hostname checks and required certificate verification.
+    context = ssl.create_default_context(cafile=certifi.where())
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def _activate_download(partial: Path, target: Path, item: ModelFile) -> None:
@@ -296,30 +303,24 @@ def write_manifest(models: Path, inventory: dict[str, Any]) -> None:
             raise DesktopDownloadError("incompatible_cache", "The shared model manifest is invalid.")
         previous_assets = ("asr", "translation", "vad") if legacy else previous["assets"]
         for asset in previous_assets:
-            if asset in assets or asset not in (*SPEC, "fast_asr"):
+            if asset in assets or asset not in SPEC:
                 continue
-            folder = "fast-asr" if asset == "fast_asr" else SPEC[asset].get("folder", asset)
+            folder = SPEC[asset].get("folder", asset)
             entries = {name: digest for name, digest in previous_files.items()
                        if isinstance(name, str) and name.startswith(folder + "/")}
             if not entries or any(not _valid_manifest_entry(models, name, digest)
                                   for name, digest in entries.items()):
                 continue
-            if asset == "fast_asr":
-                pinned = json.loads(Path(__file__).with_name("fast_asr_manifest.json").read_text())["files"]
-                if any(entries.get("fast-asr/" + name) != item["sha256"]
-                       for name, item in pinned.items()):
-                    continue
-            else:
-                exact, alternatives = required_model_files(asset)
-                if not exact.issubset(entries) or (alternatives and not any(name in entries for name in alternatives)):
-                    continue
+            exact, alternatives = required_model_files(asset)
+            if not exact.issubset(entries) or (alternatives and not any(name in entries for name in alternatives)):
+                continue
             files.update(entries)
             assets.append(asset)
     atomic_json(previous_path, {"schema_version": 2, "assets": assets, "spec": SPEC, "files": files})
 
 
 def verify_accurate_asr(models: Path) -> None:
-    """Verify the optional pinned Whisper files without inspecting unrelated CLI assets."""
+    """Verify the required pinned Whisper files without inspecting unrelated CLI assets."""
     from .cli import manifest_assets
     from .desktop_preflight import accurate_inventory
 
@@ -328,14 +329,14 @@ def verify_accurate_asr(models: Path) -> None:
         declared, _legacy = manifest_assets(manifest)
         hashes = manifest["files"]
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        raise DesktopDownloadError("accurate_model_missing", "Accurate recognition needs model preparation.") from exc
+        raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.") from exc
     if "asr" not in declared or not isinstance(hashes, dict):
-        raise DesktopDownloadError("accurate_model_missing", "Accurate recognition needs model preparation.")
+        raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.")
     for item in iter_model_files(accurate_inventory()):
         if item.component == "asr" and (
             hashes.get(str(item.relative)) != item.sha256 or not file_verified(models / item.relative, item)
         ):
-            raise DesktopDownloadError("accurate_model_missing", "Accurate recognition needs model preparation.")
+            raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.")
 
 
 def verify_desktop_external(models: Path, inventory: dict[str, Any]) -> None:
@@ -412,7 +413,7 @@ def _prepare_models_locked(
 ) -> dict[str, Any]:
     files = tuple(iter_model_files(inventory))
     bundled = tuple(item for item in files if bundled_root is not None
-                    and item.component in ("fast_asr", "vad"))
+                    and item.component == "vad")
     downloads = tuple(item for item in files if item not in bundled)
     verified: set[Path] = set()
     emit("preparation_phase", {"phase": "verifying"})

@@ -1,6 +1,6 @@
 [project]
 name = "hebrew-live-cli"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Offline Hebrew live captions and local translation on Apple Silicon with MLX/Metal"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
@@ -11,6 +11,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "certifi==2026.7.22",
     "mlx-whisper==0.4.3",
     "mlx-lm==0.31.3",
     "onnxruntime==1.29.0",
@@ -51,3 +52,14 @@ include = [
     "/run.sh",
     "/docs",
 ]
+
+[tool.hatch.build.force-exclude]
+"src/hebrew_live/fast_asr.py" = true
+"src/hebrew_live/fast_asr_manifest.json" = true
+"src/hebrew_live/fast_asr_notice.txt" = true
+"src/hebrew_live/coreml_encoder.py" = true
+"src/hebrew_live/bridge_preview.py" = true
+"src/hebrew_live/desktop_accurate_model.json" = true
+"tests/test_fast_asr.py" = true
+"experiments/coreml-ane-whisper" = true
+"docs/ACCURATE_LATENCY_COREML.md" = true

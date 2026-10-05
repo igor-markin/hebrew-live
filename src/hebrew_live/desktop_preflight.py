@@ -56,23 +56,8 @@ def load_inventory(path: Path | None = None) -> dict[str, Any]:
 
 
 def accurate_inventory() -> dict[str, Any]:
-    """Extend the default inventory only when accurate recognition is selected."""
-    from .cli import SPEC
-
-    base = load_inventory()
-    optional = load_inventory(Path(__file__).with_name("desktop_accurate_model.json"))
-    if len(optional["components"]) != 1 or optional["components"][0]["key"] != "asr":
-        raise ValueError("Invalid optional recognition inventory")
-    asr = optional["components"][0]
-    if (asr.get("repo"), asr.get("revision")) != (SPEC["asr"]["repo"], SPEC["asr"]["revision"]):
-        raise ValueError("Optional recognition revision differs from the CLI")
-    if sum(item["bytes"] for item in asr["files"]) != optional["total_bytes"]:
-        raise ValueError("Optional recognition inventory total is inconsistent")
-    return {
-        "schema_version": 1,
-        "total_bytes": base["total_bytes"] + optional["total_bytes"],
-        "components": [*base["components"], *optional["components"]],
-    }
+    """The release has one pinned recognition/translation inventory."""
+    return load_inventory()
 
 
 def _requirements(inventory: dict[str, Any]) -> Iterable[tuple[str, Path, dict[str, Any]]]:
@@ -114,15 +99,12 @@ def plan_model_space(models: Path, inventory: dict[str, Any] | None = None, *,
         target = models / relative
         size = target.stat().st_size if target.is_file() else 0
         verified = size == expected["bytes"] and (not verify_hashes or _digest(target) == expected["sha256"])
-        if bundled_root is not None and component in ("fast_asr", "vad"):
+        if bundled_root is not None and component == "vad":
             source = bundled_root / relative
             source_size = source.stat().st_size if source.is_file() else 0
             source_ok = source_size == expected["bytes"] and (
                 not verify_hashes or _digest(source) == expected["sha256"])
-            if component == "fast_asr":
-                states.append(FileState(component, str(relative), expected["bytes"], source_size,
-                                        "verified" if source_ok else "corrupt_bundle"))
-            elif not source_ok:
+            if not source_ok:
                 states.append(FileState(component, str(relative), expected["bytes"], source_size, "corrupt_bundle"))
             elif verified:
                 states.append(FileState(component, str(relative), expected["bytes"], size, "verified"))

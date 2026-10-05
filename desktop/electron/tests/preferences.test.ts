@@ -16,7 +16,7 @@ test("desktop onboarding preferences are separate, atomic, and private", () => {
     showWelcome: false,
   });
   assert.equal(readDesktopPreferences(file).uiLocale, "en");
-  assert.equal(readDesktopPreferences(file).asrBackend, "fast");
+  assert.equal(readDesktopPreferences(file).asrBackend, "turbo");
   assert.equal(saved.showWelcome, false);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).schemaVersion, 1);
@@ -28,10 +28,11 @@ test("unsupported preference fields and interface languages are rejected", () =>
   assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { token: "secret" } as never), /unsupported/);
   assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { uiLocale: "he" } as never), /unsupported/);
   assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "multilingual" } as never), /unsupported/);
+  assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "fast" } as never), /unsupported/);
   assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { acceptedAgreementVersion: AGREEMENT_VERSION }), /unsupported/);
 });
 
-test("optional accurate mode persists and is validated on read", () => {
+test("fixed Whisper Turbo recognition persists and is validated on read", () => {
   const folder = mkdtempSync(path.join(os.tmpdir(), "hebrew-live-recognition-"));
   const file = path.join(folder, "preferences.json");
   saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "turbo" });

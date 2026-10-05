@@ -73,7 +73,19 @@ def summarize(path):
                         and isinstance(first_previews[job_key(event)], (int, float))]
     waits = [event["queue_wait"] for event in starts if isinstance(event.get("queue_wait"), (int, float))]
     middle = len(waits)//2
+    split_memory = events["split_engine_memory"][-1] if events["split_engine_memory"] else {}
+    asr_ranges = [(event["elapsed"]-event["seconds"],event["elapsed"])
+                  for event in asr if isinstance(event.get("elapsed"),(int,float))
+                  and isinstance(event.get("seconds"),(int,float))]
+    mt_starts = {job_key(event):event["elapsed"] for event in events["mt_started"]
+                 if isinstance(event.get("elapsed"),(int,float))}
+    mt_ranges = [(mt_starts[job_key(event)],event["elapsed"])
+                 for event in events["mt_finished"] if job_key(event) in mt_starts
+                 and isinstance(event.get("elapsed"),(int,float))]
+    overlap=sum(max(0.,min(asr_end,mt_end)-max(asr_start,mt_start))
+                for asr_start,asr_end in asr_ranges for mt_start,mt_end in mt_ranges)
     return {
+        "pipeline": next((event.get("mode") for event in events["inference_pipeline"]),"unknown"),
         "asr_mode": mode,
         "diagnostics_incomplete_lines": malformed,
         "asr_queue_wait_seconds": metric("asr_job_start", "queue_wait"),
@@ -93,6 +105,11 @@ def summarize(path):
         "mt_first_visible_draft_audio_lag_seconds": metric("mt_first_preview", "audio_lag"),
         "draft_preview_before_completed_mt_seconds": quantiles(preview_advances),
         "mt_duration_seconds": metric("mt_finished", "seconds"),
+        "asr_mt_overlap_seconds": round(overlap,3),
+        "mt_pending_depth": metric("mt_queued","queue_depth"),
+        "mlx_peak_bytes_by_worker": {key:split_memory[key] for key in ("asr_peak","mt_peak")
+                                     if key in split_memory},
+        "ui_preview_backend_to_dom_ack_seconds": metric("ui_preview_seen","backend_to_dom_ack"),
         "first_completed_translation_audio_lag_seconds": quantiles(first_translations.values()),
         "closed_translation_audio_lag_seconds": quantiles(final_translations),
         "unprocessed_audio_events": len(events["unprocessed_audio"]),

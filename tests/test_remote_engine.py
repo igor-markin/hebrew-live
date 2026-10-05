@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from hebrew_live.remote_engine import RemoteEngine,RemoteEngineInterrupted
+from hebrew_live.remote_engine import RemoteEngine,RemoteEngineInterrupted,SplitRemoteEngine
 
 
 class FakeNativeEngine:
@@ -49,6 +49,11 @@ class StreamingNativeEngine(FakeNativeEngine):
 class TranslationFailureEngine(FakeNativeEngine):
     def translate(self,text):raise RuntimeError('fake MT failure');yield
 
+class SlowTranslationEngine(FakeNativeEngine):
+    def translate(self,text):
+        time.sleep(1.)
+        yield 'hello','stop'
+
 class EndlessStreamingEngine(FakeNativeEngine):
     def translate(self,text):
         while True:yield 'token','stop'
@@ -75,6 +80,25 @@ class Log:
 
 
 class RemoteEngineTests(unittest.TestCase):
+    def test_split_workers_allow_asr_during_mt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log=Log();engine=SplitRemoteEngine(Path(folder),log,engine_factory=SlowTranslationEngine,startup_timeout=5)
+            try:
+                self.assertNotEqual(engine.asr._process.pid,engine.mt._process.pid)
+                results=[];started=threading.Event()
+                def translate():
+                    started.set()
+                    results.extend(engine.translate_for('שלום',type('Settings',(),dict(
+                        language='he',direction='he-ru',topic='none'))()))
+                thread=threading.Thread(target=translate);thread.start();self.assertTrue(started.wait(1))
+                time.sleep(.1)
+                began=time.monotonic()
+                self.assertEqual(engine.recognize(np.ones(1600,dtype=np.float32)),'שלום')
+                self.assertLess(time.monotonic()-began,.8)
+                thread.join(2)
+                self.assertEqual(results,[('hello','stop')])
+            finally:engine.close()
+            self.assertIn('split_engine_memory',[name for name,_ in log.events])
     def test_startup_failure_preserves_child_diagnostic(self):
         with tempfile.TemporaryDirectory() as folder:
             log=Log()
@@ -92,8 +116,8 @@ class RemoteEngineTests(unittest.TestCase):
             self.assertEqual(engine.recognition_status,'accepted')
             self.assertEqual(engine.recognition_words[0]['word'],'שלום')
             self.assertEqual(list(engine.translate('שלום')),[('hello','stop')])
-            engine.switch_models(dict(asr='multilingual',translation='milmmt'))
-            self.assertEqual(engine.backend,'multilingual')
+            engine.switch_models(dict(asr='turbo',translation='milmmt'))
+            self.assertEqual(engine.backend,'turbo')
             engine.close();self.assertFalse(engine.alive)
             self.assertIn('fake_asr',[name for name,_ in log.events])
 

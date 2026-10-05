@@ -18,7 +18,7 @@ FORBIDDEN_PARTS={
     'logs','models','node_modules','__pycache__',
 }
 FORBIDDEN_NAMES={'src.zip','cases.json','model_smoke.py'}
-TEXT_SUFFIXES={'.css','.html','.ini','.js','.json','.md','.py','.sh','.toml','.ts','.tsx','.txt','.yml','.yaml'}
+TEXT_SUFFIXES={'.css','.html','.ini','.js','.json','.m','.md','.py','.sh','.toml','.ts','.tsx','.txt','.yml','.yaml'}
 PRIVATE_PATTERNS={
     'absolute macOS user path':re.compile('/'+'Users/'),
     'private route placeholder':re.compile('PRIVATE'+'_TOKEN'),

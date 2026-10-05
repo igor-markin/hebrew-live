@@ -9,19 +9,21 @@ from hebrew_live.desktop_control import DesktopController, ProtocolError, Protoc
 
 
 class DesktopControlTests(unittest.TestCase):
-    def test_desktop_fast_asr_is_fixed_even_with_old_saved_choice(self):
+    def test_desktop_whisper_is_fixed_and_rejects_other_backends(self):
         with tempfile.TemporaryDirectory() as tmp:
             models = Path(tmp) / "models"
-            self.assertEqual(desktop_asr_backend(models), "fast")
+            self.assertEqual(desktop_asr_backend(models), "turbo")
+            with self.assertRaisesRegex(Exception, "Unsupported recognition mode"):
+                desktop_asr_backend(models, "fast")
             from hebrew_live.preferences import save
             save(models.parent / ".local-settings",
                  models={"asr": "turbo", "translation": "milmmt"})
-            self.assertEqual(desktop_asr_backend(models), "fast")
+            self.assertEqual(desktop_asr_backend(models), "turbo")
 
     def test_desktop_inventory_uses_all_bundled_components(self):
         components = [
             {"key": key, "files": [{"bytes": size}]}
-            for key, size in (("fast_asr", 100), ("translation", 200), ("vad", 3))
+            for key, size in (("asr", 100), ("translation", 200), ("vad", 3))
         ]
         inventory = {"components": components, "total_bytes": 303}
         with tempfile.TemporaryDirectory() as tmp, \
@@ -29,7 +31,7 @@ class DesktopControlTests(unittest.TestCase):
             models = Path(tmp) / "models"
             selected = desktop_inventory(models)
             self.assertEqual([item["key"] for item in selected["components"]],
-                             ["fast_asr", "translation", "vad"])
+                             ["asr", "translation", "vad"])
             self.assertEqual(selected["total_bytes"], 303)
 
     def test_protocol_requires_version_identity_command_and_object_payload(self):

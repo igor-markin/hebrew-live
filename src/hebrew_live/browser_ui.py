@@ -41,6 +41,8 @@ class BrowserUI:
         self.stop_requested=False
         self.cancel_requested=False
         self.quit_requested=False
+        self.preview_seen=set()
+        self.on_preview_seen=None
 
     def __enter__(self):
         owner=self
@@ -104,6 +106,26 @@ class BrowserUI:
                     size=int(self.headers.get('Content-Length','0'))
                     if not 0<size<=1024:return self.reply(400,b'{}')
                     payload=json.loads(self.rfile.read(size));action=payload.get('action')
+                    if action=='ui_preview_seen':
+                        identity=payload.get('group');preview_id=payload.get('preview_id')
+                        if not isinstance(identity,str) or len(identity)>128 or not isinstance(preview_id,str) or len(preview_id)>64:
+                            return self.reply(400,b'{}')
+                        with owner.lock:
+                            group=next((item for item in owner.state.get('groups',[]) if item.get('id')==identity),None)
+                            stream=group.get('stream') if isinstance(group,dict) else None
+                            key=(owner.state.get('session'),identity,preview_id)
+                            if (not isinstance(stream,dict) or stream.get('preview_id')!=preview_id or
+                                    not isinstance(stream.get('preview_emitted_at'),(int,float))):
+                                return self.reply(409,b'{}')
+                            if key in owner.preview_seen:return self.reply(200,b'{"ok":true}')
+                            owner.preview_seen.add(key)
+                            event=owner.on_preview_seen
+                            part=group.get('part')
+                            elapsed=max(0.,time.monotonic()-stream['preview_emitted_at'])
+                        if event is not None and isinstance(part,int):
+                            event('ui_preview_seen',part=part,group=identity,preview_id=preview_id,
+                                  backend_to_dom_ack=elapsed)
+                        return self.reply(200,b'{"ok":true}')
                     if action=='delete_session':
                         if payload.get('confirmed') is not True:return self.reply(400,b'{}')
                         try:
@@ -256,6 +278,8 @@ class BrowserUI:
     def begin_session(self, session):
         save_audio=getattr(session,'save_audio',True)
         with self.lock:
+            self.preview_seen.clear()
+            self.on_preview_seen=getattr(session,'event',None)
             self.next_session.clear()
             self.finished_seen.clear()
             self.session_folder=None

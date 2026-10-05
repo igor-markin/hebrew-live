@@ -10,7 +10,7 @@ import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,l
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
 declare global {
-  interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>;setRecognitionMode:(mode:'fast'|'turbo')=>Promise<void>}}
+  interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
 }
 
 type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
@@ -63,7 +63,7 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   const shortMiss=unfinished&&empty&&start!==undefined&&end!==undefined&&end-start<=2;
   const unconfirmedDraft=unfinished&&!empty&&Boolean(shown.translation.trim());
   const [,target]=directionParts(group.direction);
-  return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id}>
+  return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
     {empty
       ? <p className={`fragment-failed ${shortMiss?'fragment-muted':''}`}><Icon kind="warning"/><span>{shortMiss?tx('speechMissing'):tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
       : <BubbleText pair={shown} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
@@ -120,7 +120,7 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
-function RecordingControls({state,pending,localePending,modePending,selected,onAction,onRecognitionMode,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;modePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;onRecognitionMode:(mode:'fast'|'turbo')=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
+function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
   const busy=pending||loading||state.finished||state.stopping||state.model_switching;
@@ -145,7 +145,6 @@ function RecordingControls({state,pending,localePending,modePending,selected,onA
         <div className="live-settings-panel">
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
-          {state.desktop_mode&&window.hebrewLive&&<label className="settings-field"><span>{tx('recognitionMode')}</span><select value={state.model_selection?.asr==='turbo'?'turbo':'fast'} disabled={pending||modePending||selected||loading||state.stopping||!!state.model_switching||!!state.recording_started&&!state.finished} onChange={event=>onRecognitionMode(event.target.value as 'fast'|'turbo')}><option value="fast">{tx('fastRecognition')}</option><option value="turbo">{tx('accurateRecognition')}</option></select><small>{state.model_selection?.asr==='turbo'?tx('accurateRecognitionHint'):tx('fastRecognitionHint')}</small></label>}
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
@@ -181,7 +180,6 @@ export default function Live(){
   const [lastSuccess,setLastSuccess]=useState<number>();
   const [clock,setClock]=useState(Date.now());
   const [pending,setPending]=useState(false);
-  const [modePending,setModePending]=useState(false);
   const [closed,setClosed]=useState(false);
   const [deleting,setDeleting]=useState('');
   const [deleteError,setDeleteError]=useState('');
@@ -191,6 +189,7 @@ export default function Live(){
   const archiveRequestRef=useRef(0);
   const actionContext=useRef({state,closed});
   const actionBusy=useRef(false);
+  const seenPreviews=useRef(new Set<string>());
   actionContext.current={state,closed};
   const selectedArchive=selected?archives[selected]:undefined;
   const shown=selected?selectedArchive:state;
@@ -217,6 +216,24 @@ export default function Live(){
     if(!reconciled.request)setLocalePending(false);
   },[state.ui_locale]);
   useEffect(()=>{document.documentElement.lang=locale;document.documentElement.dir=locale==='he'?'rtl':'ltr';},[locale]);
+  useEffect(()=>{
+    if(document.visibilityState!=='visible'||selected)return;
+    const candidates=state.groups.flatMap(group=>group.stream?.preview_id?[{group:group.id,id:group.stream.preview_id}]:[]);
+    let first=0,second=0;
+    first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{
+      for(const candidate of candidates){
+        const key=`${state.session}:${candidate.group}:${candidate.id}`;
+        if(seenPreviews.current.has(key))continue;
+        const card=Array.from(document.querySelectorAll<HTMLElement>('[data-preview-id]'))
+          .find(item=>item.dataset.group===candidate.group&&item.dataset.previewId===candidate.id);
+        if(!card||!card.getClientRects().length)continue;
+        seenPreviews.current.add(key);
+        void fetch('../action',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({action:'ui_preview_seen',group:candidate.group,preview_id:candidate.id})}).catch(()=>{});
+      }
+    });});
+    return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  },[state.groups,state.session,selected]);
 
   const closeSidebar=useCallback(()=>{setSidebar(false);requestAnimationFrame(()=>openSidebarRef.current?.focus());},[]);
   useEffect(()=>{
@@ -343,11 +360,6 @@ export default function Live(){
     finally{actionBusy.current=false;setPending(false);}
   },[tx]);
   const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
-  const onRecognitionMode=useCallback((mode:'fast'|'turbo')=>{
-    if(!window.hebrewLive||modePending)return;
-    setModePending(true);setActionError('');
-    void window.hebrewLive.setRecognitionMode(mode).catch(()=>setActionError(tx('recognitionChangeError'))).finally(()=>setModePending(false));
-  },[modePending,tx]);
   const retryFragment=useCallback((id:string)=>{void act('retry_fragment',id);},[act]);
   const changeLocale=useCallback(async(value:UiLocale)=>{
     const request=beginLocaleRequest(locale,state.ui_locale,value,localeRequested.current);
@@ -383,7 +395,7 @@ export default function Live(){
     </aside>
     <main className="conversation-pane">
       <div className="conversation-title"><Button ref={openSidebarRef} variant="tertiary" className="show-sessions" onPress={()=>setSidebar(true)}><Icon kind="folder"/>{tx('sessions')}</Button><div><strong>{selected?sessions.find(item=>item.id===selected)?.label||tx('savedConversation'):tx('liveTitle')}</strong><small>{selected?tx('readOnly'):tx('onThisMac')}</small></div>{selected&&<Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button>}</div>
-      <RecordingControls state={state} pending={pending} localePending={localePending} modePending={modePending} selected={!!selected} onAction={onAction} onRecognitionMode={onRecognitionMode} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
+      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
       {!selected&&state.retry_error&&<p className="unavailable global-error" role="alert">{issueText(locale,state.retry_error)}</p>}

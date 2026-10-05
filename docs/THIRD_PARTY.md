@@ -1,5 +1,13 @@
 # Third-party software, models, and fonts
 
+Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
+are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
+CoreML helpers/models and experimental recognition selection are excluded.
+The alpha is unsigned and not notarized. Older measurements and build profiles
+below are historical; they are not acceptance evidence for the alpha.2 DMG.
+
+
 This is an engineering inventory, not legal advice or a completed rights review. The
 project's original code is Apache-2.0. The fast GigaAM-He ONNX export and Silero
 VAD are bundled in the desktop app; MiLMMT is downloaded from its pinned source
@@ -111,10 +119,16 @@ distribution metadata includes license files; the remaining Python license
 and source-offer obligations, especially LGPL dependencies, must be checked
 against the exact signed binary before publication.
 
-Specific unresolved binary review items are the license and source obligations
-for bundled `python-bidi` and `soxr` LGPL components, the `tqdm` MPL/MIT notice,
-the Python runtime and PyInstaller bootloader, and the Homebrew-derived
-`libcrypto.3.dylib`, `libssl.3.dylib`, and `liblzma.5.dylib`. The signed/notarized
+The alpha.2 bundle supplements copied package metadata with
+`legal/BUNDLED-RUNTIME-NOTICES.txt`: upstream texts for mlx-whisper,
+SentencePiece and Tokenizers, matching CPython and PyInstaller license texts
+(including the bootloader exception), and OpenSSL/XZ notices. The file records
+its license-source revisions; mlx-whisper's installed wheel declares MIT but
+omits the license file, so its upstream mlx-examples notice is preserved.
+
+Specific unresolved binary review items include corresponding-source and
+replacement obligations for bundled LGPL components such as `python-bidi`
+and `soxr`, and the optional Whisper conversion's provenance. The signed/notarized
 binary must be scanned again because signing or dependency replacement can
 change its contents. These open items are release blockers for a claim of
 complete third-party compliance; a license label in a lockfile alone does not

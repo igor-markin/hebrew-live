@@ -1,5 +1,13 @@
 # Public macOS distribution
 
+Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
+are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
+CoreML helpers/models and experimental recognition selection are excluded.
+The alpha is unsigned and not notarized. Older measurements and build profiles
+below are historical; they are not acceptance evidence for the alpha.2 DMG.
+
+
 The desktop release is one Apple Silicon `Hebrew Live.app` containing GigaAM-He
 and Silero VAD. It downloads the pinned MiLMMT files during first preparation or
 when files need repair. Optional ivrit.ai Whisper weights download only when

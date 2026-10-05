@@ -115,21 +115,19 @@ def run_session(args, session, browser_ui=None):
     target_options = ([option for option in target_language_options()
                        if option['code'] in ('en', 'ru')] if bridge_models
                       else target_language_options())
-    if asr_backend=='fast' and source_language!='he':
-        raise ValueError('Fast Hebrew ASR supports Hebrew source audio only')
     required=set()
-    if not custom_models.get('asr') and asr_backend!='fast':required.add('asr_multilingual' if asr_backend=='multilingual' else 'asr')
+    if not custom_models.get('asr'):required.add('asr')
     if not custom_models.get('translation') and not bridge_models:required.add('translation')
     if not custom_models.get('vad'):required.add('vad')
     if required:
-        if os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED') == '1' and asr_backend in ('fast','turbo') and not bridge_models:
+        if os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED') == '1' and asr_backend == 'turbo' and not bridge_models:
             from .desktop_download import verify_accurate_asr,verify_desktop_external
             from .desktop_preflight import load_inventory
             verify_desktop_external(args.models, load_inventory())
             if asr_backend == 'turbo':verify_accurate_asr(args.models)
         else:
             verify(args.models,required)
-    asr_label=('Custom local ONNX Hebrew' if asr_backend=='fast' else 'Custom local MLX Whisper') if custom_models.get('asr') else ASR[asr_backend][0]
+    asr_label='Custom local MLX Whisper' if custom_models.get('asr') else ASR[asr_backend][0]
     translation_label=('HPLT Hebrew→English + tiny English→Russian · preview'
                        if bridge_models else 'Custom local MLX-LM · MiLMMT prompt contract'
                        if custom_models.get('translation') else TRANSLATION['milmmt'][0])
@@ -144,7 +142,12 @@ def run_session(args, session, browser_ui=None):
                   custom_vad=bool(custom_models.get('vad')))
     stop=threading.Event();cancel=threading.Event()
     print('Loading and warming local models…',file=sys.stderr)
-    engine=RemoteEngine(args.models,session,args.language or source_language,backend=asr_backend,
+    from .remote_engine import SplitRemoteEngine
+    split_workers=(os.environ.get('HEBREW_LIVE_SPLIT_WORKERS')=='1' and
+                   asr_backend=='turbo' and not bridge_models)
+    session.event('inference_pipeline',mode='split' if split_workers else 'serial')
+    engine_class=SplitRemoteEngine if split_workers else RemoteEngine
+    engine=engine_class(args.models,session,args.language or source_language,backend=asr_backend,
                   asr_path=custom_models.get('asr'),
                   translation_path=custom_models.get('translation'),direction=args.direction,
                   topic=args.topic,stop=stop,cancel=cancel,bridge_models=bridge_models)
@@ -253,9 +256,8 @@ def run_session(args, session, browser_ui=None):
     shutdown_started=None;cancel_started=None;forced_deadline=None;deadline_error=False;partial_published=False
     if browser_ui and not custom_models and not bridge_models:
         from .model_selection import ASR,TRANSLATION
-        from .fast_asr import bundled_model
         asr_options={k:v[0] for k,v in ASR.items()
-                     if (args.models/v[1]).is_dir() or (k=='fast' and bundled_model())}
+                     if (args.models/v[1]).is_dir()}
         browser_ui.details(model_selection=dict(asr=engine.backend,translation=engine.translation_size),
                            model_options={'asr':asr_options,
                                           'translation':{k:v[0] for k,v in TRANSLATION.items()

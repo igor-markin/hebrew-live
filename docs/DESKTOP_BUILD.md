@@ -1,5 +1,13 @@
 # Local macOS desktop build
 
+Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
+are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
+CoreML helpers/models and experimental recognition selection are excluded.
+The alpha is unsigned and not notarized. Older measurements and build profiles
+below are historical; they are not acceptance evidence for the alpha.2 DMG.
+
+
 This procedure builds the unsigned, local-only `Hebrew Live.app`. It does not
 publish, notarize, add a Developer ID signature, or enable automatic updates.
 
@@ -85,6 +93,23 @@ Outputs:
 The source application icon is `desktop/electron/assets/icon.png` (1024 by
 1024 RGBA). Electron Builder converts it to the bundled `icon.icns` during the
 macOS build.
+
+The alpha.2 recipe supplies model-download TLS roots from the copied, pinned
+`certifi` package. The installed app does not need a Homebrew CA directory.
+Whisper word alignment requires `numba` and `llvmlite`; both are included with
+their license metadata. The optional OpenMP threading extension is excluded;
+Numba retains its bundled workqueue backend and needs no Homebrew libomp.
+The recipe excludes installer-origin metadata,
+including editable `direct_url.json`, from the public bundle. If npm skips
+Electron's lifecycle script, `dist:mac` and `dist:dmg` explicitly run the locked
+Electron installer without changing npm's script policy.
+
+For a reviewable local source snapshot, pass `--source-manifest PATH` to the
+engine builder after generating the web assets. The manifest records each
+relative source file, size and SHA-256, the canonical file-list hash, the base
+commit, candidate version and honest uncommitted status. The builder verifies
+it before and after PyInstaller and embeds its compact identity; the source
+archive and full manifest remain separate deliverables.
 
 The Electron build keeps the engine under `Contents/Resources/engine`, outside
 ASAR. The renderer remains sandboxed, has context isolation enabled, has Node.js
