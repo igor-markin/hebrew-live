@@ -53,13 +53,15 @@ include = [
     "/docs",
 ]
 
-[tool.hatch.build.force-exclude]
-"src/hebrew_live/fast_asr.py" = true
-"src/hebrew_live/fast_asr_manifest.json" = true
-"src/hebrew_live/fast_asr_notice.txt" = true
-"src/hebrew_live/coreml_encoder.py" = true
-"src/hebrew_live/bridge_preview.py" = true
-"src/hebrew_live/desktop_accurate_model.json" = true
-"tests/test_fast_asr.py" = true
-"experiments/coreml-ane-whisper" = true
-"docs/ACCURATE_LATENCY_COREML.md" = true
+[tool.hatch.build]
+exclude = [
+    "src/hebrew_live/fast_asr.py",
+    "src/hebrew_live/fast_asr_manifest.json",
+    "src/hebrew_live/fast_asr_notice.txt",
+    "src/hebrew_live/coreml_encoder.py",
+    "src/hebrew_live/bridge_preview.py",
+    "src/hebrew_live/desktop_accurate_model.json",
+    "tests/test_fast_asr.py",
+    "experiments/coreml-ane-whisper",
+    "docs/ACCURATE_LATENCY_COREML.md",
+]

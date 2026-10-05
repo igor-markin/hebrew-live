@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -49,6 +50,16 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--offline',action='store_true');args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='hebrew-live-public-smoke-') as temporary:
         temporary=Path(temporary);export=temporary/'hebrew-live-cli-0.1.0-alpha.1-source'
+        # Verify the ordinary checkout wheel as well as the allowlisted export:
+        # an export alone cannot detect ignored build-backend exclusions.
+        checkout_wheels=temporary/'checkout-wheel'
+        run(['uv','build','--wheel','--out-dir',checkout_wheels],ROOT,dict(os.environ,UV_CACHE_DIR=str(ROOT/'.cache/uv')))
+        wheel=next(checkout_wheels.glob('*.whl'))
+        with zipfile.ZipFile(wheel) as archive:
+            forbidden={'fast_asr.py','fast_asr_manifest.json','fast_asr_notice.txt',
+                       'coreml_encoder.py','bridge_preview.py','desktop_accurate_model.json'}
+            present=[name for name in archive.namelist() if Path(name).name in forbidden]
+            if present:raise RuntimeError(f'Retired recognition files in ordinary wheel: {present}')
         npm_cache=temporary/'npm-cache'
         env=dict(os.environ,UV_CACHE_DIR=str(ROOT/'.cache/uv'),HF_HOME=str(temporary/'hf'),HEBREW_LIVE_HOME=str(temporary/'data'),npm_config_cache=str(npm_cache))
         run([sys.executable,ROOT/'scripts/build_public_export.py','--output',export],ROOT,env)
