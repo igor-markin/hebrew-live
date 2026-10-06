@@ -17,10 +17,9 @@ when the application itself does not transmit them.
 ## Network activity
 
 Network access is expected when installing dependencies, running CLI `setup`, or
-preparing/repairing MiLMMT in the desktop app, or preparing the optional accurate
-Whisper mode. Desktop preparation downloads the pinned MiLMMT files from Hugging
-Face and downloads pinned Whisper files only if Accurate recognition is selected;
-CLI setup also contacts GitHub raw
+preparing/repairing the pinned Whisper Turbo and MiLMMT files in the desktop app.
+Desktop preparation downloads both sets of files (about 3.83 GB) from Hugging
+Face; Silero VAD is bundled in the app. CLI setup also contacts GitHub raw
 content for the pinned Silero VAD file. Live recognition and translation run
 locally after preparation. The runtime sets Hugging Face, Transformers, and ONNX
 telemetry/offline controls; this is an implementation control, not a claim about every

@@ -1,6 +1,6 @@
 {
   "name": "hebrew-live-desktop",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Local live Hebrew speech translation for macOS",
   "author": "Igor Markin",
   "private": true,
@@ -98,7 +98,8 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "icon.png",
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
       "minimumSystemVersion": "27.0",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Hebrew Live uses the microphone only when you start a live translation or run the input test."

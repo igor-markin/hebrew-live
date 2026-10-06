@@ -4,11 +4,19 @@ Local Hebrew captions and translation for Apple Silicon Macs.
 
 Hebrew Live listens after you press **Start recording**, shows the Hebrew transcript beside its translation, and keeps a local session archive.
 
-> This is an unsigned alpha for **arm64 Apple Silicon and macOS 27.0 or later**. Developer ID signing and notarization are absent. One Apple M5 Mac with 16 GiB is the tested reference; a lower RAM minimum is not established. Installation on a second Mac and the downloaded/quarantined launch path remain untested.
+> This is an alpha for **arm64 Apple Silicon and macOS 27.0 or later**. It has no Developer ID signature and is not notarized, so macOS blocks a downloaded copy until you allow it once (see [Install and first launch](#install-and-first-launch)). One Apple M5 Mac with 16 GiB is the tested reference; a lower RAM minimum is not established. Installation on a second Mac has not been tested.
 
 ## Install and first launch
 
 Download the DMG from [GitHub Releases](https://github.com/igor-markin/hebrew-live/releases), verify its SHA-256 against the attached SHA256SUMS, open it and copy Hebrew Live.app to Applications. Python, Node, Homebrew and the source checkout are not required on the receiving Mac.
+
+The app is not notarized, so macOS blocks the first launch of a downloaded copy. For the alpha.2 DMG it reports “Hebrew Live” is damaged and can't be opened. Do not move it to the Trash: if the SHA-256 matched, the file is intact. After copying the app to Applications, allow it once in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Hebrew Live.app"
+```
+
+Then open Hebrew Live again. The command removes only the download mark that the browser put on this app, so macOS stops checking it at launch; run it only for a DMG whose checksum matched. [Distribution](docs/DISTRIBUTION.md#opening-the-alpha-on-macos) explains the cause.
 
 1. Read and accept the [software agreement](docs/legal/EULA.en.txt) and linked model terms.
 2. Review the Mac, Metal, memory and disk checks.

@@ -1,17 +1,19 @@
 # Public macOS distribution
 
-Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Current alpha.3 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
 Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
 are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
 CoreML helpers/models and experimental recognition selection are excluded.
-The alpha is unsigned and not notarized. Older measurements and build profiles
-below are historical; they are not acceptance evidence for the alpha.2 DMG.
+The alpha has no Developer ID signature and is not notarized, so macOS blocks a
+downloaded copy until the user allows it; see
+[Opening the alpha on macOS](#opening-the-alpha-on-macos). Older measurements and
+build profiles below are historical; they are not acceptance evidence for the
+alpha.3 DMG.
 
 
-The desktop release is one Apple Silicon `Hebrew Live.app` containing GigaAM-He
-and Silero VAD. It downloads the pinned MiLMMT files during first preparation or
-when files need repair. Optional ivrit.ai Whisper weights download only when
-Accurate recognition is selected; the Whisper runtime itself is in the app.
+The desktop release is one Apple Silicon `Hebrew Live.app` containing Silero VAD
+and the MLX runtimes. It downloads the pinned Whisper Turbo and MiLMMT files
+during first preparation or when files need repair.
 A DMG is a
 compressed macOS disk image: the user opens it, sees the English or Russian
 software agreement, accepts it, and drags the app into Applications. The app
@@ -35,7 +37,7 @@ artifact, not a signed public release.
 
 ## Release gates
 
-1. Review the model provenance, the optional Whisper MLX conversion's missing
+1. Review the model provenance, the Whisper MLX conversion's missing
    license declaration, Gemma use restrictions and notice obligations, the bundled
    notices and complete agreement, and the Hebrew Live first-launch agreement
    with qualified counsel for the intended public markets. The first-launch
@@ -44,8 +46,9 @@ artifact, not a signed public release.
    proof that every clause will be enforceable everywhere.
 2. Obtain an Apple Developer ID Application signing identity, sign the app and
    its native components with appropriate entitlements, notarize with Apple,
-   and staple the result. The current local build is unsigned and must not be
-   described as a public-ready, trusted download.
+   and staple the result. The current build carries only an ad-hoc signature,
+   which names no developer, and must not be described as a public-ready,
+   trusted download.
 3. Test the exact notarized DMG on a clean second Apple Silicon Mac with the
    supported macOS version. Confirm Gatekeeper, drag-to-Applications,
    first-launch agreement, initial download, offline reuse, microphone permission, a real
@@ -78,8 +81,45 @@ the release are separate external actions.
 2. Open the DMG and drag `Hebrew Live.app` to Applications. Eject the DMG.
 3. Open the app from Applications, read and accept the software agreement and
    Gemma restrictions, then complete hardware and microphone checks.
-4. The app verifies included GigaAM-He and Silero, then downloads MiLMMT if
-   missing or damaged. After preparation it works offline. The user does not
-   need a separate manual model package.
+4. The app verifies the included Silero file, then downloads Whisper Turbo and
+   MiLMMT if missing or damaged. After preparation it works offline. The user
+   does not need a separate manual model package.
 
-Do not advise users to bypass Gatekeeper for an unsigned public build.
+A build presented as signed and notarized must open without the quarantine
+command below. Never ask users to run it for such a build; treat a Gatekeeper
+block there as a release defect.
+
+## Opening the alpha on macOS
+
+Browsers mark a downloaded file with the `com.apple.quarantine` attribute, and
+Gatekeeper checks a quarantined app before its first launch. An app that is not
+signed with a Developer ID and notarized by Apple cannot pass, so every download
+of the alpha is blocked until the user allows it. A copy that never carried the
+attribute, such as a local build, opens without that check.
+
+- **alpha.2 DMG.** The build had no signing step, so the app bundle's signature
+  is invalid: `codesign --verify --deep --strict` reports `code has no resources
+  but signature indicates they must be present`, and the executable still
+  carries Electron's linker signature (`Info.plist=not bound`,
+  `Sealed Resources=none`). macOS reports a bundle in that state as damaged,
+  offering only Cancel and Move to Trash. This was observed on a copy downloaded
+  with Chrome on 2026-10-06.
+- **alpha.3 and later.** `mac.identity` in `desktop/electron/package.json` is `-`, so
+  electron-builder signs the bundle ad hoc and verifies it. The signature is
+  valid: `codesign --verify --deep --strict` passes, and `spctl --assess` answers
+  `rejected` (no Developer ID, not notarized) instead of the signature error. A
+  downloaded copy is still blocked. macOS is expected to show its standard prompt
+  for an app it cannot verify, which can be overridden in System Settings >
+  Privacy & Security. That prompt has not yet been observed; a downloaded-DMG
+  test on a second Mac is still open.
+
+The step that works for every build, run once after the app is in Applications:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Hebrew Live.app"
+```
+
+It prints nothing, can be repeated, and removes only the download mark from this
+app, so macOS stops checking it; no system setting changes. Give it to alpha
+testers only together with the SHA-256 check of the DMG and a plain statement
+that it turns off Apple's check for this one app.

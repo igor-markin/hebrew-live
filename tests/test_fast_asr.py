@@ -48,16 +48,18 @@ class FastAsrTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "vocab.json"):
                 model_at(root / "unused", root)
 
-    def test_model_selection_accepts_installed_fast_directory(self):
+    def test_model_selection_rejects_retired_fast_recognition_even_if_installed(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             model = folder / "fast-asr"
             model.mkdir()
             for name in ("multilingual_ctc_ft.onnx", "mel_filters.npy", "vocab.json"):
                 (model / name).touch()
-            self.assertEqual(validate({"asr": "fast", "translation": "milmmt"})["asr"], "fast")
             (folder / "milmmt-4b-4bit").mkdir()
-            self.assertEqual(validate({"asr": "fast", "translation": "milmmt"}, folder)["asr"], "fast")
+            with self.assertRaisesRegex(ValueError, "Unknown model selection"):
+                validate({"asr": "fast", "translation": "milmmt"})
+            with self.assertRaisesRegex(ValueError, "Unknown model selection"):
+                validate({"asr": "fast", "translation": "milmmt"}, folder)
 
 
 if __name__ == "__main__":

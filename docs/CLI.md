@@ -2,8 +2,9 @@
 
 This guide contains the command-line details intentionally kept out of the main
 [desktop README](../README.md). The CLI opens the same local interface in a web browser
-and preserves compatibility with the four-component model set, including the optional
-multilingual ASR model.
+and preserves compatibility with the four-component model set of earlier alphas.
+Recognition uses Whisper Turbo only: a manifest that lists the optional multilingual
+ASR model is still accepted, but that model can no longer be selected.
 
 ## Supported platform
 
@@ -56,7 +57,6 @@ Useful recording options follow the subcommand:
 ```sh
 ./run.sh listen --direction he-en
 ./run.sh listen --direction he-ru --device 2 --start-paused
-./run.sh listen --asr-backend multilingual
 ```
 
 Run `./run.sh listen --help` or `./run.sh benchmark --help` for the complete option
@@ -72,9 +72,9 @@ Interface language is a separate saved preference. Browser mode supports English
 Russian, and Hebrew/RTL. The desktop app deliberately exposes English and Russian only.
 
 `./run.sh languages` prints the source-of-truth target list. The pinned MiLMMT model
-provides 45 translation targets after excluding Hebrew-to-Hebrew. The optional
-multilingual Whisper tokenizer has a wider upstream vocabulary, but that does not
-expand Hebrew Live's qualified live-input contract.
+provides 45 translation targets after excluding Hebrew-to-Hebrew. The Whisper
+tokenizer has a wider upstream vocabulary, but that does not expand Hebrew Live's
+qualified live-input contract.
 
 ## Compatible local models
 

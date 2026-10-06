@@ -1,11 +1,14 @@
 # Public-alpha release readiness
 
-Current alpha.2 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Current alpha.3 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
 Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
 are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
 CoreML helpers/models and experimental recognition selection are excluded.
-The alpha is unsigned and not notarized. Older measurements and build profiles
-below are historical; they are not acceptance evidence for the alpha.2 DMG.
+The alpha has no Developer ID signature and is not notarized, so macOS blocks a
+downloaded copy until the user allows it (see
+[DISTRIBUTION.md](DISTRIBUTION.md#opening-the-alpha-on-macos)). Older measurements
+and build profiles below are historical; they are not acceptance evidence for the
+alpha.3 DMG.
 
 
 Status date: 2026-09-25 (Asia/Jerusalem).
@@ -62,7 +65,7 @@ A clean install on a second Mac remains a release gate.
 | Python/frontend/Electron tests | **Passed locally** | The current working tree passed 328 Python tests, 28 frontend tests, and 13 Electron shell tests. Coverage includes model resume and manifest locking, optional accurate-mode verification, overload/low-space partial archives, no-audio sessions, spawned inference transport/crash/hang cleanup, stalled Python workers, cancel/retry, language/model compatibility, archive schema fallback, agreement preference persistence, backend-page navigation retries, and the desktop IPC allowlist. |
 | Cross-contract fixtures | **Passed locally** | Shared synthetic API snapshots are parsed by frontend tests and checked against backend-required state keys. |
 | Follow-latest and localized live UI regression | **Passed locally** | Deterministic observer test covers new children and later card resize callbacks. A rendered installed-wheel smoke polled synthetic state, loaded local fonts, stayed at bottom through card growth and a new group. A current production-asset fixture additionally verified the English default, Hebrew RTL, target switching with old/new group language metadata, outside-click closure, a server-error locale rollback with the selector disabled during the request, successful retry, and no console warnings/errors. |
-| Model acquisition boundary | Implemented; rights review remains | Weights are absent from source/wheel/sdist. The lighter desktop candidate bundles hash-verified GigaAM-He and VAD with separate notices; it downloads pinned MiLMMT files on first preparation or repair and optional ivrit.ai Whisper files only on selection. After preparation, selected-model inference works without a network connection. The code license does not cover model weights. The MLX conversion license metadata still needs review before public release. |
+| Model acquisition boundary | Implemented; rights review remains | Weights are absent from source/wheel/sdist. The desktop app bundles only the hash-verified Silero VAD file, with its notice; it downloads the pinned ivrit.ai Whisper Turbo and MiLMMT files on first preparation or repair. After preparation, inference works without a network connection. The code license does not cover model weights. The MLX conversion license metadata still needs review before public release. |
 | User install/use docs | Implemented | The user-focused English README links to task-specific English guides for desktop builds, CLI/browser use, local-path and same-commit Git installs, model terms, storage/deletion, compatible local models, limitations, and troubleshooting. A pushed commit was installed through its public Git URL with constraints from the same SHA; the final prerelease commit receives the same check before tagging. |
 | Native launcher and platform boundary | **Passed locally** | `run.sh` rejects non-macOS, Intel, and Rosetta before downloads, accepts only a frozen environment confirmed by read-only `uv --check`, requires renewed consent to repair partial/stale environments, distinguishes missing MLX from missing Metal, keeps prepared runs offline with `--no-sync`, and preserves command arguments/status. The Python entry point repeats the runtime guard. |
 | Privacy/security/support docs | Implemented with honest gaps | No private security intake address or public support URL has been invented. |
@@ -80,8 +83,9 @@ The standalone CI uses GitHub's current `macos-14` arm64 label and asserts
 
 - configure a real private security intake channel and public support links;
 - complete a source and wheel install plus privacy/storage/uninstall review on a second
-  clean Apple Silicon Mac; exercise agreement acceptance, offline model verification,
-  microphone, stop/cancel, archive, restart, and deletion there;
+  clean Apple Silicon Mac; exercise the downloaded (quarantined) first launch,
+  agreement acceptance, offline model verification, microphone, stop/cancel,
+  archive, restart, and deletion there;
 - resolve and verify the intermittent blank Electron window before treating
   prepared-model offline desktop startup as accepted;
 - run real microphone/model inference acceptance and a long-session soak;
@@ -89,8 +93,8 @@ The standalone CI uses GitHub's current `macos-14` arm64 label and asserts
   export composition, and bug-report boundary.
 
 Model weights are absent from the source, wheel, and sdist. The desktop app
-contains GigaAM-He and Silero; MiLMMT is obtained from its pinned source under
-Gemma terms during preparation. The first-launch
+contains Silero; Whisper Turbo and MiLMMT are obtained from their pinned sources
+during preparation, MiLMMT under Gemma terms. The first-launch
 agreement and bundled Gemma text address documented distribution conditions,
 but the intended public release still needs qualified legal review. These
 models do not become Apache-2.0 code. Do not present a publisher's license

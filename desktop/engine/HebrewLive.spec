@@ -146,7 +146,7 @@ app = BUNDLE(
     name="Hebrew Live.app",
     icon=None,
     bundle_identifier="com.igormarkin.hebrewlive",
-    version="0.1.0-alpha.2",
+    version="0.1.0-alpha.3",
     info_plist={
         "CFBundleDisplayName": "Hebrew Live",
         "CFBundleName": "Hebrew Live",

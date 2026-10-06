@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy an unsigned Electron app and pin it to an isolated acceptance-test data root."""
+"""Copy a packaged Electron app and pin it to an isolated acceptance-test data root."""
 from __future__ import annotations
 
 import argparse

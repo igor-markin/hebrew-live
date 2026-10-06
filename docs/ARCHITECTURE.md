@@ -10,7 +10,7 @@ microphone / local WAV
  parent-owned queues, session state, and integrity ledger
         │ bounded request/response IPC
         ▼
- spawned inference process: GigaAM-He ONNX            two CPU threads
+ spawned inference process: Whisper Turbo via MLX     Apple GPU / Metal
         │ changing source text
         ▼
  same inference process: MiLMMT via MLX-LM            Apple GPU / Metal
@@ -38,11 +38,11 @@ startup failure. Once models are verified and warmed, Electron navigates only to
 validated `127.0.0.1` backend URL. Controller diagnostics and technical logs do not
 share stdout with protocol messages. A closed controller channel terminates the
 backend process group. The Electron engine directory is an `extraResource` outside
-ASAR; GigaAM-He and Silero VAD are bundled with the engine. The pinned MiLMMT
-files are downloaded to Application Support at first preparation or for repair.
-The controller selects one external model root for preflight, warmup and backend
-launch, copying Silero there after checking its bundled original. User settings
-and session archives stay in Application Support.
+ASAR; only Silero VAD is bundled with the engine. The pinned Whisper Turbo and
+MiLMMT files are downloaded to Application Support at first preparation or for
+repair. The controller selects one external model root for preflight, warmup and
+backend launch, copying Silero there after checking its bundled original. User
+settings and session archives stay in Application Support.
 
 `hebrew_live.cli` owns argument parsing, setup, model inventory, and top-level error
 handling. `runtime.py`, `stream.py`, `feed.py`, and `retranslation.py` coordinate audio,
@@ -62,18 +62,16 @@ tokens from an abandoned request cannot enter the next part. Constructor failure
 child crashes, and close timeouts close IPC handles and reap the process. Runtime model
 checks remain offline inside the child.
 
-The fast desktop path uses a pinned GigaAM-He ONNX export for Hebrew ASR. Its
-ONNX Runtime session uses two CPU inference threads and does not require a
-Whisper refinement pass. Silero VAD marks speech on the CPU; MiLMMT translates
-on Metal. The draft processor accepts growing audio, caps recognition windows at
-20 seconds, and can revise both visible lines as additional speech arrives.
+Recognition uses the pinned ivrit.ai Whisper Turbo MLX model on Metal; it is the
+only recognition backend, in the desktop app and in the source CLI. Silero VAD
+marks speech on the CPU; MiLMMT translates on Metal. The draft processor accepts
+growing audio, bounds it at the saved draft limit (20 seconds by default, 1 to 30
+seconds allowed), and can revise both visible lines as additional speech arrives.
 It discards superseded intermediate refresh work to protect the next useful
-translation. The models still share one serialized child request stream, so a
-long translation can delay the next recognition request. The desktop can instead
-run ivrit.ai Whisper Turbo when the user selects Accurate recognition before a
-new recording. Its pinned model files are prepared outside the app and verified
-separately; the inference worker then uses one ASR backend, never a concurrent
-Whisper refinement pass. The default remains fast.
+translation. The models share one serialized child request stream, so a long
+translation can delay the next recognition request. A saved choice of the retired
+`fast` or `multilingual` recognition migrates in memory to Turbo with a visible
+notice; existing model files are not deleted.
 
 During a revisable translation, complete generated words may appear as a
 transient draft at most once per 100 ms. The UI replaces that text with the
@@ -114,11 +112,9 @@ The source `run.sh` launcher qualifies macOS and native arm64 before bootstrap, 
 `uv` to prepare the frozen CPython 3.12 environment only after an explicit first-run
 prompt or setup flag, and performs a real MLX array evaluation to prove Metal access
 before model download or model loading. The installed `he-ru` entry point repeats the
-runtime guard. The source CLI defaults to MLX Whisper ASR, whereas the packaged
-fast desktop selects CPU ONNX ASR by default; optional accurate mode selects
-MLX Whisper ASR after its model is prepared. Translation still
-requires MLX/Metal; audio handling and Silero VAD also use the CPU. Intel,
-Rosetta, CUDA, and cloud inference are unsupported.
+runtime guard. Recognition and translation require MLX/Metal; orchestration, audio
+handling, and the ONNX Silero VAD also use the CPU. Intel, Rosetta, CUDA, and cloud
+inference are unsupported.
 
 Environment readiness is the read-only result of
 `uv sync --frozen --offline --check`, not the presence of `.venv/bin/python`. An
@@ -148,6 +144,6 @@ resizes until the user deliberately scrolls upward.
 
 PostgreSQL, Redis, remote APIs, analytics, accounts, and cloud storage are not part of
 the architecture. Setup/download traffic is separate from runtime inference traffic.
-Explicit local model paths use the supported ONNX GigaAM-He or MLX Whisper,
-MLX-LM prompt-family, and Silero VAD interfaces. They are shape-checked and
-warmed by `doctor`, not converted or treated as universally compatible.
+Explicit local model paths use the supported MLX Whisper, MLX-LM prompt-family,
+and Silero VAD interfaces. They are shape-checked and warmed by `doctor`, not
+converted or treated as universally compatible.
