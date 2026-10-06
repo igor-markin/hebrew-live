@@ -10,13 +10,13 @@ Hebrew Live listens after you press **Start recording**, shows the Hebrew transc
 
 Download the DMG from [GitHub Releases](https://github.com/igor-markin/hebrew-live/releases), verify its SHA-256 against the attached SHA256SUMS, open it and copy Hebrew Live.app to Applications. Python, Node, Homebrew and the source checkout are not required on the receiving Mac.
 
-The app is not notarized, so macOS blocks the first launch of a downloaded copy. For the alpha.2 DMG it reports “Hebrew Live” is damaged and can't be opened. Do not move it to the Trash: if the SHA-256 matched, the file is intact. After copying the app to Applications, allow it once in Terminal:
+The app is not notarized, so macOS blocks the first launch of a downloaded copy. The alpha.2 DMG is reported as “Hebrew Live” is damaged and can't be opened; alpha.3 and later show “Hebrew Live.app” Not Opened, because Apple could not verify it. Do not move it to the Trash: if the SHA-256 matched, the file is intact. After copying the app to Applications, allow it once in Terminal:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/Hebrew Live.app"
 ```
 
-Then open Hebrew Live again. The command removes only the download mark that the browser put on this app, so macOS stops checking it at launch; run it only for a DMG whose checksum matched. [Distribution](docs/DISTRIBUTION.md#opening-the-alpha-on-macos) explains the cause.
+Then open Hebrew Live again. The command removes only the download mark that the browser put on this app, so macOS stops checking it at launch; run it only for a DMG whose checksum matched. On alpha.3 and later you can instead click **Done** in the prompt, then use **Open Anyway** for Hebrew Live.app in System Settings > Privacy & Security (macOS may ask for your password). [Distribution](docs/DISTRIBUTION.md#opening-the-alpha-on-macos) explains the cause.
 
 1. Read and accept the [software agreement](docs/legal/EULA.en.txt) and linked model terms.
 2. Review the Mac, Metal, memory and disk checks.

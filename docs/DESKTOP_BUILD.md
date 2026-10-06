@@ -20,7 +20,7 @@ The procedure below was exercised on exactly this machine:
 - 16 GiB unified memory;
 - macOS 27.0;
 - native `arm64` execution;
-- Python 3.12.14, PyInstaller 6.22.3;
+- Python 3.12.14 (alpha.2) and 3.12.15 (alpha.3), PyInstaller 6.22.3;
 - Node.js 24, Electron 44.4.3, electron-builder 26.15.3.
 
 This is a tested reference, not a proven minimum. A clean installation on a
@@ -121,8 +121,10 @@ version and acceptance time are stored locally in the private desktop settings.
 
 `mac.identity` in `desktop/electron/package.json` is `-`, so electron-builder signs
 the app ad hoc through `@electron/osx-sign`: the application, its Electron helpers
-and frameworks, and every native binary of the embedded engine. It then verifies the
-bundle (`strictVerify` stays on), so the build fails if the signature is invalid.
+and frameworks, and the engine's main executable. The engine's other native files
+keep the ad-hoc signatures PyInstaller gave them and are sealed into the bundle as
+resources. electron-builder then verifies the bundle (`strictVerify` stays on), so
+the build fails if the signature is invalid.
 Hardened runtime stays off (`hardenedRuntime: false`) as in earlier builds; with
 ad-hoc signing it would need the `com.apple.security.cs.disable-library-validation`
 entitlement, and the packaged Python/MLX engine has not been qualified under it.

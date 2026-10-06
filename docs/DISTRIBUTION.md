@@ -108,10 +108,14 @@ attribute, such as a local build, opens without that check.
   electron-builder signs the bundle ad hoc and verifies it. The signature is
   valid: `codesign --verify --deep --strict` passes, and `spctl --assess` answers
   `rejected` (no Developer ID, not notarized) instead of the signature error. A
-  downloaded copy is still blocked. macOS is expected to show its standard prompt
-  for an app it cannot verify, which can be overridden in System Settings >
-  Privacy & Security. That prompt has not yet been observed; a downloaded-DMG
-  test on a second Mac is still open.
+  downloaded copy is still blocked, but with macOS's standard prompt for an app it
+  cannot verify. On macOS 27.0.1 (2026-10-06), a quarantined copy of the published
+  alpha.3 app showed “Hebrew Live.app” Not Opened: Apple could not verify it is
+  free of malware, with Move to Trash and Done. After Done, System Settings >
+  Privacy & Security listed “Hebrew Live.app” as blocked, with an Open Anyway
+  button. This was observed on the Mac that built the app, with the quarantine
+  attribute set by hand rather than by a browser. Clicking Open Anyway (it asks
+  for authentication) and a downloaded-DMG test on a second Mac are still open.
 
 The step that works for every build, run once after the app is in Applications:
 
