@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.0-alpha.3 — 2026-10-06
+
+### Changed
+
+- the desktop app is signed ad hoc (`mac.identity` is `-`) with a valid bundle signature; macOS shows its standard "Apple could not verify" prompt with an Open Anyway entry in Privacy & Security, where the alpha.2 DMG was reported as damaged;
+- the bundled privacy statement and third-party notices say that first preparation always downloads the pinned Whisper Turbo and MiLMMT files; documentation and one obsolete test match the Whisper Turbo and MiLMMT release.
+
+Application code is unchanged from alpha.2; the bundled runtime moved to Python 3.12.15 and OpenSSL 3.6.5.
+
+## 0.1.0-alpha.2 — 2026-10-05
+
+### Added
+
+- self-contained macOS desktop app for Apple Silicon: an Electron shell around the packaged Python engine, with guided model preparation, lifecycle recovery and a DMG;
+- transient translation drafts streamed into the live UI.
+
+### Changed
+
+- one recognition mode, ivrit.ai Whisper Turbo (MLX), with MiLMMT translation; the optional multilingual ASR is retired and saved choices migrate to Turbo with a notice;
+- retired recognition helpers are excluded from the wheel, sdist and public export.
+
+### Known issue
+
+- the DMG was built without a signing step, so its bundle signature is invalid and macOS reports a downloaded copy as damaged (fixed in alpha.3).
+
 ## 0.1.0-alpha.1 — 2026-09-21
 
 ### Added

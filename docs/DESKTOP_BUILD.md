@@ -18,7 +18,7 @@ The procedure below was exercised on exactly this machine:
 
 - MacBook Air with Apple M5;
 - 16 GiB unified memory;
-- macOS 27.0;
+- macOS 27.0.1;
 - native `arm64` execution;
 - Python 3.12.14 (alpha.2) and 3.12.15 (alpha.3), PyInstaller 6.22.3;
 - Node.js 24, Electron 44.4.3, electron-builder 26.15.3.
