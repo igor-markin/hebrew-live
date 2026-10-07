@@ -4,6 +4,7 @@ import {Card} from '@heroui/react/card';
 import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
+import {openStateStream} from './liveStream';
 import {archiveRecordingLabel, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
 import type {Group, LiveState, Pair} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
@@ -316,24 +317,35 @@ export default function Live(){
   },[connectionError]);
   useEffect(()=>{
     if(closed)return;
-    let cancelled=false,timer:number|undefined;
+    let cancelled=false,timer:number|undefined,stop=()=>{};
+    function accept(parsed:LiveState){
+      let next=parsed;
+      if(localeConfirmed.current){
+        if(next.ui_locale===localeConfirmed.current)localeConfirmed.current=null;
+        else next={...next,ui_locale:localeConfirmed.current};
+      }
+      setState(old=>mergeLiveState(old,next));setLastSuccess(Date.now());setConnectionError('');
+      return next;
+    }
+    function fail(error:unknown){
+      const message=error instanceof Error?error.message:'';const name=error instanceof Error?error.name:'';
+      const reason=name==='TimeoutError'?tx('timeout'):message.startsWith('Invalid local API')||name==='SyntaxError'?tx('badSnapshot'):message.startsWith('HTTP ')?tx('httpError',{code:message.slice(5)}):tx('noResponse');
+      setConnectionError(reason+' '+tx('lastSnapshot'));
+    }
     async function poll(){
       try{
-        let next=parseLiveState(await readJson('../state'));
+        const next=parseLiveState(await readJson('../state'));
         if(cancelled)return;
-        if(localeConfirmed.current){
-          if(next.ui_locale===localeConfirmed.current)localeConfirmed.current=null;
-          else next={...next,ui_locale:localeConfirmed.current};
-        }
-        setState(old=>mergeLiveState(old,next));setLastSuccess(Date.now());setConnectionError('');
+        accept(next);
         if(next.phase!=='exited')timer=window.setTimeout(poll,next.finished?700:200);
-      }catch(error){if(!cancelled){
-        const message=error instanceof Error?error.message:'';const name=error instanceof Error?error.name:'';
-        const reason=name==='TimeoutError'?tx('timeout'):message.startsWith('Invalid local API')||name==='SyntaxError'?tx('badSnapshot'):message.startsWith('HTTP ')?tx('httpError',{code:message.slice(5)}):tx('noResponse');
-        setConnectionError(reason+' '+tx('lastSnapshot'));timer=window.setTimeout(poll,1500);
-      }}
+      }catch(error){if(!cancelled){fail(error);timer=window.setTimeout(poll,1500);}}
     }
-    void poll();return()=>{cancelled=true;window.clearTimeout(timer);};
+    // Push first: the server sends every change at once. Polling stays as the fallback when the stream is
+    // unavailable (HEBREW_LIVE_UI_PUSH=0, no EventSource) or breaks.
+    stop=openStateStream('../events',text=>{
+      try{if(accept(parseLiveState(JSON.parse(text))).phase==='exited')stop();}catch(error){if(!cancelled)fail(error);}
+    },()=>{void poll();});
+    return()=>{cancelled=true;window.clearTimeout(timer);stop();};
   },[closed,tx]);
 
   const act=useCallback(async(action:string,value?:string|boolean)=>{

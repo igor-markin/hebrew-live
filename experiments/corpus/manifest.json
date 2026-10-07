@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "total_minutes": 23.4,
+  "recordings": [
+    {
+      "id": "20261007-093053-6357812a/1",
+      "audio": "logs/20261007-093053-6357812a/001-he-ru.audio.wav",
+      "sha256": "c507b36b4f6464fe1b006ced8a0420f63310c6aa9a84261d3259433bc042a6b6",
+      "duration_seconds": 1404.0,
+      "sample_rate": 48000,
+      "date": "2026-10-07",
+      "direction": "he-ru",
+      "scenario": "unlabeled (owner usage session)"
+    }
+  ]
+}

@@ -304,6 +304,7 @@ def bug_report(models):
         'model_inventory':{key:{'source':value.get('repo') or value.get('url'),'revision':value.get('revision')} for key,value in SPEC.items() if isinstance(value,dict)},
         'installed_model_choices':choices,
         'model_manifest':manifest_status,
+        'mlx_wheel_tags':__import__('hebrew_live.mlx_runtime',fromlist=['wheel_tags']).wheel_tags(),
         'custom_data_home':bool(os.environ.get('HEBREW_LIVE_HOME')),
     }
 
@@ -358,6 +359,8 @@ class Engine:
         transformer_logging.disable_default_handler()
         transformer_logging.enable_propagation()
         self.mx=mx;self.log=log
+        from .mlx_runtime import describe
+        self.log.event('mlx_runtime',**describe(mx))
         self.custom_models=asr_path is not None or translation_path is not None
         self.asr=None;self.model=None;self.tokenizer=None
         self.asr_path=str(asr_path or folder/'asr')
@@ -461,20 +464,41 @@ class Engine:
             self.log.event('recognition_repetition');self.recognition_issue='repeated recognition';return ''
         self.recognition_status='accepted' if text else 'empty'
         return text
-    def translate(self, text):
+    accepts_hint=True
+    def translate(self, text, hint=''):
+        """Stream the translation; `hint` is the previous translation of the same growing phrase."""
         if getattr(self,'role','both')=='asr':raise RuntimeError('ASR worker cannot translate text')
-        from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
+        from . import mt_generate
         from .translation import prompt
         ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]))
-        generated=''
-        for result in stream_generate(self.model,self.tokenizer,prompt=ids,max_tokens=256,sampler=make_sampler(temp=0)):
-            candidate=generated+result.text
-            if repetition_loop(candidate):
-                yield '', 'repetition'
-                return
-            generated=candidate
-            yield result.text, result.finish_reason
+        max_tokens=mt_generate.max_tokens_for(len(self.tokenizer.encode(text,add_special_tokens=False)))
+        stats={};reason=None;generated='';began=time.monotonic();finished=False
+        step=None
+        if hint.strip() and mt_generate.mode()=='fast':
+            from . import mt_speculate
+            if mt_speculate.enabled():
+                draft_ids=self.tokenizer.encode(hint.strip(),add_special_tokens=False)
+                if draft_ids:step=mt_speculate.step_for(draft_ids,stats)
+        try:
+            for piece,reason in mt_generate.generate(self.model,self.tokenizer,ids,max_tokens=max_tokens,
+                                                     sampler=make_sampler(temp=0),stats=stats,step=step):
+                candidate=generated+piece
+                if repetition_loop(candidate):
+                    reason='repetition'
+                    yield '', 'repetition'
+                    finished=True;return
+                generated=candidate
+                yield piece, reason
+            finished=True
+        finally:
+            self.log.event('mt_generation',mode=mt_generate.mode(),prompt_tokens=len(ids),
+                           max_tokens=max_tokens,tokens=stats.get('tokens',0),
+                           hint_tokens=len(draft_ids) if step else 0,
+                           speculative_rounds=stats.get('speculative_rounds',0),
+                           proposed=stats.get('proposed',0),accepted_drafts=stats.get('accepted_drafts',0),
+                           first_token_seconds=stats.get('first_token_seconds'),
+                           seconds=time.monotonic()-began,finish_reason=reason,completed=finished)
     def warmup(self):
         import numpy as np
         t=time.monotonic()
@@ -482,6 +506,9 @@ class Engine:
         if getattr(self,'role','both')!='mt':
             self.asr.transcribe(silence,path_or_hf_repo=self.asr_path,language=self.language,
                                temperature=0.,word_timestamps=True,condition_on_previous_text=False,verbose=None)
+            from . import whisper_speed
+            if whisper_speed.enabled():
+                whisper_speed.prepare(importlib.import_module('mlx_whisper.transcribe').ModelHolder.model,self.log.event)
         if getattr(self,'role','both')!='asr':list(self.translate('שלום.'))
         self.log.event('warmup_finished',role=getattr(self,'role','both'),seconds=time.monotonic()-t,
                        peak_memory=self.mx.get_peak_memory())
@@ -826,8 +853,10 @@ def main():
     logging.getLogger('transformers').propagate=True
     print(f'Session / diagnostics: {log.path}',file=sys.stderr)
     try:
+        from .mlx_runtime import wheel_tags
         log.event('start',command=args.command,models=active_models,debug_text=args.debug_text,python=sys.version,
-            versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')})
+            versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')},
+            mlx_wheel_tags=wheel_tags())
         if args.command=='setup':setup(args.models)
         else:
             os.environ['HF_HUB_OFFLINE']='1';os.environ['HF_HUB_DISABLE_TELEMETRY']='1';os.environ['TRANSFORMERS_OFFLINE']='1'

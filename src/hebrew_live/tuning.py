@@ -12,3 +12,9 @@ def validate(values):
         result.append(value)
     return tuple(result)
 def as_dict(values):return dict(zip(FIELDS,values))
+def from_environment(environ):
+    """`HEBREW_LIVE_TIMING=first,interval,preview_limit,fragment,silence` for schedule sweeps
+    (plan 3.2); a saved browser setting still wins. Invalid text falls back to the defaults."""
+    text=environ.get('HEBREW_LIVE_TIMING','')
+    try:return validate(dict(zip(FIELDS,[float(x) for x in text.split(',')]))) if text else DEFAULTS
+    except ValueError:return DEFAULTS

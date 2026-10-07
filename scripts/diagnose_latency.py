@@ -34,6 +34,60 @@ def union_seconds(events):
     return total+right-left
 
 
+def erasure(previous, new):
+    """Words of the visible text that must be deleted before the new version can be appended."""
+    shared = 0
+    for old, fresh in zip(previous, new):
+        if old != fresh:
+            break
+        shared += 1
+    return len(previous)-shared
+
+
+def stability(versions):
+    """versions: chronological [(seconds_from_group_start, translation_text)] of one group.
+
+    Returns (first_visible_seconds, normalized_erasure, stable_word_seconds[]). Normalized
+    erasure is deleted words over words of the final text; a word is stable from the first
+    version after which it is never changed or removed again."""
+    texts = [(moment, text.split()) for moment, text in versions if isinstance(text, str) and text.split()]
+    if not texts:
+        return None, None, []
+    final = texts[-1][1]
+    erased = sum(erasure(texts[i-1][1], texts[i][1]) for i in range(1, len(texts)))
+    stable = []
+    for position, word in enumerate(final):
+        index = len(texts)-1
+        while index > 0 and len(texts[index-1][1]) > position and texts[index-1][1][position] == word:
+            index -= 1
+        stable.append(texts[index][0])
+    return texts[0][0], erased/len(final), stable
+
+
+def audio_seconds_of(path, events):
+    """Accepted audio duration from the session summary next to the log, else the last ASR end."""
+    try:
+        summary = json.loads((path.parent/"session.json").read_text(encoding="utf-8"))
+        total = sum(item.get("duration", 0) for item in summary.get("accepted", {}).values())
+        if total > 0:
+            return total
+    except (OSError, ValueError, AttributeError):
+        pass
+    ends = [event.get("end") for event in events["live_asr"] if isinstance(event.get("end"), (int, float))]
+    return max(ends) if ends else None
+
+
+def minute_buckets(events, field, width=300., select=None):
+    """Median of `field` per `width` seconds of session time; shows slowdown over a long run."""
+    buckets = defaultdict(list)
+    for event in events:
+        moment, value = event.get("elapsed"), event.get(field)
+        if (isinstance(moment, (int, float)) and isinstance(value, (int, float)) and
+                (select is None or select(event))):
+            buckets[int(moment//width)].append(value)
+    return {str(int(index*width)): quantiles(values)["p50"] for index, values in sorted(buckets.items())}
+
+
 def summarize(path):
     events = defaultdict(list)
     malformed = 0
@@ -84,8 +138,50 @@ def summarize(path):
                  and isinstance(event.get("elapsed"),(int,float))]
     overlap=sum(max(0.,min(asr_end,mt_end)-max(asr_start,mt_start))
                 for asr_start,asr_end in asr_ranges for mt_start,mt_end in mt_ranges)
+    groups = defaultdict(list)
+    for event in events["live_publication"]:
+        current = event.get("current") or {}
+        if current.get("translation") and isinstance(event.get("from_start"), (int, float)):
+            groups[event.get("segment")].append((event["from_start"], current["translation"]))
+    first_visible, erasures, stable_words = [], [], []
+    for versions in groups.values():
+        first, normalized, stable = stability(versions)
+        if first is None:
+            continue
+        first_visible.append(first)
+        erasures.append(normalized)
+        stable_words.extend(stable)
+    lost = sum(len(events[name]) for name in ("recognition_repetition", "recognition_early_repetition",
+                                              "unrecognized_audio"))
+    audio = audio_seconds_of(path, events)
+    short_asr = lambda event: isinstance(event.get("input_seconds"), (int, float)) and 1 <= event["input_seconds"] <= 4
+    memory = [value for name, field in (("worker_memory", "peak_mlx"), ("worker_memory", "peak_rss"),
+                                        ("warmup_finished", "peak_memory"))
+              for value in (event.get(field) for event in events[name]) if isinstance(value, (int, float))]
+    generations = events["mt_generation"]
+    proposed = sum(event.get("proposed", 0) for event in generations)
+    accepted_drafts = sum(event.get("accepted_drafts", 0) for event in generations)
     return {
         "pipeline": next((event.get("mode") for event in events["inference_pipeline"]),"unknown"),
+        "audio_seconds": round(audio, 1) if audio else None,
+        "time_to_first_visible_draft_seconds": quantiles(first_visible),
+        "normalized_erasure": quantiles(erasures),
+        "stable_word_seconds": quantiles(stable_words),
+        "lost_speech_events": lost,
+        "lost_speech_per_10_minutes": round(lost/(audio/600), 2) if audio else None,
+        "mlx_runtime": next((event for event in events["mlx_runtime"]), None) and {
+            key: value for key, value in events["mlx_runtime"][0].items() if key not in ("event", "elapsed")},
+        "asr_short_call_seconds_by_5_minutes": minute_buckets(asr, "seconds", select=short_asr),
+        "mt_duration_seconds_by_5_minutes": minute_buckets(events["mt_finished"], "seconds"),
+        "peak_memory_bytes": max(memory) if memory else None,
+        "mt_interrupted": dict(Counter(event.get("reason") for event in events["mt_interrupted"])),
+        "mt_prioritized": len(events["mt_prioritized"]),
+        "mt_cancel": dict(Counter(event.get("outcome") for event in events["mt_cancel"])),
+        "mt_cancel_seconds": metric("mt_cancel", "seconds"),
+        "mt_length_truncated": sum(bool(event.get("truncated")) for event in events["mt_finished"]),
+        "mt_generation_first_token_seconds": quantiles(event.get("first_token_seconds") for event in generations),
+        "mt_generation_tokens": quantiles(event.get("tokens") for event in generations),
+        "mt_speculative_acceptance": round(accepted_drafts/proposed, 3) if proposed else None,
         "asr_mode": mode,
         "diagnostics_incomplete_lines": malformed,
         "asr_queue_wait_seconds": metric("asr_job_start", "queue_wait"),

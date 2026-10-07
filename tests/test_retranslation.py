@@ -5,7 +5,8 @@ from unittest.mock import patch
 import numpy as np
 from hebrew_live.cli import Fragment
 from hebrew_live.stream import Settings,Control,Boundary
-from hebrew_live.retranslation import RetranslationProcessor,common_prefix
+from collections import deque
+from hebrew_live.retranslation import RetranslationProcessor,common_prefix,hold_last_word,next_mt_job
 from hebrew_live.display import TranslationScreen
 class LiveTests(unittest.TestCase):
  def setUp(self):
@@ -58,7 +59,7 @@ class LiveTests(unittest.TestCase):
   self.runf(self.f(0,16000),'a','Первый')
   saved_before=len(self.saved)
   self.results.append(('b','unused','accepted'))
-  self.e.translate=lambda text:iter([('Неверный ',None),('текст','length')])
+  self.e.translate=lambda text:iter([('Неверный ',None),('текст','repetition')])
   with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
    self.p.process(self.f(0,32000))
   self.assertTrue(any(kind=='live_stream_clear' for kind,_,_ in self.q.queue))
@@ -67,6 +68,26 @@ class LiveTests(unittest.TestCase):
   screen=TranslationScreen()
   for item in self.q.queue:screen.update(*item)
   self.assertNotIn('stream',next(iter(screen.groups.values())))
+ def test_length_limit_keeps_the_translation_with_an_explicit_marker(self):
+  self.runf(self.f(0,16000),'a','Первый')
+  self.results.append(('b','unused','accepted'))
+  self.e.translate=lambda text:iter([('Длинный ',None),('текст','length')])
+  self.p.process(self.f(0,32000))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Длинный текст […]')
+  finished=[v for n,v in self.events if n=='mt_finished'][-1]
+  self.assertEqual((finished['finish_reason'],finished['truncated'],finished['issue']),('length',True,None))
+ def test_length_limit_closing_version_is_published_not_unavailable(self):
+  self.results.append(('a','unused','accepted'))
+  self.e.translate=lambda text:iter([('Конец ',None),('обрезан','length')])
+  self.p.process(self.f(0,16000,True,'silence'))
+  self.assertEqual(self.pubs()[-1]['stage'],'closed')
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Конец обрезан […]')
+ def test_empty_length_limit_is_still_a_failure(self):
+  self.runf(self.f(0,16000),'a','Первый')
+  self.results.append(('b','unused','accepted'))
+  self.e.translate=lambda text:iter([('','length')])
+  self.p.process(self.f(0,32000))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Первый')
  def test_stream_clears_if_durable_publication_fails(self):
   self.results.append(('שלום','unused','accepted'))
   self.e.translate=lambda text:iter([('Новый ',None),('текст.','stop')])
@@ -95,11 +116,93 @@ class LiveTests(unittest.TestCase):
   screen=TranslationScreen()
   for item in self.q.queue:screen.update(*item)
   self.assertNotIn('stream',next(iter(screen.groups.values())))
- def test_text_only_draft_keeps_word_alignment_for_final(self):
-  self.e.backend='turbo';self.p.text_only_draft=True
+ def test_draft_skips_word_alignment_for_partials_and_finals(self):
+  self.e.backend='turbo'
+  self.assertTrue(self.p.text_only_draft)
   self.runf(self.f(0,16000),'a','Один')
   self.runf(self.f(0,32000,True,'silence'),'a','unused')
-  self.assertEqual([kw['align_words'] for _,kw in self.pcm],[False,True])
+  self.assertEqual([kw['align_words'] for _,kw in self.pcm],[False,False])
+  self.assertEqual([v['word_alignment'] for n,v in self.events if n=='live_asr'],[False,False])
+ def test_other_backends_keep_word_alignment(self):
+  self.e.backend='fast'
+  self.runf(self.f(0,16000),'a','Один')
+  self.assertEqual([kw['align_words'] for _,kw in self.pcm],[True])
+ def test_environment_restores_word_alignment(self):
+  with patch.dict('os.environ',{'HEBREW_LIVE_TEXT_ONLY_DRAFT':'0'}):
+   p=RetranslationProcessor(self.e,self.q,self.log,self.cancel)
+  self.e.backend='turbo';self.p=p
+  self.runf(self.f(0,16000),'a','Один')
+  self.assertEqual([kw['align_words'] for _,kw in self.pcm],[True])
+ def interruptible_translation(self,pieces,waiting,at):
+  produced=[];closed=[]
+  def translate(text):
+   try:
+    for i,piece in enumerate(pieces):
+     produced.append(piece)
+     if i==at:waiting[0]=True
+     yield piece,'stop' if i==len(pieces)-1 else None
+   finally:closed.append(True)
+  return translate,produced,closed
+ def test_stale_refresh_is_interrupted_when_newer_audio_waits(self):
+  self.runf(self.f(0,16000),'a','Первый')
+  waiting=[False]
+  self.p.catchup_inbox=SimpleNamespace(newer_audio_waiting=lambda f:waiting[0],take_draft_catchup=lambda *a:(None,'none'))
+  self.e.translate,produced,closed=self.interruptible_translation(['Раз ','два ','три ','четыре.'],waiting,1)
+  self.results.append(('b','unused','accepted'))
+  with patch('hebrew_live.retranslation.STREAM_PREVIEW_INTERVAL',0):
+   self.p.process(self.f(0,32000))
+  self.assertEqual(produced,['Раз ','два ']);self.assertEqual(closed,[True])
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Первый')
+  interrupted=[v for n,v in self.events if n=='mt_interrupted']
+  self.assertEqual([v['reason'] for v in interrupted],['newer_audio_queued'])
+  self.assertEqual([v['reason'] for n,v in self.events if n=='mt_discarded'][-1],'superseded_while_generating')
+  screen=TranslationScreen()
+  for item in self.q.queue:screen.update(*item)
+  self.assertNotIn('stream',next(iter(screen.groups.values())))
+ def test_closing_and_first_translations_are_never_interrupted(self):
+  waiting=[True]
+  self.p.catchup_inbox=SimpleNamespace(newer_audio_waiting=lambda f:waiting[0],take_draft_catchup=lambda *a:(None,'none'))
+  self.e.translate,produced,closed=self.interruptible_translation(['Один ','два.'],[False],5)
+  self.runf(self.f(0,16000),'a','unused')
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Один два.')
+  self.e.translate,produced,closed=self.interruptible_translation(['Конец ','фразы.'],[False],5)
+  self.runf(self.f(0,32000,True,'silence'),'b','unused')
+  self.assertEqual(self.pubs()[-1]['stage'],'closed')
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Конец фразы.')
+  self.assertFalse([1 for n,_ in self.events if n=='mt_interrupted'])
+ def test_refresh_is_not_interrupted_when_visible_text_lags_four_seconds(self):
+  self.runf(self.f(0,16000),'a','Первый')
+  self.p.catchup_inbox=SimpleNamespace(newer_audio_waiting=lambda f:False,take_draft_catchup=lambda *a:(None,'none'))
+  waiting=[True]
+  self.p.catchup_inbox.newer_audio_waiting=lambda f:waiting[0]
+  self.e.translate,produced,closed=self.interruptible_translation(['Раз ','два ','три.'],[False],5)
+  self.results.append(('b','unused','accepted'))
+  self.p.process(self.f(0,96000))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Раз два три.')
+  self.assertFalse([1 for n,_ in self.events if n=='mt_interrupted'])
+ def test_environment_switch_lets_stale_refresh_finish(self):
+  with patch.dict('os.environ',{'HEBREW_LIVE_MT_INTERRUPT':'0'}):
+   self.p=RetranslationProcessor(self.e,self.q,self.log,self.cancel)
+  self.runf(self.f(0,16000),'a','Первый')
+  waiting=[False]
+  self.p.catchup_inbox=SimpleNamespace(newer_audio_waiting=lambda f:waiting[0],take_draft_catchup=lambda *a:(None,'none'))
+  self.e.translate,produced,closed=self.interruptible_translation(['Раз ','два ','три.'],waiting,0)
+  self.results.append(('b','unused','accepted'))
+  self.p.process(self.f(0,32000))
+  self.assertEqual(self.pubs()[-1]['current']['translation'],'Раз два три.')
+ def test_hold_last_word_helper(self):
+  self.assertEqual(hold_last_word('אני רוצה תור'),'אני רוצה')
+  self.assertEqual(hold_last_word('שלום'),'שלום')
+  self.assertEqual(hold_last_word('הלכתי הביתה.'),'הלכתי הביתה.')
+  self.assertEqual(hold_last_word(''),'')
+ def test_hold_last_word_applies_to_snapshots_but_not_finals_and_is_off_by_default(self):
+  self.assertFalse(self.p.hold_last_word)
+  with patch.dict('os.environ',{'HEBREW_LIVE_HOLD_LAST_WORD':'1'}):
+   self.p=RetranslationProcessor(self.e,self.q,self.log,self.cancel)
+  self.runf(self.f(0,16000),'אני רוצה תור','One')
+  self.assertEqual(self.pubs()[-1]['current']['source'],'אני רוצה')
+  self.runf(self.f(0,32000,True,'silence'),'אני רוצה תור לרופא','Two')
+  self.assertEqual(self.pubs()[-1]['current']['source'],'אני רוצה תור לרופא')
  def test_live_draft_rejected_or_empty_does_not_erase(self):
   self.settings=replace(self.settings,publication='draft')
   self.runf(self.f(0,16000),'a','Первый черновик')
@@ -286,6 +389,53 @@ class IndependentMTTests(unittest.TestCase):
   with self.assertRaisesRegex(RuntimeError,'translation failed'):
    self.p.drain_mt()
   self.assertEqual(len(self.unprocessed),2)
+
+ def test_running_refresh_is_interrupted_when_a_newer_job_for_the_group_is_queued(self):
+  self.seen=['first','r1','r2']
+  closed=[]
+  def translate_for(text,settings):
+   self.translated.append((text,settings.direction))
+   try:
+    if text=='r1':
+     yield 'начало ',None
+     self.started.set();self.release.wait(3)
+     yield 'продолжение','stop'
+    else:yield 'Перевод '+text,'stop'
+   finally:
+    if text=='r1':closed.append(True)
+  self.engine.translate_for=translate_for
+  self.p.process(self.f(0,16000))
+  self.p.process(self.f(0,32000))
+  self.assertTrue(self.started.wait(2))
+  self.p.process(self.f(0,48000))
+  self.release.set();self.p.flush()
+  self.assertEqual(closed,[True])
+  self.assertEqual([v['reason'] for n,v in self.events if n=='mt_interrupted'],['newer_mt_queued'])
+  texts=[v['current']['translation'] for _,v in self.pubs()]
+  self.assertNotIn('начало продолжение',texts)
+  self.assertEqual(texts[-1],'Перевод r2')
+
+class JobPriorityTests(unittest.TestCase):
+ def job(self,name,group,kind):return SimpleNamespace(name=name,group=group,kind=kind)
+ def drain(self,jobs,prioritize=True):
+  pending=deque(jobs);order=[]
+  while pending:
+   job,jumped=next_mt_job(pending,prioritize);order.append((job.name,jumped))
+  return order
+ def test_closing_before_first_before_refresh_across_groups(self):
+  jobs=[self.job('r1',1,'refresh'),self.job('f2',2,'first'),self.job('c3',3,'closing')]
+  self.assertEqual(self.drain(jobs),[('c3',2),('f2',1),('r1',0)])
+ def test_order_inside_a_group_is_kept(self):
+  jobs=[self.job('r1',1,'refresh'),self.job('c1',1,'closing'),self.job('r2',2,'refresh')]
+  self.assertEqual(self.drain(jobs),[('r1',0),('c1',0),('r2',0)])
+  jobs=[self.job('f1',1,'first'),self.job('c1',1,'closing'),self.job('c2',2,'closing')]
+  self.assertEqual(self.drain(jobs),[('c2',2),('f1',0),('c1',0)])
+ def test_ties_keep_arrival_order(self):
+  jobs=[self.job('a',1,'refresh'),self.job('b',2,'refresh'),self.job('c',3,'refresh')]
+  self.assertEqual(self.drain(jobs),[('a',0),('b',0),('c',0)])
+ def test_disabled_priority_is_fifo(self):
+  jobs=[self.job('r1',1,'refresh'),self.job('c2',2,'closing')]
+  self.assertEqual(self.drain(jobs,False),[('r1',0),('c2',0)])
 
 class LiveTransportTests(unittest.TestCase):
  def test_ui_preview_acknowledges_current_rendered_preview_only(self):

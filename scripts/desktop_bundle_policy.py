@@ -2,12 +2,43 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path, PurePosixPath
 
 
 EXCLUDED_RUNTIME_PACKAGES = ("torch", "torchaudio", "torchvision", "librosa")
 PRIVATE_METADATA_NAMES = {"direct_url.json", "RECORD", "INSTALLER", "REQUESTED"}
+
+
+REQUIRED_MLX_WHEEL_PLATFORM = "macosx_26_0"
+
+
+def installed_wheel_tags(names=("mlx", "mlx-metal")):
+    """Wheel tags of the interpreter's installed distributions (None if not installed)."""
+    result = {}
+    for name in names:
+        try:
+            text = importlib.metadata.distribution(name).read_text("WHEEL") or ""
+        except importlib.metadata.PackageNotFoundError:
+            text = ""
+        result[name] = [line.split(":", 1)[1].strip() for line in text.splitlines()
+                        if line.startswith("Tag:")]
+    return result
+
+
+def verify_mlx_wheel_tags(tags, required=REQUIRED_MLX_WHEEL_PLATFORM):
+    """Fail the build when MLX would run without the M5 neural-accelerator kernels.
+
+    uv.lock holds macosx_14_0, 15_0 and 26_0 wheels. A build on an older macOS, or on the
+    macos-14 CI runner, silently resolves an older one that works but is much slower on M5.
+    """
+    for name, found in tags.items():
+        if not found:
+            raise ValueError(f"{name}: wheel tag metadata is missing; cannot confirm {required}")
+        if not any(required in tag for tag in found):
+            raise ValueError(f"{name}: installed wheel tag {', '.join(found)} lacks {required}; "
+                             "build on macOS 26 or newer so the neural-accelerator wheel is resolved")
 
 
 def public_bundle_datas(entries):

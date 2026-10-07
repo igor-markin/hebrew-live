@@ -24,6 +24,17 @@ def _rss_bytes():
     return value if sys.platform=='darwin' else value*1024
 
 
+def _cancel_requested(receive, request_id):
+    """Drain pending parent messages between translation tokens (a poll costs microseconds)."""
+    while receive.poll(0):
+        message = receive.recv()
+        if message[1] != "cancel":
+            raise RuntimeError("Unexpected request while a translation is streaming")
+        if message[0] == request_id:
+            return True
+    return False
+
+
 def _best_effort_event(log,name,**values):
     try:
         if hasattr(log,'try_event'):log.try_event(name,**values)
@@ -89,6 +100,8 @@ def _engine_process(receive, send, config, engine_factory=None):
         }))
         while True:
             request_id, method, state, args, kwargs = receive.recv()
+            if method == "cancel":
+                continue  # A cancel that arrived after its translation had already finished.
             for key, value in state.items():
                 setattr(engine, key, value)
             if method == "close":
@@ -98,8 +111,15 @@ def _engine_process(receive, send, config, engine_factory=None):
                 return
             try:
                 if method == "translate":
-                    for item in engine.translate(*args, **kwargs):
-                        send.send(("yield", request_id, item, {}))
+                    items = engine.translate(*args, **kwargs)
+                    try:
+                        for item in items:
+                            send.send(("yield", request_id, item, {}))
+                            if _cancel_requested(receive, request_id):
+                                break
+                    finally:
+                        close = getattr(items, "close", None)
+                        if close is not None:close()
                     value = None
                 else:
                     value = getattr(engine, method)(*args, **kwargs)
@@ -166,7 +186,10 @@ class RemoteEngine:
         self._stop = stop or threading.Event();self._cancel = cancel or threading.Event()
         self._shutdown_grace = shutdown_grace;self._cancel_grace = cancel_grace
         self._shutdown_started = None;self._request_id = 0;self._closed = False
+        # translate(text, hint=...) reaches the child; the bridge preview engine has no hints.
+        self.accepts_hint=bridge_models is None
         self._rpc_lock=threading.Lock()
+        self._cancel_message=os.environ.get('HEBREW_LIVE_MT_INTERRUPT','1')!='0'
         context = multiprocessing.get_context("spawn")
         child_receive, parent_send = context.Pipe(duplex=False)
         parent_receive, child_send = context.Pipe(duplex=False)
@@ -285,20 +308,25 @@ class RemoteEngine:
                 self._apply(message[3]);complete=True;return
         finally:
             if request_id is not None and not complete and self._process.is_alive():
-                # A caller may stop consuming a streaming generation. Drain its
-                # messages while holding the RPC lock so none can be attributed
-                # to the next session part/request. Endless native generation is
-                # escalated to process termination by this bounded wait.
+                # A caller may stop consuming a streaming generation. Tell the child
+                # to stop between tokens, then drain its messages while holding the
+                # RPC lock so none can be attributed to the next session part/request.
+                # A child that cannot acknowledge in time is terminated.
+                began=time.monotonic();outcome='aborted'
                 try:
-                    deadline=time.monotonic()+self._cancel_grace
-                    terminal_drained=False
+                    if self._cancel_message:
+                        self._bounded_send((request_id,"cancel",{},(),{}),self._cancel_grace)
+                    deadline=began+self._cancel_grace
                     while time.monotonic()<deadline:
                         message=self._receive_until(request_id,max(.01,deadline-time.monotonic()))
                         if message[0] in ('done','failed'):
-                            terminal_drained=True;break
-                    if not terminal_drained:self._abort_process()
+                            if message[0]=='done':self._apply(message[3])
+                            outcome='acknowledged' if self._cancel_message else 'drained'
+                            break
+                    if outcome=='aborted':self._abort_process()
                 except Exception:
                     self._abort_process()
+                _best_effort_event(self.log,'mt_cancel',outcome=outcome,seconds=time.monotonic()-began)
             self._rpc_lock.release()
 
     def switch_models(self, selection):
@@ -366,6 +394,7 @@ class _SplitMemory:
 class SplitRemoteEngine:
     """One process owns ASR, another owns MT; only immutable job state crosses stages."""
     independent_mt=True
+    accepts_hint=True
 
     def __init__(self, folder, log, language="he", backend="turbo", asr_path=None,
                  translation_path=None, direction="he-en", topic="none", stop=None,
@@ -402,15 +431,15 @@ class SplitRemoteEngine:
             setattr(self,key,getattr(self.asr,key))
         return value
 
-    def translate_for(self,text,settings):
+    def translate_for(self,text,settings,**options):
         state=dict(language=settings.language,direction=settings.direction,
                    topic=settings.topic,translation_context=[],recognition_guard_due=False)
-        yield from self.mt.translate(text,_remote_state=state)
+        yield from self.mt.translate(text,_remote_state=state,**options)
 
-    def translate(self,text):
+    def translate(self,text,**options):
         state=dict(language=self.language,direction=self.direction,topic=self.topic,
                    translation_context=list(self.translation_context),recognition_guard_due=False)
-        yield from self.mt.translate(text,_remote_state=state)
+        yield from self.mt.translate(text,_remote_state=state,**options)
 
     def switch_models(self,selection):
         self.asr.switch_models(selection)

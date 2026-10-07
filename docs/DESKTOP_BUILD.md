@@ -50,6 +50,9 @@ cd ../..
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/build_macos_engine_app.py --skip-web-build \
   --bundle-models models
+# The build stops unless the installed mlx and mlx-metal wheels are the macosx_26_0
+# builds: wheels for older macOS (uv.lock also pins macosx_14_0 and 15_0) work but run
+# without the M5 neural-accelerator kernels. Build on macOS 26 or newer.
 
 cd desktop/electron
 npm ci

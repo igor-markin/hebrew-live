@@ -12,6 +12,38 @@ from pathlib import Path
 from .display import TerminalKeys
 from .paths import data_root
 
+PUSH_INTERVAL=.025    # Coalesce bursts of real changes into one push per this many seconds.
+METER_INTERVAL=.15    # Audio level and lag change on almost every tick; keep the old polling cadence.
+KEEPALIVE_INTERVAL=15.
+
+class _State(dict):
+    """Session state that counts real changes, so the push channel never diffs JSON or polls."""
+    METERS=frozenset(('level','lag'))
+    def __init__(self,*args,**kwargs):
+        self.changed=threading.Condition();self.version=self.meter_version=0
+        super().__init__(*args,**kwargs)
+    def bump(self,significant,meter=False):
+        with self.changed:
+            if significant:self.version+=1
+            if meter:self.meter_version+=1
+            self.changed.notify_all()
+    def update(self,*args,**kwargs):
+        significant=meter=False
+        for key,value in dict(*args,**kwargs).items():
+            if key not in self or self[key]!=value:
+                if key in self.METERS:meter=True
+                else:significant=True
+            super().__setitem__(key,value)
+        if significant or meter:self.bump(significant,meter)
+    def __setitem__(self,key,value):self.update({key:value})
+def _bumping(name):
+    method=getattr(dict,name)
+    def wrapper(self,*args,**kwargs):
+        try:return method(self,*args,**kwargs)
+        finally:self.bump(True)
+    return wrapper
+for _name in ('__delitem__','pop','popitem','clear','setdefault','__ior__'):setattr(_State,_name,_bumping(_name))
+
 class BrowserUI:
     def __init__(self,open_browser=True,live=False):
         self.live=live
@@ -23,14 +55,17 @@ class BrowserUI:
         self.token=secrets.token_urlsafe(32)
         self.actions=queue.Queue(maxsize=32)
         self.lock=threading.Lock()
-        self.state={'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
+        self.state=_State({'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
                     'status_code':'loading_models','direction':'he-en','target_language':'en',
                     'target_languages':[],'target_error':None,'target_error_code':None,
                     'ui_locale':'en','paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
-                    'recording_started':False,'capture_active':False}
+                    'recording_started':False,'capture_active':False})
         self.state['desktop_mode']=self.desktop_mode
+        # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
+        self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
+        self.closing=False
         self.exports={}
         self.session_folder=None
         self.preference_folder=None
@@ -49,15 +84,52 @@ class BrowserUI:
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass  # Never log the private URL or captions.
             def valid(self):return self.headers.get('Host')==owner.host and self.path.startswith('/'+owner.token+'/')
-            def reply(self,status,data,kind='application/json; charset=utf-8'):
-                self.send_response(status)
-                self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)))
+            def security_headers(self):
                 self.send_header('Cache-Control','no-store');self.send_header('Referrer-Policy','no-referrer')
                 self.send_header('X-Content-Type-Options','nosniff')
                 self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+            def reply(self,status,data,kind='application/json; charset=utf-8'):
+                self.send_response(status)
+                self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)))
+                self.security_headers()
                 self.end_headers()
                 try:self.wfile.write(data)
                 except (BrokenPipeError,ConnectionResetError):pass
+            def stream_state(self):
+                """Server-Sent Events: the same JSON as `state`, pushed when it really changes."""
+                self.send_response(200)
+                self.send_header('Content-Type','text/event-stream; charset=utf-8')
+                self.security_headers()
+                self.end_headers()
+                self.close_connection=True
+                self.connection.settimeout(10.)  # A stalled reader must not pin this thread forever.
+                state=owner.state;changed=state.changed
+                seen=None;pushed=written=0.
+                try:
+                    while True:
+                        with changed:
+                            while True:
+                                if owner.closing:return
+                                now=time.monotonic()
+                                current=(state.version,state.meter_version)
+                                if seen is None:due=now
+                                elif seen[0]!=current[0]:due=pushed+PUSH_INTERVAL
+                                elif seen[1]!=current[1]:due=pushed+METER_INTERVAL
+                                else:due=written+KEEPALIVE_INTERVAL
+                                if due<=now:break
+                                changed.wait(due-now)
+                        if seen==current:
+                            self.wfile.write(b': keepalive\n\n');written=time.monotonic()
+                            continue
+                        with owner.lock:
+                            # Read the counters before the snapshot: a later change is then pushed again, never lost.
+                            seen=(state.version,state.meter_version)
+                            data=json.dumps(state,ensure_ascii=False).encode()
+                            finished=state['finished']
+                        self.wfile.write(b'data: '+data+b'\n\n')
+                        pushed=written=time.monotonic()
+                        if finished and not owner.exports and owner.session_folder is None:owner.finished_seen.set()
+                except OSError:pass  # Client went away or stopped reading.
             def do_GET(self):
                 if not self.valid():return self.reply(404,b'{}')
                 relative=self.path[len('/'+owner.token+'/'):]
@@ -74,7 +146,8 @@ class BrowserUI:
                     if name.endswith('.css'):data+=b'\n.live-mode{display:none!important}\n'
                     return self.reply(200,data,kind)
                 route=self.path.rsplit('/',1)[-1]
-                if route=='state':
+                if route=='events' and owner.push_enabled:self.stream_state()
+                elif route=='state':
                     with owner.lock:
                         data=json.dumps(owner.state,ensure_ascii=False).encode()
                         finished=owner.state['finished']
@@ -383,5 +456,7 @@ class BrowserUI:
         try:
             self.finished_seen.wait(None if self.session_folder is not None else (30 if self.exports else 1.5))
         finally:
+            with self.state.changed:
+                self.closing=True;self.state.changed.notify_all()  # Close open event streams promptly.
             self.server.shutdown();self.server.server_close();self.thread.join(timeout=2)
             self.keyboard.__exit__(exc_type,exc,tb)

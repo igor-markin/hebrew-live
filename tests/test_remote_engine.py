@@ -58,6 +58,18 @@ class EndlessStreamingEngine(FakeNativeEngine):
     def translate(self,text):
         while True:yield 'token','stop'
 
+class SlowEndlessStreamingEngine(FakeNativeEngine):
+    """About 25 ms per token, like MiLMMT decoding."""
+    def translate(self,text):
+        while True:
+            time.sleep(.025);yield 'token',None
+
+class BlockedTranslationEngine(FakeNativeEngine):
+    """One token, then a native call that never returns to the token loop."""
+    def translate(self,text):
+        yield 'first',None
+        time.sleep(30)
+
 class PrivacyEngine(FakeNativeEngine):
     def warmup(self):
         if os.environ.get('HF_HUB_OFFLINE')!='1':raise RuntimeError('offline environment missing')
@@ -142,17 +154,63 @@ class RemoteEngineTests(unittest.TestCase):
             self.assertEqual(engine.recognize(np.ones(160,dtype=np.float32)),'שלום')
             engine.close()
 
-    def test_early_close_of_endless_fast_stream_aborts_before_next_rpc(self):
+    def test_early_close_cancels_endless_stream_between_tokens_and_keeps_the_child(self):
         with tempfile.TemporaryDirectory() as folder:
-            engine=RemoteEngine(Path(folder),Log(),engine_factory=EndlessStreamingEngine,
-                                startup_timeout=5,cancel_grace=.1)
-            generated=engine.translate('שלום');self.assertEqual(next(generated),('token','stop'))
-            started=time.monotonic();generated.close();self.assertLess(time.monotonic()-started,2)
+            log=Log()
+            engine=RemoteEngine(Path(folder),log,engine_factory=SlowEndlessStreamingEngine,
+                                startup_timeout=5,cancel_grace=2)
+            pid=engine._process.pid
+            generated=engine.translate('שלום');self.assertEqual(next(generated),('token',None))
+            started=time.monotonic();generated.close();elapsed=time.monotonic()-started
+            self.assertLess(elapsed,.5)
+            self.assertTrue(engine.alive);self.assertEqual(engine._process.pid,pid)
+            self.assertEqual(engine.recognize(np.ones(160,dtype=np.float32)),'שלום')
+            cancels=[data for name,data in log.events if name=='mt_cancel']
+            self.assertEqual([item['outcome'] for item in cancels],['acknowledged'])
+            self.assertLess(cancels[0]['seconds'],.5)
+            engine.close()
+
+    def test_cancel_is_repeatable_on_one_child(self):
+        with tempfile.TemporaryDirectory() as folder:
+            engine=RemoteEngine(Path(folder),Log(),engine_factory=SlowEndlessStreamingEngine,
+                                startup_timeout=5,cancel_grace=2)
+            pid=engine._process.pid
+            for _ in range(3):
+                generated=engine.translate('שלום');next(generated);next(generated);generated.close()
+            self.assertEqual(engine._process.pid,pid);self.assertTrue(engine.alive)
+            engine.close()
+
+    def test_stale_cancel_after_completion_is_ignored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            engine=RemoteEngine(Path(folder),Log(),engine_factory=FakeNativeEngine,startup_timeout=5)
+            self.assertEqual(list(engine.translate('שלום')),[('hello','stop')])
+            engine._send.send((engine._request_id,'cancel',{},(),{}))
+            self.assertEqual(engine.recognize(np.ones(160,dtype=np.float32)),'שלום')
+            self.assertEqual(list(engine.translate('שלום')),[('hello','stop')])
+            engine.close()
+
+    def test_child_that_cannot_acknowledge_is_terminated_after_the_grace(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log=Log()
+            engine=RemoteEngine(Path(folder),log,engine_factory=BlockedTranslationEngine,
+                                startup_timeout=5,cancel_grace=.3)
+            generated=engine.translate('שלום');self.assertEqual(next(generated),('first',None))
+            started=time.monotonic();generated.close();self.assertLess(time.monotonic()-started,3)
             self.assertFalse(engine.alive)
+            self.assertEqual([data['outcome'] for name,data in log.events if name=='mt_cancel'],['aborted'])
             with self.assertRaises(RuntimeError):engine.recognize(np.ones(160,dtype=np.float32))
             engine.close()
             replacement=RemoteEngine(Path(folder),Log(),engine_factory=FakeNativeEngine,startup_timeout=5)
             self.assertEqual(replacement.recognize(np.ones(160,dtype=np.float32)),'שלום');replacement.close()
+
+    def test_environment_switch_restores_drain_without_cancel_message(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{'HEBREW_LIVE_MT_INTERRUPT':'0'}):
+            log=Log()
+            engine=RemoteEngine(Path(folder),log,engine_factory=StreamingNativeEngine,startup_timeout=5)
+            generated=engine.translate('שלום');self.assertEqual(next(generated),('one','stop'));generated.close()
+            self.assertEqual([data['outcome'] for name,data in log.events if name=='mt_cancel'],['drained'])
+            self.assertEqual(engine.recognize(np.ones(160,dtype=np.float32)),'שלום')
+            engine.close()
 
     def test_mt_failure_finishes_rpc_and_engine_remains_usable(self):
         with tempfile.TemporaryDirectory() as folder:

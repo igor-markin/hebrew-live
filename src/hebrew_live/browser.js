@@ -126,7 +126,14 @@ async function prepareFiles(s){
  await fetch('action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'exports_ready'})}).catch(()=>{});
 }
 async function poll(){try{const r=await fetch('state',{cache:'no-store'});if(!r.ok)throw Error('state');const s=await r.json();render(s);if(s.finished)await prepareFiles(s);}catch{if(!finished)setText($('connection'),'Связь с программой потеряна · проверь терминал');}if(!finished)setTimeout(poll,150);}
-poll();
+// Push channel first; poll `state` if the stream is unsupported, switched off (HEBREW_LIVE_UI_PUSH=0) or breaks.
+function listen(){
+ if(typeof EventSource!=='function')return poll();
+ let source;try{source=new EventSource('events');}catch{return poll();}
+ source.onmessage=async e=>{try{const s=JSON.parse(e.data);render(s);if(s.finished){source.close();await prepareFiles(s);}}catch{if(!finished)setText($('connection'),'Связь с программой потеряна · проверь терминал');}};
+ source.onerror=()=>{source.close();if(!finished)poll();};
+}
+listen();
 
 const timingFields=[['first_seconds','Первый снимок',1,6,.5,'Накопление речи перед распознаванием'],['interval_seconds','Между обновлениями',1,8,.5,'Новая речь после предыдущего блока'],['preview_limit','Предварительных блоков',1,3,1,'В режиме последовательных блоков лимит не действует'],['fragment_seconds','Длина фрагмента',4,15,.5,'Когда готовить полный перевод'],['silence_seconds','Пауза в речи',.45,2.5,.01,'Тишина для завершения фразы']];
 let timingInitialized=false,timingDefaults={first_seconds:1.5,interval_seconds:1,preview_limit:0,fragment_seconds:4,silence_seconds:.6};
