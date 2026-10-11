@@ -8,6 +8,8 @@
 - the translation token budget grows with the source (96-512 tokens instead of a fixed 256) and a translation that still reaches it is shown with an explicit `[…]` instead of being dropped (`HEBREW_LIVE_MT_MAX_TOKENS=256` restores the old limit);
 - a streaming translation can be cancelled between tokens: the engine process polls for a cancel message, so an abandoned or stale generation ends within one token instead of being drained for seconds or the process being killed; a refresh overtaken by newer queued audio is stopped, and the split-worker MT queue serves closing, first, then refresh jobs (`HEBREW_LIVE_MT_INTERRUPT=0` restores finishing every translation, in order);
 - draft recognition no longer computes Whisper word timestamps (identical text on 41 of 41 compared windows; `HEBREW_LIVE_TEXT_ONLY_DRAFT=0` restores them);
+- a Whisper decode that has become a certain loop (a letter repeated 12 times, or a word sequence three times in a row) is stopped inside the decoding loop instead of after all 224 tokens, and the check now also covers final windows; the rejected text is the same, only the wasted 1.3-1.6 s is saved (`HEBREW_LIVE_LOOP_STOP=0` restores the post-decode check on drafts only);
+- a phrase group that never got any recognised text now shows "Speech was not recognized" instead of "final version unavailable";
 - the loopback UI receives state over Server-Sent Events instead of polling every 150-200 ms, falling back to polling by itself (`HEBREW_LIVE_UI_PUSH=0` switches the stream off);
 - the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`).
 

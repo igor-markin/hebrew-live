@@ -10,6 +10,13 @@
       }
     },
     {
+      "name": "live_no_speech_recognized",
+      "state": {
+        "groups": [{"id":"synthetic-3","revision":1,"direction":"he-ru","complete":true,"live":{"current":{"source":"","translation":"","start":0,"end":1.2,"issue":null},"history":[],"stage":"unavailable","issue":"Речь не распознана","reason":"silence","start":0,"end":1.2}}],
+        "phase":"listening","status":"Слушаю","paused":false,"finished":false,"direction":"he-ru","generation":1,"session":"synthetic-session","retry_supported":true
+      }
+    },
+    {
       "name": "finished_empty_issue",
       "state": {
         "groups": [{"id":"synthetic-2","revision":1,"direction":"he-ru","complete":true,"final":{"source":"","translation":"","issue":"Речь не распознана"}}],

@@ -5,7 +5,7 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {archiveRecordingLabel, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
+import {archiveRecordingLabel, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
 import type {Group, LiveState, Pair} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -61,7 +61,7 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   const start=shown.start??live?.start;const end=shown.end??live?.end;
   const interval=start!==undefined?` · ${start.toFixed(1)}${end!==undefined?'–'+end.toFixed(1):''} s`:'';
   const unfinished=live?.stage==='unavailable'&&issue==='Завершённая версия недоступна; ранний текст не подтверждён';
-  const shortMiss=unfinished&&empty&&start!==undefined&&end!==undefined&&end-start<=2;
+  const shortMiss=isQuietMiss(live,issue,empty,start,end);
   const unconfirmedDraft=unfinished&&!empty&&Boolean(shown.translation.trim());
   const [,target]=directionParts(group.direction);
   return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>

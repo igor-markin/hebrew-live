@@ -85,7 +85,13 @@ fall back to polling by themselves if the stream fails. Diagnostics record the
 ASR queue age, repeated audio work, first MT token, first transient draft, and
 completed translation separately. Draft recognition skips Whisper word timestamps
 (the draft path only uses text; the transcript was identical on 41 of 41 compared
-windows), `HEBREW_LIVE_TEXT_ONLY_DRAFT=0` restores them.
+windows), `HEBREW_LIVE_TEXT_ONLY_DRAFT=0` restores them. A Whisper decode that has become
+a certain loop (the monotone part of `repetition_loop`: one letter twelve times, or a word
+sequence three times, ignoring the possibly unfinished last word) is stopped from inside
+the decoding loop, checked every four greedy steps, instead of after all 224 tokens; the
+same text would have been rejected after the full decode, so only the time changes.
+The post-decode check now covers final windows too. `HEBREW_LIVE_LOOP_STOP=0` restores the
+check on drafts only.
 
 Translation runs through `mt_generate.py`, which drives `mlx_lm`'s `generate_step`
 directly: the library's `stream_generate` toggles the wired-memory limit around every

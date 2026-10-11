@@ -17,5 +17,5 @@ root with `.venv/bin/python`; keep a single MLX job at a time.
 
 Rollback switches used by `e2e_ab.py` (all default to the new behaviour): `HEBREW_LIVE_MT_GENERATE=stock`,
 `HEBREW_LIVE_MT_INTERRUPT=0`, `HEBREW_LIVE_TEXT_ONLY_DRAFT=0`, `HEBREW_LIVE_MT_MAX_TOKENS=256`,
-`HEBREW_LIVE_MT_SPECULATE=0`. Experiment switches (default off): `HEBREW_LIVE_FUSED_ENCODER=1`,
+`HEBREW_LIVE_MT_SPECULATE=0`, `HEBREW_LIVE_LOOP_STOP=0`. Experiment switches (default off): `HEBREW_LIVE_FUSED_ENCODER=1`,
 `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_MT_SPECULATE=1` (+ `HEBREW_LIVE_MT_SPECULATE_TOLERANCE=0.3`), `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`.

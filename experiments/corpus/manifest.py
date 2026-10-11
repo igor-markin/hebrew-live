@@ -30,6 +30,8 @@ def entries(root, default_scenario):
             if audio is None:
                 continue
             accepted = summary.get('accepted', {}).get(part, {})
+            if not accepted.get('duration'):
+                continue  # nothing was accepted: no corpus material
             yield dict(
                 id=f'{summary_path.parent.name}/{part}',
                 audio=str(audio.relative_to(root)),

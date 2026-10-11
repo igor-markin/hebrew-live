@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -76,6 +76,19 @@ test('hides only completed empty groups without an issue',()=>{
   assert.equal(isVisibleGroup(empty),false);
   assert.equal(isVisibleGroup({...empty,final:{source:'',translation:'',issue:'Речь не распознана'}}),true);
   assert.equal(isVisibleGroup({...empty,complete:false}),true);
+});
+
+test('mutes short empty bubbles the backend gave up on, for both unavailable messages',()=>{
+  const live=(issue:string,stage='unavailable')=>({current:{source:'',translation:''},history:[],stage,issue});
+  for(const issue of ['Речь не распознана','Завершённая версия недоступна; ранний текст не подтверждён']){
+    assert.equal(isQuietMiss(live(issue),issue,true,3,4.5),true);
+    assert.equal(isQuietMiss(live(issue),issue,true,3,5.5),false);
+    assert.equal(isQuietMiss(live(issue),issue,false,3,4.5),false);
+    assert.equal(isQuietMiss(live(issue),issue,true),false);
+    assert.equal(isQuietMiss(live(issue,'closed'),issue,true,3,4.5),false);
+  }
+  assert.equal(isQuietMiss(live('Отменено'),'Отменено',true,3,4.5),false);
+  assert.equal(isQuietMiss(undefined,'Речь не распознана',true,3,4.5),false);
 });
 
 test('describes the actual recording phase while an archive is open',()=>{

@@ -299,8 +299,18 @@ class RetranslationProcessor:
             self.publish(self.source, self.draft, 'technical' if technical else 'closed', reason=reason,job=job)
         else:
             current = self.visible['current'] if self.visible else {'source':'', 'translation':''}
-            self.publish(current['source'], current['translation'], 'unavailable',
-                         issue=('Распознан текст на другом языке; перевод пропущен' if getattr(self.engine,'recognition_issue',None)=='non-Hebrew transcript' else 'Завершённая версия недоступна; ранний текст не подтверждён'), reason=reason)
+            recognition_issue = getattr(self.engine,'recognition_issue',None)
+            if recognition_issue == 'non-Hebrew transcript':
+                issue = 'Распознан текст на другом языке; перевод пропущен'
+            elif self.visible is None and self.last_status in ('empty', 'rejected'):
+                # No early text was ever shown, so nothing is "unconfirmed": the speech itself is missing.
+                issue = 'Речь не распознана'
+                if (recognition_issue not in ('repeated recognition', 'early repeated recognition')
+                        and not self.cancel.is_set()):
+                    self.log.event('unrecognized_audio', segment=self.sid, start=self.start/16000, end=self.end/16000)
+            else:
+                issue = 'Завершённая версия недоступна; ранний текст не подтверждён'
+            self.publish(current['source'], current['translation'], 'unavailable', issue=issue, reason=reason)
         self.floor = max(self.floor, self.end)
         self.closed = True
 

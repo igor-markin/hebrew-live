@@ -29,7 +29,8 @@ from diagnose_latency import summarize
 from gated import wait_until_quiet
 
 STOCK = {'HEBREW_LIVE_MT_GENERATE': 'stock', 'HEBREW_LIVE_MT_INTERRUPT': '0', 'HEBREW_LIVE_TEXT_ONLY_DRAFT': '0',
-         'HEBREW_LIVE_MT_MAX_TOKENS': '256', 'HEBREW_LIVE_MT_SPECULATE': '0'}
+         'HEBREW_LIVE_MT_MAX_TOKENS': '256', 'HEBREW_LIVE_MT_SPECULATE': '0',
+         'HEBREW_LIVE_LOOP_STOP': '0'}
 CATALOG = {
     'stock': STOCK,
     'phase1': {},

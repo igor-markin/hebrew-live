@@ -15,7 +15,7 @@ from hebrew_live.cli import Engine, Fragment, Inbox
 from hebrew_live.phrase_inference import PhraseProcessor
 from hebrew_live.stream import Settings, Boundary
 from hebrew_live import whisper_reuse
-from hebrew_live.whisper_repetition import reject_repeated_decode
+from hebrew_live.whisper_repetition import reject_repeated_decode, RepeatedDecode
 
 
 class RepetitionTests(unittest.TestCase):
@@ -134,6 +134,28 @@ class RepetitionTests(unittest.TestCase):
                 self.assertNotEqual(self.engine.recognition_issue, 'early repeated recognition')
                 self.restored()
 
+    def test_loop_stop_extends_early_reject_to_finals_only_inside_the_scope(self):
+        self.engine.loop_stop = True
+        for kwargs in (dict(mode='phrases'), dict(preliminary=True, mode='phrases')):
+            before = self.model.alignments
+            self.engine.recognize(np.zeros(16000), **kwargs)
+            self.assertEqual(self.model.alignments, before)
+            self.assertEqual(self.engine.recognition_status, 'rejected')
+            self.assertEqual(self.engine.recognition_issue, 'early repeated recognition')
+            self.restored()
+        for kwargs in (dict(), dict(preliminary=True), dict(mode='both'), dict(mode='blocks'),
+                       dict(mode='full'), dict(mode='pauses')):
+            before = self.model.alignments
+            self.engine.recognize(np.zeros(16000), **kwargs)
+            self.assertEqual(self.model.alignments, before + 1)
+            self.assertEqual(self.engine.recognition_issue, 'repeated recognition')
+            self.restored()
+        self.engine.loop_stop = False  # HEBREW_LIVE_LOOP_STOP=0: finals take the late path again
+        before = self.model.alignments
+        self.engine.recognize(np.zeros(16000), mode='phrases')
+        self.assertEqual(self.model.alignments, before + 1)
+        self.assertEqual(self.engine.recognition_issue, 'repeated recognition')
+
     def test_warmup_is_not_intercepted(self):
         self.engine.mx = SimpleNamespace(get_peak_memory=lambda: 0)
         self.engine.warmup()
@@ -247,3 +269,142 @@ class RepetitionTests(unittest.TestCase):
                 group = next(iter(screen.groups.values()))
                 self.assertTrue(group['id'].startswith(f'{int(clear)}:'))
                 self.assertEqual(group['final']['source'], 'שלום.')
+
+
+class LoopStopTests(unittest.TestCase):
+    """Real GreedyDecoder.update on tiny arrays, driven by a minimal DecodingTask."""
+    EOT, VOCAB = 1000, 1010
+
+    def setUp(self):
+        import mlx.core as mx
+        self.mx = mx
+        self.decoding = importlib.import_module('mlx_whisper.decoding')
+        self.events = []
+        test = self
+        self.steps = 0
+
+        class Tokenizer:
+            def decode(self, ids):
+                return ''.join(chr(0x5d0 + i % 27) for i in ids)
+
+        class Task:
+            def __init__(task, script, temperature=0):
+                task.script = script
+                task.decoder = test.decoding.GreedyDecoder(temperature, test.EOT)
+                task.tokenizer = Tokenizer()
+
+            def _main_loop(task, audio_features, tokens):
+                logprobs = mx.zeros(1)
+                for i in range(224):
+                    test.steps += 1
+                    hot = np.zeros((1, test.VOCAB), np.float32)
+                    hot[0, task.script(i)] = 10
+                    tokens, completed, logprobs = task.decoder.update(tokens, mx.array(hot), logprobs)
+                    if completed:
+                        break
+                return tokens, logprobs
+
+        self.Task = Task
+        self.original_main_loop = Task.__dict__['_main_loop']
+        for patcher in (patch.object(whisper_reuse, 'compatible', return_value=True),
+                        patch.object(self.decoding, 'DecodingTask', Task)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.prompt = self.mx.array([[1001, 1002]])
+
+    def run_loop(self, script, stop=True, task=None):
+        task = task or self.Task(script)
+        with reject_repeated_decode(True, lambda k, **v: self.events.append((k, v)), stop):
+            return task, self.decoding.DecodingTask._main_loop(task, None, self.prompt)
+
+    def test_same_token_stops_within_24_text_tokens(self):
+        with self.assertRaises(RepeatedDecode) as caught:
+            self.run_loop(lambda i: 105)
+        self.assertLessEqual(len(caught.exception.tokens), 24)
+        self.assertEqual(caught.exception.tokens, [105] * len(caught.exception.tokens))
+        self.assertLess(self.steps, 24)
+        self.assertEqual(caught.exception.text, chr(0x5d0 + 105 % 27) * len(caught.exception.tokens))
+        self.assertIs(self.Task.__dict__['_main_loop'], self.original_main_loop)
+
+    def test_other_tokens_decode_exactly_as_without_the_guard(self):
+        script = lambda i: 100 + i % 40 if i < 60 else self.EOT
+        _, (guarded, guarded_lp) = self.run_loop(script)
+        steps = self.steps
+        self.steps = 0
+        _, (plain, plain_lp) = self.run_loop(script, stop=False)
+        self.assertEqual(guarded.tolist(), plain.tolist())
+        self.assertEqual(guarded_lp.tolist(), plain_lp.tolist())
+        self.assertEqual(steps, self.steps)
+        self.assertEqual(plain.shape[-1], 2 + 61)
+
+    def test_loop_after_ordinary_words_is_stopped_late_but_unfinished_word_is_kept(self):
+        words = [100, 101, 102]
+        script = lambda i: words[i] if i < 3 else 110 if i < 8 else 120
+        with self.assertRaises(RepeatedDecode):
+            self.run_loop(script)
+        self.assertLessEqual(self.steps, 24)
+
+    def test_without_stop_in_loop_nothing_is_patched(self):
+        task, _ = self.run_loop(lambda i: 105 if i < 30 else self.EOT, stop=False)
+        self.assertEqual(self.steps, 31)
+
+    def test_other_thread_and_cleanup(self):
+        result = []
+        decoder_class = self.decoding.GreedyDecoder
+        with reject_repeated_decode(True, lambda *a, **k: None, True):
+            task = self.Task(lambda i: 105 if i < 30 else self.EOT)
+            t = threading.Thread(target=lambda: result.append(
+                self.decoding.DecodingTask._main_loop(task, None, self.prompt)[0].shape[-1]))
+            t.start(); t.join(5)
+            self.assertFalse(t.is_alive())
+        self.assertEqual(result, [2 + 31])
+        self.assertNotIn('update', vars(task.decoder))
+        self.assertIs(self.decoding.GreedyDecoder, decoder_class)
+        self.assertIsNone(whisper_reuse._OWNER)
+
+    def test_instance_update_is_removed_after_stop(self):
+        task = self.Task(lambda i: 105)
+        with self.assertRaises(RepeatedDecode):
+            self.run_loop(None, task=task)
+        self.assertNotIn('update', vars(task.decoder))
+
+    def test_incompatible_library_does_not_patch(self):
+        with patch.object(whisper_reuse, 'compatible', return_value=False):
+            task, (tokens, _) = self.run_loop(lambda i: 105 if i < 30 else self.EOT)
+        self.assertEqual(tokens.shape[-1], 2 + 31)
+        self.assertTrue(any(k == 'whisper_early_reject_disabled' for k, _ in self.events))
+
+    def test_unknown_decoder_types_are_left_alone(self):
+        task = self.Task(lambda i: 105)
+        calls = []
+
+        class Other:
+            eot = self.EOT
+
+            def update(other, tokens, logits, sum_logprobs):
+                calls.append(1)
+                return tokens, self.mx.array(True), sum_logprobs
+
+        task.decoder = Other()
+        self.run_loop(None, task=task)
+        self.assertEqual(calls, [1])
+        self.assertNotIn('update', vars(task.decoder))
+
+
+class RepetitionLoopPartialTests(unittest.TestCase):
+    def test_partial_ignores_last_word_only(self):
+        from hebrew_live.cli import repetition_loop
+        triple = 'א ב ג א ב ג א ב ג'
+        self.assertTrue(repetition_loop(triple))
+        self.assertFalse(repetition_loop(triple, partial=True))
+        self.assertTrue(repetition_loop(triple + ' ד', partial=True))
+        self.assertTrue(repetition_loop('ה' * 12, partial=True))
+        self.assertFalse(repetition_loop('כן כן כן', partial=True))
+
+    def test_partial_true_implies_full_for_every_continuation(self):
+        from hebrew_live.cli import repetition_loop
+        text = 'שלום א ב ג א ב ג א ב ג ד'
+        for end in range(1, len(text) + 1):
+            if repetition_loop(text[:end], partial=True):
+                for tail in ('', 'x', ' y', 'ה' * 3):
+                    self.assertTrue(repetition_loop(text[:end] + tail))

@@ -328,11 +328,16 @@ class VAD:
         self.context=x[:,-64:]
         return float(out[0][0])
 
-def repetition_loop(text):
-    """Reject runaway letter/phrase loops while preserving ordinary emphasis."""
+def repetition_loop(text,partial=False):
+    """Reject runaway letter/phrase loops while preserving ordinary emphasis.
+
+    `partial` is for text that may still grow: it ignores the last word, which can
+    be unfinished, so a True answer still holds for every continuation.
+    """
     if re.search(r"([^\W\d_])\1{11,}",text,re.IGNORECASE):
         return True
     words=re.findall(r"\w+",text.lower())
+    if partial:words=words[:-1]
     for size in range(3,min(16,len(words)//3)+1):
         for start in range(len(words)-size*3+1):
             if words[start:start+size]==words[start+size:start+size*2]==words[start+size*2:start+size*3]:
@@ -349,6 +354,7 @@ class Engine:
         if backend!='turbo':raise ValueError('Only Whisper Turbo is supported')
         self.encoder_reuse=True
         self.early_reject=os.environ.get('HEBREW_LIVE_EARLY_REJECT','1')!='0'
+        self.loop_stop=os.environ.get('HEBREW_LIVE_LOOP_STOP','1')!='0'
         self.backend=backend
         self.translation_size='milmmt'
         self.language=language
@@ -371,8 +377,8 @@ class Engine:
             self.asr=mlx_whisper
             if asr_path is None and not (folder/'asr').is_dir():
                 raise ValueError('Model not installed')
-            self.log.event('asr_early_reject_config',enabled=self.early_reject,
-                           scope='phrases/preliminary/he-source/he/turbo')
+            self.log.event('asr_early_reject_config',enabled=self.early_reject,loop_stop=self.loop_stop,
+                           scope='phrases/he-source/he/turbo')
         if role!='asr':
             if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
                 raise ValueError('Model not installed')
@@ -423,14 +429,15 @@ class Engine:
         self.recognition_words=[]
         from .languages import split_direction
         source_language, _ = split_direction(self.direction)
-        early=(preliminary and mode=='phrases' and getattr(self,'early_reject',False)
+        loop_stop=getattr(self,'loop_stop',False)
+        early=((preliminary or loop_stop) and mode=='phrases' and getattr(self,'early_reject',False)
                and getattr(self,'backend',None)=='turbo' and self.language=='he'
                and source_language=='he')
         word_timestamps = align_words or prefix > 0
         from .whisper_reuse import reuse_alignment
         from .whisper_repetition import reject_repeated_decode, RepeatedDecode
         try:
-            with reject_repeated_decode(early,self.log.event):
+            with reject_repeated_decode(early,self.log.event,loop_stop):
                 with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
                     result=self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
                         temperature=0.0,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)

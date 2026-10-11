@@ -87,6 +87,15 @@ export function isVisibleGroup(group:Group):boolean {
   return Boolean(issue||!group.complete||pair&&(pair.source.trim()||pair.translation.trim()));
 }
 
+const FINAL_UNAVAILABLE='Завершённая версия недоступна; ранний текст не подтверждён';
+const NO_SPEECH='Речь не распознана';
+
+/** A short empty bubble the backend gave up on: shown as a muted line, not as a failure card. */
+export function isQuietMiss(live:LiveValue|undefined,issue:string|null|undefined,empty:boolean,start?:number,end?:number):boolean {
+  const closedEmpty=live?.stage==='unavailable'&&(issue===FINAL_UNAVAILABLE||issue===NO_SPEECH);
+  return closedEmpty&&empty&&start!==undefined&&end!==undefined&&end-start<=2;
+}
+
 export function archiveRecordingLabel(state:LiveState):string {
   if(state.finished)return '';
   if(state.stopping)return 'recordingEnding';

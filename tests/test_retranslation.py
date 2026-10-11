@@ -238,6 +238,31 @@ class LiveTests(unittest.TestCase):
   self.runf(self.f(0,16000),'a','Мне нужен врач');self.runf(self.f(0,32000),'b','Мне нужен врач завтра')
   early=self.pubs()[-1]['current'].copy();self.runf(self.f(0,48000,True,'silence'),'bad','','rejected')
   self.assertEqual(self.pubs()[-1]['stage'],'unavailable');self.assertEqual(self.pubs()[-1]['current'],early);self.assertEqual(len(self.mt),2)
+  self.assertEqual(self.pubs()[-1]['issue'],'Завершённая версия недоступна; ранний текст не подтверждён')
+  self.assertNotIn('unrecognized_audio',[name for name,_ in self.events])
+ def test_group_without_any_early_text_reports_missing_speech(self):
+  for index,status in enumerate(('rejected','empty')):
+   with self.subTest(status=status):
+    self.events.clear();self.e.recognition_issue=None
+    self.runf(self.f(16000*index,16000*(index+1),True,'silence'),'','',status)
+    last=self.pubs()[-1]
+    self.assertEqual((last['stage'],last['issue']),('unavailable','Речь не распознана'))
+    self.assertEqual(last['current']['source'],'')
+    self.assertEqual([v['segment'] for name,v in self.events if name=='unrecognized_audio'],[self.p.sid])
+    self.p.flush()
+ def test_missing_speech_is_not_counted_twice_after_a_repetition_event(self):
+  for index,issue in enumerate(('repeated recognition','early repeated recognition')):
+   with self.subTest(issue=issue):
+    self.events.clear();self.e.recognition_issue=issue
+    self.runf(self.f(16000*index,16000*(index+1),True,'silence'),'','','rejected')
+    self.assertEqual(self.pubs()[-1]['issue'],'Речь не распознана')
+    self.assertNotIn('unrecognized_audio',[name for name,_ in self.events])
+    self.p.flush()
+ def test_non_hebrew_transcript_keeps_its_own_message(self):
+  self.e.recognition_issue='non-Hebrew transcript'
+  self.runf(self.f(0,16000,True,'silence'),'','','rejected')
+  self.assertEqual(self.pubs()[-1]['issue'],'Распознан текст на другом языке; перевод пропущен')
+  self.assertNotIn('unrecognized_audio',[name for name,_ in self.events])
  def test_control_not_evidence(self):
   self.runf(self.f(0,16000),'a','Скрытый черновик');self.p.flush('pause')
   self.assertEqual(self.pubs()[-1]['stage'],'unavailable');self.assertEqual(self.pubs()[-1]['current']['translation'],'Скрытый черновик')
@@ -289,6 +314,7 @@ class LiveTests(unittest.TestCase):
   self.assertTrue(errors.empty(),list(errors.queue))
   publications=[(sid,value) for kind,sid,value in updates.queue if kind=='live_publication']
   self.assertEqual(publications[0][1]['stage'],'unavailable')
+  self.assertEqual(publications[0][1]['issue'],'Речь не распознана')
   self.assertNotEqual(publications[0][0],publications[-1][0])
   self.assertEqual(publications[-1][1]['current']['translation'],'Привет')
   self.assertIn(('retry_done',0,'0:3000001'),list(updates.queue))
@@ -307,6 +333,7 @@ class LiveTests(unittest.TestCase):
   self.assertTrue(errors.empty(),list(errors.queue))
   publications=[(sid,value) for kind,sid,value in updates.queue if kind=='live_publication']
   self.assertEqual(publications[0][1]['stage'],'unavailable')
+  self.assertEqual(publications[0][1]['issue'],'Речь не распознана')
   self.assertEqual(len({sid for sid,_ in publications}),4)
   self.assertIn('Привет',[value['current']['translation'] for _,value in publications])
   self.assertEqual(publications[-1][1]['current']['translation'],'Дальше')
