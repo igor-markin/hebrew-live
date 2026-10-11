@@ -35,6 +35,9 @@ CATALOG = {
     'stock': STOCK,
     'phase1': {},
     'phase1_no_interrupt': {'HEBREW_LIVE_MT_INTERRUPT': '0'},
+    # one Phase 1 change on top of the rollback baseline, to find which one moves a metric
+    'stock_textonly': {**STOCK, 'HEBREW_LIVE_TEXT_ONLY_DRAFT': '1'},
+    'stock_fastgen': {**STOCK, 'HEBREW_LIVE_MT_GENERATE': 'fast'},
     'hold_last_word': {'HEBREW_LIVE_HOLD_LAST_WORD': '1'},
     'first_1.0': {'HEBREW_LIVE_TIMING': '1.0,1.0,0,4,0.6'},
     'interval_0.5': {'HEBREW_LIVE_TIMING': '1.5,0.5,0,4,0.6'},

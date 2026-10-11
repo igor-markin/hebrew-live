@@ -19,3 +19,18 @@ Rollback switches used by `e2e_ab.py` (all default to the new behaviour): `HEBRE
 `HEBREW_LIVE_MT_INTERRUPT=0`, `HEBREW_LIVE_TEXT_ONLY_DRAFT=0`, `HEBREW_LIVE_MT_MAX_TOKENS=256`,
 `HEBREW_LIVE_MT_SPECULATE=0`, `HEBREW_LIVE_LOOP_STOP=0`. Experiment switches (default off): `HEBREW_LIVE_FUSED_ENCODER=1`,
 `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_MT_SPECULATE=1` (+ `HEBREW_LIVE_MT_SPECULATE_TOLERANCE=0.3`), `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`.
+
+## External references (outside the repository)
+
+Downloaded 2026-10-11 into `~/Library/Caches/hebrew-live-refs/` (next to the reference Whisper environment). They are evaluation material and candidate models, not product models: `models/manifest.json` is unchanged. Large files were checked against the SHA-256 published by the Hugging Face Hub.
+
+| Directory | Source (pinned) | Files | SHA-256 | License |
+| --- | --- | --- | --- | --- |
+| `parakeet-tdt-0.6b-v3-he/` | `thewh1teagle/parakeet-tdt-0.6b-v3-he` @ `003720491ed0d2699a4c9e204b9ca19d6f1fe8a1` | `model.safetensors` (2.51 GB) and config/tokenizer files; the `.nemo` (2.51 GB) and `q8_0.gguf` (0.72 GB) variants are not downloaded | `model.safetensors` `3a5bdd304d75f6ab4b7eb71db9b66f53179112681cdddd4545d5bb55461c7e31` | CC-BY-4.0 |
+| `fleurs-he_il/` | `google/fleurs` (dataset) @ `70bb2e84b976b7e960aa89f1c648e09c59f894dd` | `data/he_il/audio/test.tar.gz` (0.39 GB, not extracted), `data/he_il/test.tsv` | `test.tar.gz` `f09f2335973d7ff5469c0e88fc37b528e66ec2ff2af5346438daacb3fbd84a53` | CC-BY-4.0 |
+| `flores200/`, `flores200-devtest/` | `https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz` (25.6 MB, last modified 2022-07-14); only `devtest/{heb_Hebr,eng_Latn,rus_Cyrl}.devtest` extracted, 1012 lines each | archive | archive `b8b0b76783024b85797e5cc75064eb83fc5288b41e9654dabc7be6ae944011f6` (the Hub does not host it, so there is no published hash to compare with); devtest hashes below | not checked |
+| `milmmt-4b-5bit-mlx/` | `translate-studio/MiLMMT-46-4B-v1.0-5bit-MLX` @ `8227b351ad0580e35ff3f92f5f8c623da1788c48` | all files (2.67 GB weights) | `model.safetensors` `099185b39e9d37fd944c8a1dc710a960943a431b88a322946da7a33f143173a5`, `tokenizer.json` `48a9afc4c8abd25310cbc644959cff42b119dc95aaf8543279952300c5938bc4` | Gemma terms |
+
+Full devtest hashes: `heb_Hebr.devtest` `78e8786afa6dbd3a207bca7b8274d8efc1ed9e513a0c5dd7f471ee6119d34423`, `eng_Latn.devtest` `612e9fbe87997617c0fa8fa8929654a4f49b728d96738112c2b86ef6a1d78d88`, `rus_Cyrl.devtest` `cdc706ed862d1d35d8d67cfda0b396766646885434958b18291aa760ff1bb59e`.
+
+The Parakeet runtime (NeMo or ONNX) is not installed; it is set up when plan items 4.2 / 3.10 start.

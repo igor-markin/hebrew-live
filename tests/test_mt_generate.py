@@ -9,7 +9,8 @@ class FakeDetokenizer:
     """Like the library's streaming detokenizer: `last_segment` is the text not yet read.
 
     '~' is an incomplete multi-byte token: held back until the next token or finalize."""
-    def __init__(self, vocab):self.vocab=vocab;self.held='';self.unread=''
+    def __init__(self, vocab):self.vocab=vocab;self.reset()
+    def reset(self):self.held='';self.unread=''
     def add_token(self,token):
         piece=self.vocab[token]
         if piece=='~':self.held+='é';return
@@ -62,6 +63,48 @@ class MtGenerateTests(unittest.TestCase):
             generator=mt_generate.generate(None,FakeTokenizer(),[1],max_tokens=50,sampler=None,step=step)
             next(generator);generator.close()
         self.assertEqual(pulled,[10])
+
+    def test_detokenizer_is_built_once_and_reset_between_generations(self):
+        built=[]
+        class Counting(FakeTokenizer):
+            @property
+            def detokenizer(self):
+                built.append(1);return FakeDetokenizer(self.vocab)
+        tokenizer=Counting()
+        with patch.dict(os.environ,{'HEBREW_LIVE_MT_GENERATE':'fast'}):
+            for tokens,expected in (([10,12,13,106],'aéc'),([11,1],'b'),([10,11,13,10,11],'abca')):
+                out=list(mt_generate.generate(None,tokenizer,[1],max_tokens=4,sampler=None,step=stepper(tokens)))
+                self.assertEqual(''.join(text for text,_ in out),expected)
+        self.assertEqual(len(built),1)
+    def test_overlapping_generations_never_share_a_detokenizer(self):
+        built=[]
+        class Counting(FakeTokenizer):
+            @property
+            def detokenizer(self):
+                built.append(1);return FakeDetokenizer(self.vocab)
+        tokenizer=Counting()
+        with patch.dict(os.environ,{'HEBREW_LIVE_MT_GENERATE':'fast'}):
+            first=mt_generate.generate(None,tokenizer,[1],max_tokens=50,sampler=None,step=stepper([10,11,13,1]))
+            second=mt_generate.generate(None,tokenizer,[1],max_tokens=50,sampler=None,step=stepper([13,13,1]))
+            self.assertEqual(next(first),('a',None))
+            self.assertEqual(next(second),('c',None))
+            self.assertEqual(next(first),('b',None))
+            self.assertEqual(next(second),('c',None))
+            self.assertEqual([text for text,_ in first],['c',''])
+            self.assertEqual([text for text,_ in second],[''])
+        self.assertEqual(len(built),2)
+    def test_abandoned_generation_returns_its_detokenizer(self):
+        built=[]
+        class Counting(FakeTokenizer):
+            @property
+            def detokenizer(self):
+                built.append(1);return FakeDetokenizer(self.vocab)
+        tokenizer=Counting()
+        with patch.dict(os.environ,{'HEBREW_LIVE_MT_GENERATE':'fast'}):
+            abandoned=mt_generate.generate(None,tokenizer,[1],max_tokens=50,sampler=None,step=stepper([10,11,13]))
+            next(abandoned);abandoned.close()
+            self.assertEqual(list(mt_generate.generate(None,tokenizer,[1],max_tokens=50,sampler=None,step=stepper([13,1]))),[('c',None),('','stop')])
+        self.assertEqual(len(built),1)
 
     def test_budget_scales_with_source_and_stays_bounded(self):
         with patch.dict(os.environ,{},clear=False):
