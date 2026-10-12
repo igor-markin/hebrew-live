@@ -12,9 +12,15 @@ def model_with_blocks(count=2):
 
 
 class FusedEncoderTests(unittest.TestCase):
-    def test_off_by_default(self):
-        with patch.dict(os.environ,{},clear=False):
+    def test_on_by_default(self):
+        with patch.dict(os.environ,{},clear=False),patch.object(whisper_speed,'compatible',return_value=True):
             os.environ.pop('HEBREW_LIVE_FUSED_ENCODER',None)
+            self.assertTrue(whisper_speed.enabled())
+            model=model_with_blocks()
+            self.assertEqual(whisper_speed.prepare(model),{'fused_encoder':True})
+            self.assertNotEqual(model.encoder.blocks[0].attn.qkv_attention,'stock')
+    def test_zero_switches_it_off(self):
+        with patch.dict(os.environ,{'HEBREW_LIVE_FUSED_ENCODER':'0'}),patch.object(whisper_speed,'compatible',return_value=True):
             self.assertFalse(whisper_speed.enabled())
             model=model_with_blocks()
             self.assertEqual(whisper_speed.prepare(model),{'fused_encoder':False})

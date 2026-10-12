@@ -28,19 +28,21 @@ sys.path.insert(0, str(ROOT / 'experiments' / 'nn-audit-2026-10'))
 from diagnose_latency import summarize
 from gated import wait_until_quiet
 
+# Since 2026-10-12 the app defaults are the fused encoder and first_seconds 1.0, so the rollback baseline pins both.
 STOCK = {'HEBREW_LIVE_MT_GENERATE': 'stock', 'HEBREW_LIVE_MT_INTERRUPT': '0', 'HEBREW_LIVE_TEXT_ONLY_DRAFT': '0',
          'HEBREW_LIVE_MT_MAX_TOKENS': '256', 'HEBREW_LIVE_MT_SPECULATE': '0',
-         'HEBREW_LIVE_LOOP_STOP': '0'}
+         'HEBREW_LIVE_LOOP_STOP': '0', 'HEBREW_LIVE_FUSED_ENCODER': '0', 'HEBREW_LIVE_TIMING': '1.5,1.0,0,4,0.6'}
 CATALOG = {
     'stock': STOCK,
-    'phase1': {},
+    'phase1': {},  # the current defaults (fused encoder, first_seconds 1.0)
+    'previous': {'HEBREW_LIVE_FUSED_ENCODER': '0', 'HEBREW_LIVE_TIMING': '1.5,1.0,0,4,0.6'},  # Phase 1 before the default change
     'phase1_no_interrupt': {'HEBREW_LIVE_MT_INTERRUPT': '0'},
     # one Phase 1 change on top of the rollback baseline, to find which one moves a metric
     'stock_textonly': {**STOCK, 'HEBREW_LIVE_TEXT_ONLY_DRAFT': '1'},
     'stock_fastgen': {**STOCK, 'HEBREW_LIVE_MT_GENERATE': 'fast'},
     'hold_last_word': {'HEBREW_LIVE_HOLD_LAST_WORD': '1'},
     'first_1.0': {'HEBREW_LIVE_TIMING': '1.0,1.0,0,4,0.6'},
-    'interval_0.5': {'HEBREW_LIVE_TIMING': '1.5,0.5,0,4,0.6'},
+    'interval_0.5': {'HEBREW_LIVE_TIMING': '1.0,0.5,0,4,0.6'},
     'fused_encoder': {'HEBREW_LIVE_FUSED_ENCODER': '1'},
     'mt_draft': {'HEBREW_LIVE_MT_SPECULATE': '1'},
     'mt_draft_stable': {'HEBREW_LIVE_MT_SPECULATE': '1', 'HEBREW_LIVE_MT_SPECULATE_TOLERANCE': '0.3'},

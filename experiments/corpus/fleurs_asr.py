@@ -33,8 +33,7 @@ result = json.loads(args.out.read_text()) if args.out.is_file() else {}
 
 if args.engine == 'whisper':
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
-    if args.fused:
-        os.environ['HEBREW_LIVE_FUSED_ENCODER'] = '1'
+    os.environ['HEBREW_LIVE_FUSED_ENCODER'] = '1' if args.fused else '0'  # fused is the app default since 2026-10-12
     sys.path.insert(0, str(ROOT / 'src'))
     import numpy as np
     import soundfile as sf

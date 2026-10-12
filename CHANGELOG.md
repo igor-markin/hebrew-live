@@ -12,12 +12,14 @@
 - translation keeps one streaming detokenizer per tokenizer instead of building a new one per call (building it walks the whole vocabulary: 0.10 s; the fast generation path built two per call, which cancelled its own gain);
 - a phrase group that never got any recognised text now shows "Speech was not recognized" instead of "final version unavailable";
 - the loopback UI receives state over Server-Sent Events instead of polling every 150-200 ms, falling back to polling by itself (`HEBREW_LIVE_UI_PUSH=0` switches the stream off);
+- the Whisper encoder runs its self-attention through `mx.fast.scaled_dot_product_attention` by default (FLEURS Hebrew, 792 clips: WER 19.15 -> 19.18 %, CI -0.03...+0.07 pp; 16-19 % faster calls for windows up to 10 s; `HEBREW_LIVE_FUSED_ENCODER=0` restores the upstream implementation, and an unqualified `mlx-whisper` still falls back to it by itself);
+- the first ASR snapshot of a fragment is taken after 1.0 s of speech instead of 1.5 s: the first visible draft appears 24 % sooner (median 2.38 -> 1.80 s on a 7-minute real replay, 1.71 s together with the fused encoder) but is about one word shorter and sometimes less exact; final texts are unchanged (the old value stays in a saved setting, or `HEBREW_LIVE_TIMING=1.5,1,0,4,0.6`);
 - the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`).
 
 ### Added
 
 - diagnostics: `mlx_runtime` (wheel tags, device), `mt_generation`, `mt_cancel`, `mt_interrupted`, `mt_prioritized`; `scripts/diagnose_latency.py` now reports time to the first visible draft, normalized erasure, time to stable words, lost-speech rate, slow-down over time and the new events;
-- opt-in experiments, all off by default: `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_FUSED_ENCODER=1` (fused encoder attention: identical text on 84 of 87 real windows, 16-19 % faster calls), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
+- opt-in experiments, all off by default: `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
 - local measurement tooling in `experiments/corpus` (manifest, real-window replay, end-to-end A/B, metrics) and `experiments/nn-audit-2026-10`.
 
 ## 0.1.0-alpha.3 — 2026-10-06

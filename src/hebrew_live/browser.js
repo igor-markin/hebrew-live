@@ -136,7 +136,7 @@ function listen(){
 listen();
 
 const timingFields=[['first_seconds','Первый снимок',1,6,.5,'Накопление речи перед распознаванием'],['interval_seconds','Между обновлениями',1,8,.5,'Новая речь после предыдущего блока'],['preview_limit','Предварительных блоков',1,3,1,'В режиме последовательных блоков лимит не действует'],['fragment_seconds','Длина фрагмента',4,15,.5,'Когда готовить полный перевод'],['silence_seconds','Пауза в речи',.45,2.5,.01,'Тишина для завершения фразы']];
-let timingInitialized=false,timingDefaults={first_seconds:1.5,interval_seconds:1,preview_limit:0,fragment_seconds:4,silence_seconds:.6};
+let timingInitialized=false,timingDefaults={first_seconds:1,interval_seconds:1,preview_limit:0,fragment_seconds:4,silence_seconds:.6};
 for(const [key,label,min,max,step,hint] of timingFields){
  const row=document.createElement('label'),copy=document.createElement('span'),title=document.createElement('strong');title.textContent=label;
  const small=document.createElement('small');small.textContent=hint;copy.append(title,small);

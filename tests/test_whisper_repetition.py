@@ -1,5 +1,6 @@
 """Production Engine + early decode rejection + real reuse, with a fake model."""
 import importlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import queue
@@ -20,6 +21,9 @@ from hebrew_live.whisper_repetition import reject_repeated_decode, RepeatedDecod
 
 class RepetitionTests(unittest.TestCase):
     def setUp(self):
+        fused = patch.dict(os.environ, {'HEBREW_LIVE_FUSED_ENCODER': '0'})  # warmup would patch the fake model's encoder
+        fused.start()
+        self.addCleanup(fused.stop)
         self.events = []
         self.mel = np.ones((4, 3), np.float16)
 

@@ -1,10 +1,10 @@
-"""Opt-in numerical speedup for the Whisper encoder (plan item 2.1).
+"""Numerical speedup for the Whisper encoder (plan item 2.1), ON by default since 2026-10-12.
 
-`HEBREW_LIVE_FUSED_ENCODER=1` runs encoder self-attention through
-`mx.fast.scaled_dot_product_attention` instead of the explicit softmax. It changes the numbers
-slightly, so it is OFF by default and fails closed to the upstream implementation when the
-installed `mlx-whisper` is not the qualified one (`whisper_reuse.compatible`: version and
-file hashes).
+Encoder self-attention runs through `mx.fast.scaled_dot_product_attention` instead of the
+explicit softmax. `HEBREW_LIVE_FUSED_ENCODER=0` restores the upstream implementation. It changes
+the numbers slightly (FLEURS he, 792 clips: WER 19.15 -> 19.18 %, CI -0.03...+0.07 pp), so it
+fails closed to the upstream implementation when the installed `mlx-whisper` is not the
+qualified one (`whisper_reuse.compatible`: version and file hashes).
 
 On 87 real speech windows it produced the byte-identical transcript 84 times (mean WER 0.55 %
 against the stock transcript on the rest) and cut the call time by 16-19 % for windows up to
@@ -18,7 +18,7 @@ from .whisper_reuse import compatible
 
 
 def enabled():
-    return os.environ.get('HEBREW_LIVE_FUSED_ENCODER', '0') == '1'
+    return os.environ.get('HEBREW_LIVE_FUSED_ENCODER') != '0'
 
 
 def _fused_attention(self, q, k, v, mask=None):

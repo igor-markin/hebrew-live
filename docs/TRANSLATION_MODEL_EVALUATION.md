@@ -88,6 +88,9 @@ This small sample supports keeping 1.5 seconds as the default. The source
 runtime accepts a local timing preference, but the current Electron interface
 does not expose this control.
 
+On 2026-10-12 the default was changed to 1.0 seconds after an end-to-end replay
+of seven minutes of a real session (`docs/NN_PHASE1_RESULTS.ru.md`, section 9).
+
 ## Quality and decision
 
 Splitting multi-sentence utterances restored several clauses that either
