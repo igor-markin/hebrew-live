@@ -5,7 +5,8 @@
     # own reference translations (corpus/ref-translations-*.json) instead of FLORES
     .venv/bin/python experiments/corpus/flores_mt.py 4bit OUT.json --units REF.json
 
-`4bit` is the shipped model in `models/`, `5bit` the build in `~/Library/Caches/hebrew-live-refs`.
+`4bit` is the shipped model in `models/`, `5bit` the build in `~/Library/Caches/hebrew-live-refs`
+(deleted 2026-10-12, the owner rejected it; to repeat the run download it again, revision and hashes are in README.md).
 The same sentences (fixed seed) go through `Engine.translate`, so a later `compare.py mt` run
 scores both builds on identical input. OUT.json holds translated text and per-sentence timings;
 keep it in the app data root (`corpus/`). One MT model at a time; run under `nice`.

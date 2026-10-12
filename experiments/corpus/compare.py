@@ -83,7 +83,7 @@ else:
             timing(label, [run[pair][i] for i in ids])
             firsts = [run[pair][i]['first'] for i in ids if run[pair][i]['first'] is not None]
             tokens = [run[pair][i]['tokens'] / run[pair][i]['total'] for i in ids if run[pair][i]['tokens']]
-            print(f'  first piece p50 {st.median(firsts):.3f} s; tokens/s p50 {st.median(tokens):.1f}')
+            print(f'  first piece p50 {st.median(firsts):.3f} s' + (f'; tokens/s p50 {st.median(tokens):.1f}' if tokens else ''))
         diff = [y - x for x, y in zip(scores[na], scores[nb])]
         low, high = interval(diff)
         print(f'{pair} chrF++ {nb} - {na}: {st.mean(diff):+.2f} (95 % interval {low:+.2f} .. {high:+.2f}); '
