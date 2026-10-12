@@ -76,13 +76,36 @@ notice; existing model files are not deleted.
 During a revisable translation, complete generated words may appear as a
 transient draft at most once per 100 ms. The UI replaces that text with the
 completed paired publication, or clears it if generation fails. Transient words
-are not added to the session archive or revision history. The loopback UI polls
-every 200 ms while recording, so a very short preview may finish before the
-next poll. Diagnostics record the ASR queue age, repeated audio work, first MT
-token, first transient draft, and completed translation separately. An optional
-`HEBREW_LIVE_TEXT_ONLY_DRAFT=1` experiment skips Whisper word alignment for
-nonfinal drafts; it remains off by default because a same-window benchmark did
-not establish a reliable speed gain. Final recognition still uses word timing.
+are not added to the session archive or revision history. The loopback UI gets
+every state change over a Server-Sent Events stream (`events`; bursts are merged
+into one push per 25 ms, the audio level and lag are sent at most every 150 ms),
+so a very short preview is not lost between polls. `HEBREW_LIVE_UI_PUSH=0` turns
+the stream off; the pages then poll `state` every 200 ms as before, and they also
+fall back to polling by themselves if the stream fails. Diagnostics record the
+ASR queue age, repeated audio work, first MT token, first transient draft, and
+completed translation separately. Draft recognition skips Whisper word timestamps
+(the draft path only uses text; the transcript was identical on 41 of 41 compared
+windows), `HEBREW_LIVE_TEXT_ONLY_DRAFT=0` restores them. A Whisper decode that has become
+a certain loop (the monotone part of `repetition_loop`: one letter twelve times, or a word
+sequence three times, ignoring the possibly unfinished last word) is stopped from inside
+the decoding loop, checked every four greedy steps, instead of after all 224 tokens; the
+same text would have been rejected after the full decode, so only the time changes.
+The post-decode check now covers final windows too. `HEBREW_LIVE_LOOP_STOP=0` restores the
+check on drafts only.
+
+Translation runs through `mt_generate.py`, which drives `mlx_lm`'s `generate_step`
+directly: the library's `stream_generate` toggles the wired-memory limit around every
+call, which cost 0.33-0.46 s per translation on the reference Mac, and the yielded text
+and finish reasons are identical (`HEBREW_LIVE_MT_GENERATE=stock` restores it). The token
+budget grows with the source (`4 x source tokens + 32`, between 96 and 512) instead of a
+fixed 256; a translation that still reaches it is shown with an explicit `[…]` rather than
+dropped (`HEBREW_LIVE_MT_MAX_TOKENS=256` restores the old limit). The parent can cancel a
+streaming translation: the engine child checks for a cancel message between tokens, so an
+abandoned or stale generation ends within one token (about 25 ms) instead of being drained
+for seconds or killed. A refresh whose audio has been overtaken by newer queued audio (and
+whose visible text lags by less than 4 s) is stopped the same way, and the split-worker MT
+queue serves closing, then first, then refresh jobs, keeping order inside a group.
+`HEBREW_LIVE_MT_INTERRUPT=0` restores finishing every started translation and FIFO order.
 
 The process boundary bounds native inference startup, shutdown, and close hangs. A
 native call is not given a new wall-clock SLA while recording remains active; the

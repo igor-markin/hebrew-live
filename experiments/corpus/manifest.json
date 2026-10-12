@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "total_minutes": 24.7,
+  "recordings": [
+    {
+      "id": "20261007-093053-6357812a/1",
+      "audio": "logs/20261007-093053-6357812a/001-he-ru.audio.wav",
+      "sha256": "c507b36b4f6464fe1b006ced8a0420f63310c6aa9a84261d3259433bc042a6b6",
+      "duration_seconds": 1404.0,
+      "sample_rate": 48000,
+      "date": "2026-10-07",
+      "direction": "he-ru",
+      "scenario": "unlabeled (owner usage session)"
+    },
+    {
+      "id": "20261007-122811-850e83d1/1",
+      "audio": "logs/20261007-122811-850e83d1/001-he-ru.audio.wav",
+      "sha256": "5a0ac5754f3685d48a361cef328a12990fb43e2c7e56564ec646a92bde86615e",
+      "duration_seconds": 52.8,
+      "sample_rate": 48000,
+      "date": "2026-10-07",
+      "direction": "he-ru",
+      "scenario": "unlabeled"
+    },
+    {
+      "id": "20261011-110510-568ad260/1",
+      "audio": "logs/20261011-110510-568ad260/001-he-ru.audio.wav",
+      "sha256": "a3d7f150e6451432e2a265b0ab0d6d64cf1ef1833334f6bca00b2990c491708e",
+      "duration_seconds": 26.7,
+      "sample_rate": 48000,
+      "date": "2026-10-11",
+      "direction": "he-ru",
+      "scenario": "phone call, far-end speaker"
+    }
+  ]
+}

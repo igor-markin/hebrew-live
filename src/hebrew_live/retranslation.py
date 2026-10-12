@@ -19,6 +19,38 @@ import numpy as np
 
 _PROMPT_HASH = hashlib.sha256(Path(__file__).with_name('translation.py').read_bytes()).hexdigest()
 STREAM_PREVIEW_INTERVAL = 0.1
+TRUNCATION_MARKER = ' […]'
+# Closing translations end a phrase, first ones put the earliest text on screen, and a
+# refresh only re-covers audio that a newer ASR version will cover again.
+MT_PRIORITY = {'closing': 0, 'first': 1, 'refresh': 2}
+# A refresh is never interrupted once the visible text lags this far behind its audio.
+INTERRUPT_LAG_LIMIT = 4.
+
+
+def hold_last_word(text):
+    """Drop the possibly cut last word of an unfinished snapshot; keep a lone word and a
+    word that ends a sentence."""
+    words = text.split()
+    if len(words) < 2 or words[-1].endswith(('.', '!', '?', '…')):
+        return text
+    return ' '.join(words[:-1])
+
+
+def next_mt_job(pending, prioritize=True):
+    """Pop the next job: first of each group is eligible (per-group order is kept),
+    lowest priority number wins, ties go to the oldest. Returns (job, jumped_over)."""
+    if not prioritize:
+        return pending.popleft(), 0
+    heads = []
+    seen = set()
+    for job in pending:
+        if job.group not in seen:
+            seen.add(job.group)
+            heads.append(job)
+    best = min(heads, key=lambda job: MT_PRIORITY.get(job.kind, 2))
+    jumped = list(pending).index(best)
+    pending.remove(best)
+    return best, jumped
 
 def common_prefix(left, right):
     """Exact adjacent prefix, including punctuation, at word boundaries."""
@@ -53,6 +85,7 @@ class DraftMT:
     closing: str | None
     first_ready_at: float
     catchup_used: bool = False
+    hint: str = ''
 
 @dataclass(frozen=True)
 class MTResult:
@@ -61,6 +94,7 @@ class MTResult:
     issue: str | None
     seconds: float
     preview: bool
+    truncated: bool = False
 
 
 class RetranslationProcessor:
@@ -76,8 +110,14 @@ class RetranslationProcessor:
         self.mt_counter = 0
         self.catchup_inbox = None
         self.catchup_parent = None
-        self.text_only_draft = os.environ.get('HEBREW_LIVE_TEXT_ONLY_DRAFT','0') == '1'
+        # Word times are unused by the draft path (text only), so skip alignment unless
+        # HEBREW_LIVE_TEXT_ONLY_DRAFT=0 restores it.
+        self.text_only_draft = os.environ.get('HEBREW_LIVE_TEXT_ONLY_DRAFT','1') != '0'
         self.async_mt=bool(getattr(engine,'independent_mt',False)) if async_mt is None else async_mt
+        self.interruptible=os.environ.get('HEBREW_LIVE_MT_INTERRUPT','1')!='0'
+        # The last word of a growing snapshot is cut by the window edge more often than
+        # any other (plan 3.3). Off until measured on the corpus.
+        self.hold_last_word=os.environ.get('HEBREW_LIVE_HOLD_LAST_WORD','0')=='1'
         if self.async_mt:
             self._mt_condition=threading.Condition()
             self._mt_pending=deque()
@@ -126,9 +166,10 @@ class RetranslationProcessor:
                 while not self._mt_pending and not self._mt_stop:
                     self._mt_condition.wait()
                 if self._mt_stop:return
-                job=self._mt_pending.popleft()
+                job,jumped=next_mt_job(self._mt_pending,self.interruptible)
                 self._mt_active=True
                 obsolete=(job.kind=='refresh' and self._mt_latest.get(job.group)!=(job.id,job.version))
+            if jumped:self.mt_event('mt_prioritized',job,jumped_over=jumped)
             result=None;failure=None
             try:
                 if obsolete:self.mt_event('mt_skipped_superseded_refresh',job,reason='newer_mt_queued')
@@ -258,8 +299,18 @@ class RetranslationProcessor:
             self.publish(self.source, self.draft, 'technical' if technical else 'closed', reason=reason,job=job)
         else:
             current = self.visible['current'] if self.visible else {'source':'', 'translation':''}
-            self.publish(current['source'], current['translation'], 'unavailable',
-                         issue=('Распознан текст на другом языке; перевод пропущен' if getattr(self.engine,'recognition_issue',None)=='non-Hebrew transcript' else 'Завершённая версия недоступна; ранний текст не подтверждён'), reason=reason)
+            recognition_issue = getattr(self.engine,'recognition_issue',None)
+            if recognition_issue == 'non-Hebrew transcript':
+                issue = 'Распознан текст на другом языке; перевод пропущен'
+            elif self.visible is None and self.last_status in ('empty', 'rejected'):
+                # No early text was ever shown, so nothing is "unconfirmed": the speech itself is missing.
+                issue = 'Речь не распознана'
+                if (recognition_issue not in ('repeated recognition', 'early repeated recognition')
+                        and not self.cancel.is_set()):
+                    self.log.event('unrecognized_audio', segment=self.sid, start=self.start/16000, end=self.end/16000)
+            else:
+                issue = 'Завершённая версия недоступна; ранний текст не подтверждён'
+            self.publish(current['source'], current['translation'], 'unavailable', issue=issue, reason=reason)
         self.floor = max(self.floor, self.end)
         self.closed = True
 
@@ -374,7 +425,8 @@ class RetranslationProcessor:
                     self.sid,self.settings,self.last.id,self.last.revision,text,self.start,self.end,
                     self.last.end,self.last.offset,self.fingerprint(),
                     'closing' if closing else 'refresh' if self._mt_first_requested or self.visible and self.visible['current']['translation'] else 'first',
-                    closing,parent.first_ready_at if parent else time.monotonic(),bool(parent))
+                    closing,parent.first_ready_at if parent else time.monotonic(),bool(parent),
+                    self.draft)
         if parent:self.mt_event('mt_superseded',parent,replacement_version=job.version)
         self.mt_event('mt_requested',job)
         return job
@@ -384,7 +436,7 @@ class RetranslationProcessor:
         self.deferred_tail = False
         e = self.engine
         began = time.monotonic()
-        align_words = final or not self.text_only_draft or getattr(e,'backend',None) not in ('turbo','multilingual')
+        align_words = not self.text_only_draft or getattr(e,'backend',None) not in ('turbo','multilingual')
         text = e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words)
         self.last_status = getattr(e, 'recognition_status', None) or ('accepted' if text else 'empty')
         self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
@@ -398,6 +450,8 @@ class RetranslationProcessor:
             if closing: self.finish(closing, valid=False)
             return
         text = text.strip()
+        if self.hold_last_word and not final:
+            text = hold_last_word(text)
         if not self.visible or (not self.visible['current']['translation'] and
                                 not (self.async_mt and self._mt_outstanding)):
             self.publish(text, '')  # Keep a pending first pair stable until its translation arrives.
@@ -446,6 +500,20 @@ class RetranslationProcessor:
         result=self._generate_mt(job,decision)
         if result is not None:self._commit_mt(job,result)
 
+    def _stale_refresh_reason(self,job):
+        """Why an in-flight refresh no longer needs to finish, or None."""
+        if job.kind!='refresh' or not self.interruptible:return None
+        if self.async_mt:
+            with self._mt_condition:
+                return 'newer_mt_queued' if self._mt_latest.get(job.group)!=(job.id,job.version) else None
+        # Same test as the pre-start skip in recognize(): newer audio is waiting and the
+        # visible text is not already far behind, so a fresh ASR pass is worth more.
+        if (not job.catchup_used and self.catchup_inbox is not None and self.visible is not None and
+                job.end/16000-self.visible['end']<INTERRUPT_LAG_LIMIT and
+                self.catchup_inbox.newer_audio_waiting(self.last)):
+            return 'newer_audio_queued'
+        return None
+
     def _generate_mt(self,job,decision):
         text=job.source;e=self.engine
         self.mt_event('mt_started',job,decision=decision,wait_seconds=time.monotonic()-job.first_ready_at)
@@ -458,12 +526,22 @@ class RetranslationProcessor:
         def clear_preview():
             if preview:self.updates.put(('live_stream_clear',job.group,{}))
         from .cli import repetition_loop
+        pieces=None
         try:
-            pieces=e.translate_for(text,job.settings) if self.async_mt else e.translate(text)
+            # The group's last committed translation drafts the new one (speculative
+            # decoding); engines that do not know hints are called as before.
+            options={'hint':job.hint} if job.hint and getattr(e,'accepts_hint',False) else {}
+            pieces=e.translate_for(text,job.settings,**options) if self.async_mt else e.translate(text,**options)
             for piece, end_reason in pieces:
                 if self.cancel.is_set():
                     clear_preview()
                     self.mt_event('mt_discarded',job,reason='cancelled');return None
+                stale=self._stale_refresh_reason(job)
+                if stale:
+                    clear_preview()
+                    self.mt_event('mt_interrupted',job,reason=stale,seconds=time.monotonic()-began,
+                                  output_chars=len(output))
+                    self.mt_event('mt_discarded',job,reason='superseded_while_generating');return None
                 output += piece
                 if repetition_loop(output): issue = 'Повтор генерации'; break
                 now = time.monotonic()
@@ -488,10 +566,20 @@ class RetranslationProcessor:
         except BaseException:
             clear_preview()
             raise
+        finally:
+            # Closing the generator is what tells a remote engine to stop between tokens.
+            close=getattr(pieces,'close',None)
+            if close is not None:close()
+        truncated = False
         if end_reason == 'repetition': issue = issue or 'Повтор генерации'
+        elif end_reason == 'length' and output.strip() and not issue:
+            # The token budget ran out. Keep what was translated, visibly cut,
+            # instead of silently dropping the whole version.
+            truncated = True
+            output = output.rstrip() + TRUNCATION_MARKER
         elif end_reason != 'stop': issue = issue or 'Перевод не завершён'
         if not output.strip(): issue = issue or 'Пустой перевод'
-        return MTResult(output,end_reason,issue,time.monotonic()-began,bool(preview))
+        return MTResult(output,end_reason,issue,time.monotonic()-began,bool(preview),truncated)
 
     def _commit_mt(self,job,result):
         current=None
@@ -506,9 +594,11 @@ class RetranslationProcessor:
         try:
             self.log.event('live_mt',part=job.settings.part,segment=job.group,source=job.source,
                            translation=result.output,seconds=result.seconds,
-                           finish_reason=result.end_reason,issue=result.issue)
+                           finish_reason=result.end_reason,issue=result.issue,
+                           truncated=result.truncated)
             self.mt_event('mt_finished',job,seconds=result.seconds,
-                          finish_reason=result.end_reason,issue=result.issue)
+                          finish_reason=result.end_reason,issue=result.issue,
+                          truncated=result.truncated)
             if not self.job_current(job):return
             if result.issue:
                 self.source = self.draft = ''  # Failed work is never cache evidence.

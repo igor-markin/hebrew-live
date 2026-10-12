@@ -8,7 +8,7 @@ import time
 
 from .display import Terminal, TerminalKeys, TranslationScreen
 from .stream import Settings, Control, transfer, replay
-from .tuning import DEFAULTS
+from .tuning import DEFAULTS, from_environment
 
 SHUTDOWN_GRACE = 120.0
 CANCEL_GRACE = 3.0
@@ -155,7 +155,7 @@ def run_session(args, session, browser_ui=None):
         from dataclasses import replace
         session.event('language_check_mode',mode='off')
         vad=VAD(custom_models.get('vad',args.models/'silero.onnx'))
-        control=Control(Settings(draft_catchup_enabled=preferences.get('draft_catchup_enabled',False),draft_max_audio_seconds=draft_limit,direction=args.direction,language=args.language or source_language,topic=args.topic,timing=tuple(preferences['timing'].values()) if preferences.get('timing') else DEFAULTS,mode=getattr(args,'translation_mode',None) or preferences.get('mode','phrases'),publication='draft'),stop,session.note_accepted)
+        control=Control(Settings(draft_catchup_enabled=preferences.get('draft_catchup_enabled',False),draft_max_audio_seconds=draft_limit,direction=args.direction,language=args.language or source_language,topic=args.topic,timing=tuple(preferences['timing'].values()) if preferences.get('timing') else from_environment(os.environ),mode=getattr(args,'translation_mode',None) or preferences.get('mode','phrases'),publication='draft'),stop,session.note_accepted)
         if getattr(args,'start_paused',False):
             control.paused=True;control.pause_started=time.monotonic()
         session.event('publication_mode',publication=control.settings.publication)

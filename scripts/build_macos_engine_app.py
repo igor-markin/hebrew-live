@@ -11,7 +11,7 @@ import platform
 import subprocess
 import sys
 
-from desktop_bundle_policy import verify_source_manifest
+from desktop_bundle_policy import installed_wheel_tags, verify_mlx_wheel_tags, verify_source_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +52,10 @@ def main() -> int:
         raise SystemExit("The engine app must be built natively on Apple Silicon macOS")
     if sys.version_info[:2] != (3, 12):
         raise SystemExit(f"The engine app requires Python 3.12; got {platform.python_version()}")
+    try:
+        verify_mlx_wheel_tags(installed_wheel_tags())
+    except ValueError as exc:
+        raise SystemExit(str(exc))
     build_root = (args.build_root or BUILD_ROOT).expanduser().resolve()
     dist_root = (args.dist_root or DIST_ROOT).expanduser().resolve()
 

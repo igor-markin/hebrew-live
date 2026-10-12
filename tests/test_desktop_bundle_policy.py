@@ -1,10 +1,13 @@
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
-from scripts.desktop_bundle_policy import public_bundle_datas, verify_source_manifest
+from scripts.desktop_bundle_policy import (installed_wheel_tags, public_bundle_datas, verify_mlx_wheel_tags,
+                                           verify_source_manifest)
 
 
 class DesktopBundlePolicyTests(unittest.TestCase):
@@ -41,3 +44,26 @@ class DesktopBundlePolicyTests(unittest.TestCase):
             manifest["files"][0]["path"] = "../source.py"
             with self.assertRaisesRegex(ValueError, "inside the snapshot"):
                 verify_source_manifest(root, manifest)
+
+    def test_mlx_wheel_must_be_the_neural_accelerator_build(self):
+        good = {"mlx": ["cp312-cp312-macosx_26_0_arm64"], "mlx-metal": ["py3-none-macosx_26_0_arm64"]}
+        verify_mlx_wheel_tags(good)
+        for bad in ({"mlx": ["cp312-cp312-macosx_14_0_arm64"], "mlx-metal": good["mlx-metal"]},
+                    {"mlx": good["mlx"], "mlx-metal": ["py3-none-macosx_15_0_arm64"]}):
+            with self.assertRaisesRegex(ValueError, "lacks macosx_26_0"):
+                verify_mlx_wheel_tags(bad)
+        with self.assertRaisesRegex(ValueError, "metadata is missing"):
+            verify_mlx_wheel_tags({"mlx": [], "mlx-metal": good["mlx-metal"]})
+
+    def test_installed_wheel_tags_reads_wheel_metadata_and_tolerates_absence(self):
+        class Dist:
+            @staticmethod
+            def read_text(name):
+                return "Wheel-Version: 1.0\nTag: cp312-cp312-macosx_26_0_arm64\n"
+        def distribution(name):
+            if name == "missing":
+                raise importlib.metadata.PackageNotFoundError(name)
+            return Dist()
+        with unittest.mock.patch.object(importlib.metadata, "distribution", distribution):
+            tags = installed_wheel_tags(("mlx", "missing"))
+        self.assertEqual(tags, {"mlx": ["cp312-cp312-macosx_26_0_arm64"], "missing": []})

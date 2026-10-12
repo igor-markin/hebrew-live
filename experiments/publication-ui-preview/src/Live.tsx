@@ -4,7 +4,8 @@ import {Card} from '@heroui/react/card';
 import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
-import {archiveRecordingLabel, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
+import {openStateStream} from './liveStream';
+import {archiveRecordingLabel, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
 import type {Group, LiveState, Pair} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -60,7 +61,7 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   const start=shown.start??live?.start;const end=shown.end??live?.end;
   const interval=start!==undefined?` · ${start.toFixed(1)}${end!==undefined?'–'+end.toFixed(1):''} s`:'';
   const unfinished=live?.stage==='unavailable'&&issue==='Завершённая версия недоступна; ранний текст не подтверждён';
-  const shortMiss=unfinished&&empty&&start!==undefined&&end!==undefined&&end-start<=2;
+  const shortMiss=isQuietMiss(live,issue,empty,start,end);
   const unconfirmedDraft=unfinished&&!empty&&Boolean(shown.translation.trim());
   const [,target]=directionParts(group.direction);
   return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
@@ -316,24 +317,35 @@ export default function Live(){
   },[connectionError]);
   useEffect(()=>{
     if(closed)return;
-    let cancelled=false,timer:number|undefined;
+    let cancelled=false,timer:number|undefined,stop=()=>{};
+    function accept(parsed:LiveState){
+      let next=parsed;
+      if(localeConfirmed.current){
+        if(next.ui_locale===localeConfirmed.current)localeConfirmed.current=null;
+        else next={...next,ui_locale:localeConfirmed.current};
+      }
+      setState(old=>mergeLiveState(old,next));setLastSuccess(Date.now());setConnectionError('');
+      return next;
+    }
+    function fail(error:unknown){
+      const message=error instanceof Error?error.message:'';const name=error instanceof Error?error.name:'';
+      const reason=name==='TimeoutError'?tx('timeout'):message.startsWith('Invalid local API')||name==='SyntaxError'?tx('badSnapshot'):message.startsWith('HTTP ')?tx('httpError',{code:message.slice(5)}):tx('noResponse');
+      setConnectionError(reason+' '+tx('lastSnapshot'));
+    }
     async function poll(){
       try{
-        let next=parseLiveState(await readJson('../state'));
+        const next=parseLiveState(await readJson('../state'));
         if(cancelled)return;
-        if(localeConfirmed.current){
-          if(next.ui_locale===localeConfirmed.current)localeConfirmed.current=null;
-          else next={...next,ui_locale:localeConfirmed.current};
-        }
-        setState(old=>mergeLiveState(old,next));setLastSuccess(Date.now());setConnectionError('');
+        accept(next);
         if(next.phase!=='exited')timer=window.setTimeout(poll,next.finished?700:200);
-      }catch(error){if(!cancelled){
-        const message=error instanceof Error?error.message:'';const name=error instanceof Error?error.name:'';
-        const reason=name==='TimeoutError'?tx('timeout'):message.startsWith('Invalid local API')||name==='SyntaxError'?tx('badSnapshot'):message.startsWith('HTTP ')?tx('httpError',{code:message.slice(5)}):tx('noResponse');
-        setConnectionError(reason+' '+tx('lastSnapshot'));timer=window.setTimeout(poll,1500);
-      }}
+      }catch(error){if(!cancelled){fail(error);timer=window.setTimeout(poll,1500);}}
     }
-    void poll();return()=>{cancelled=true;window.clearTimeout(timer);};
+    // Push first: the server sends every change at once. Polling stays as the fallback when the stream is
+    // unavailable (HEBREW_LIVE_UI_PUSH=0, no EventSource) or breaks.
+    stop=openStateStream('../events',text=>{
+      try{if(accept(parseLiveState(JSON.parse(text))).phase==='exited')stop();}catch(error){if(!cancelled)fail(error);}
+    },()=>{void poll();});
+    return()=>{cancelled=true;window.clearTimeout(timer);stop();};
   },[closed,tx]);
 
   const act=useCallback(async(action:string,value?:string|boolean)=>{

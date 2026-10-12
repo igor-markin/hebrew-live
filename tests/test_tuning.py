@@ -40,3 +40,12 @@ class TuningTests(unittest.TestCase):
     self.assertEqual(e.exception.code,400)
     self.assertTrue(ui.actions.empty())
    finally:ui.finished_seen.set()
+
+
+class EnvironmentTimingTests(unittest.TestCase):
+ def test_environment_overrides_defaults_and_bad_values_fall_back(self):
+  from hebrew_live.tuning import DEFAULTS, from_environment
+  self.assertEqual(from_environment({}),DEFAULTS)
+  self.assertEqual(from_environment({'HEBREW_LIVE_TIMING':'1.25,0.5,0,4,0.6'}),(1.25,.5,0.,4.,.6))
+  for bad in ('1,2','a,b,c,d,e','1,-1,0,4,.6','1,1,0.5,4,.6','nan,1,0,4,.6'):
+      self.assertEqual(from_environment({'HEBREW_LIVE_TIMING':bad}),DEFAULTS,bad)

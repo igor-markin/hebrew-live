@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- translation drives `mlx_lm.generate_step` directly instead of `stream_generate`: the same text and finish reasons (84 of 84 compared sequences identical), without the per-call wired-memory toggling that cost 0.33-0.46 s per translation (`HEBREW_LIVE_MT_GENERATE=stock` restores it);
+- the translation token budget grows with the source (96-512 tokens instead of a fixed 256) and a translation that still reaches it is shown with an explicit `[…]` instead of being dropped (`HEBREW_LIVE_MT_MAX_TOKENS=256` restores the old limit);
+- a streaming translation can be cancelled between tokens: the engine process polls for a cancel message, so an abandoned or stale generation ends within one token instead of being drained for seconds or the process being killed; a refresh overtaken by newer queued audio is stopped, and the split-worker MT queue serves closing, first, then refresh jobs (`HEBREW_LIVE_MT_INTERRUPT=0` restores finishing every translation, in order);
+- draft recognition no longer computes Whisper word timestamps (identical text on 41 of 41 compared windows; `HEBREW_LIVE_TEXT_ONLY_DRAFT=0` restores them);
+- a Whisper decode that has become a certain loop (a letter repeated 12 times, or a word sequence three times in a row) is stopped inside the decoding loop instead of after all 224 tokens, and the check now also covers final windows; the same texts are accepted (87 of 87 and 17 of 17 accepted real windows identical, identical statuses on all 116) and a looping window now costs 0.4 s instead of 1.1-1.2 s (`HEBREW_LIVE_LOOP_STOP=0` restores the post-decode check on drafts only);
+- translation keeps one streaming detokenizer per tokenizer instead of building a new one per call (building it walks the whole vocabulary: 0.10 s; the fast generation path built two per call, which cancelled its own gain);
+- a phrase group that never got any recognised text now shows "Speech was not recognized" instead of "final version unavailable";
+- the loopback UI receives state over Server-Sent Events instead of polling every 150-200 ms, falling back to polling by itself (`HEBREW_LIVE_UI_PUSH=0` switches the stream off);
+- the Whisper encoder runs its self-attention through `mx.fast.scaled_dot_product_attention` by default (FLEURS Hebrew, 792 clips: WER 19.15 -> 19.18 %, CI -0.03...+0.07 pp; 16-19 % faster calls for windows up to 10 s; `HEBREW_LIVE_FUSED_ENCODER=0` restores the upstream implementation, and an unqualified `mlx-whisper` still falls back to it by itself);
+- the first ASR snapshot of a fragment is taken after 1.0 s of speech instead of 1.5 s: the first visible draft appears 24 % sooner (median 2.38 -> 1.80 s on a 7-minute real replay, 1.71 s together with the fused encoder) but is about one word shorter and sometimes less exact; final texts are unchanged (the old value stays in a saved setting, or `HEBREW_LIVE_TIMING=1.5,1,0,4,0.6`);
+- the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`).
+
+### Added
+
+- diagnostics: `mlx_runtime` (wheel tags, device), `mt_generation`, `mt_cancel`, `mt_interrupted`, `mt_prioritized`; `scripts/diagnose_latency.py` now reports time to the first visible draft, normalized erasure, time to stable words, lost-speech rate, slow-down over time and the new events;
+- opt-in experiments, all off by default: `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
+- local measurement tooling in `experiments/corpus` (manifest, real-window replay, end-to-end A/B, metrics) and `experiments/nn-audit-2026-10`.
+
 ## 0.1.0-alpha.3 — 2026-10-06
 
 ### Changed
