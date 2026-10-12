@@ -1,6 +1,7 @@
 """Paired comparison of two runs with a bootstrap confidence interval. Prints numbers only.
 
     .venv/bin/python experiments/corpus/compare.py asr A.json B.json [--names a b]   # fleurs_asr.py outputs
+    .venv/bin/python experiments/corpus/compare.py asr A.json B.json --set ivrit-d1  # ivrit_eval_asr.py outputs (or ivrit-whatsapp)
     .venv/bin/python experiments/corpus/compare.py mt  A.json B.json [--names a b]   # flores_mt.py outputs
 
 ASR: micro WER of each run against the FLEURS reference (leaderboard normalisation), the
@@ -27,6 +28,7 @@ parser.add_argument('kind', choices=['asr', 'mt'])
 parser.add_argument('a', type=Path)
 parser.add_argument('b', type=Path)
 parser.add_argument('--names', nargs=2, default=['a', 'b'])
+parser.add_argument('--set', choices=['fleurs', 'ivrit-d1', 'ivrit-whatsapp'], default='fleurs', help='which reference the asr texts are scored against')
 parser.add_argument('--resamples', type=int, default=2000)
 args = parser.parse_args()
 rng = random.Random(1)
@@ -51,7 +53,10 @@ def timing(label, rows):
 
 
 if args.kind == 'asr':
-    reference = {row[1]: row[2] for row in csv.reader(TSV.open(encoding='utf-8'), delimiter='\t', quoting=csv.QUOTE_NONE)}
+    if args.set == 'fleurs':
+        reference = {row[1]: row[2] for row in csv.reader(TSV.open(encoding='utf-8'), delimiter='\t', quoting=csv.QUOTE_NONE)}
+    else:
+        reference = json.loads((TSV.parents[3] / f'ivrit-eval-{args.set[6:]}' / 'extracted' / 'texts.json').read_text(encoding='utf-8'))
     names = [n for n in A if n in B and n in reference]
     counts = {}
     for label, run in ((na, A), (nb, B)):
