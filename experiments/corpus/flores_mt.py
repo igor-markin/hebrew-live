@@ -6,7 +6,8 @@
     .venv/bin/python experiments/corpus/flores_mt.py 4bit OUT.json --units REF.json
 
 `4bit` is the shipped model in `models/`, `5bit` the build in `~/Library/Caches/hebrew-live-refs`
-(deleted 2026-10-12, the owner rejected it; to repeat the run download it again, revision and hashes are in README.md).
+(deleted 2026-10-12, the owner rejected it; to repeat the run download it again, revision and hashes are in README.md),
+`1b8bit` the 1B build in the same folder (smaller-model candidate, measured and deleted 2026-10-12; revision and hashes are in README.md).
 The same sentences (fixed seed) go through `Engine.translate`, so a later `compare.py mt` run
 scores both builds on identical input. OUT.json holds translated text and per-sentence timings;
 keep it in the app data root (`corpus/`). One MT model at a time; run under `nice`.
@@ -22,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REFS = Path.home() / 'Library' / 'Caches' / 'hebrew-live-refs'
 DEVTEST = REFS / 'flores200-devtest' / 'flores200_dataset' / 'devtest'
-BUILDS = {'4bit': None, '5bit': REFS / 'milmmt-4b-5bit-mlx'}
+BUILDS = {'4bit': None, '5bit': REFS / 'milmmt-4b-5bit-mlx', '1b8bit': REFS / 'milmmt-1b-8bit-mlx'}
 os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
 sys.path.insert(0, str(ROOT / 'src'))
 
@@ -91,3 +92,4 @@ for pair in args.pairs:
 args.out.write_text(json.dumps(result, ensure_ascii=False))
 for pair, rows in result.items():
     print(pair, len(rows), 'sentences,', f'{sum(r["total"] for r in rows.values()):.0f} s')
+print(f'peak MLX memory {engine.mx.get_peak_memory() / 1e9:.2f} GB (this process only)')
