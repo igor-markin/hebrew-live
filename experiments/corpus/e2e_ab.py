@@ -47,6 +47,9 @@ CATALOG = {
     'fast_draft': {'HEBREW_LIVE_FUSED_ENCODER': '1', 'HEBREW_LIVE_TIMING': '1.0,1.0,0,4,0.6'},
 }
 # E2E_VARIANTS="stock phase1 hold_last_word" picks what to run (default: stock phase1)
+# E2E_MODELS=DIR runs against another models folder. Saved preferences live in DIR/../.local-settings and
+# override HEBREW_LIVE_TIMING, so schedule variants need a models folder (of symlinks) with no saved settings.
+MODELS = Path(os.environ.get('E2E_MODELS', ROOT / 'models'))
 VARIANTS = {name: CATALOG[name] for name in os.environ.get('E2E_VARIANTS', 'stock phase1').split()}
 
 
@@ -80,7 +83,7 @@ def cut(session, start, minutes, out):
 
 def run(variant, wav, logs, direction):
     env = dict(os.environ, PYTHONPATH=str(ROOT / 'src'), **VARIANTS[variant])
-    command = [sys.executable, '-m', 'hebrew_live.cli', '--models', str(ROOT / 'models'), '--log-dir', str(logs),
+    command = [sys.executable, '-m', 'hebrew_live.cli', '--models', str(MODELS), '--log-dir', str(logs),
                'benchmark', str(wav), '--ui', 'plain', '--no-open-browser', '--no-save-raw-audio',
                '--direction', direction]
     result = subprocess.run(command, env=env, capture_output=True, text=True, cwd=ROOT)

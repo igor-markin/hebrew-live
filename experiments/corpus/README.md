@@ -13,7 +13,12 @@ root with `.venv/bin/python`; keep a single MLX job at a time.
 | `asr_floor_probe.py SESSION_DIR FLOOR` | encoder context truncation (plan 3.1) on the real windows through the audit patch (not in the app): how far the transcript moves |
 | `make_asr_reference.py AUDIO OUT.json` | reference transcript with ivrit.ai Large-v3 (faster-whisper, CPU int8, beam 5); run with the separate environment in `~/Library/Caches/hebrew-live-refs`; the JSON holds speech and stays in the app data root |
 | `e2e_ab.py SESSION_DIR` | end-to-end A/B of the live pipeline at 1x on a real stretch: stock rollback switches vs current defaults, metrics from `scripts/diagnose_latency.py` |
+| `fleurs_asr.py {whisper,parakeet} OUT.json` | hypotheses for FLEURS he_il test (792 clips): Whisper Turbo as the app runs it (`--fused` for the fused encoder) or Parakeet-he (run it with the separate `venv-parakeet`); text goes to `OUT.json`, keep it outside the repo |
+| `flores_mt.py {4bit,5bit} OUT.json [--units REF.json]` | translations of 300 seeded FLORES-200 devtest sentences (he-en, he-ru) or of own reference units by one MiLMMT build, through `Engine.translate`; one MT model at a time |
+| `compare.py {asr,mt} A.json B.json` | paired comparison with a bootstrap 95 % interval: WER per clip (asr), chrF++ per sentence (mt), timings |
 | `normalize.py`, `metrics.py` | ivrit.ai-leaderboard text normalisation, WER, chrF++ (no dependencies); `test_metrics.py` is run with `python -m unittest discover -s experiments/corpus` |
+
+`e2e_ab.py` honours `E2E_VARIANTS` and `E2E_MODELS`. Saved preferences (`<models>/../.local-settings/preferences.json`) override `HEBREW_LIVE_TIMING`, so schedule variants must run with `E2E_MODELS` pointing at a models folder of symlinks that has no `.local-settings` beside it.
 
 Rollback switches used by `e2e_ab.py` (all default to the new behaviour): `HEBREW_LIVE_MT_GENERATE=stock`,
 `HEBREW_LIVE_MT_INTERRUPT=0`, `HEBREW_LIVE_TEXT_ONLY_DRAFT=0`, `HEBREW_LIVE_MT_MAX_TOKENS=256`,
