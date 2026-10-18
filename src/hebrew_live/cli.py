@@ -627,6 +627,12 @@ class Inbox:
             f=self.preview;self.preview=None;return f
 
 
+# Silero misses a speakerphone voice 10-20 dB below the near speaker. Only the VAD
+# decision sees this gain; recognition receives the original audio. Silero still
+# rejects white/pink noise, mains hum and clicks up to -30 dBFS at this gain.
+VAD_INPUT_GAIN=6.
+
+
 def segment(raw, inbox, vad, stop, log, errors):
     import numpy as np
     pending=np.empty(0,dtype=np.float32);history=deque(maxlen=6)
@@ -680,7 +686,7 @@ def segment(raw, inbox, vad, stop, log, errors):
             while len(pending)>=512:
                 frame=pending[:512];pending=pending[512:]
                 end=block_end-len(pending)/16000;offset=block_offset-len(pending)/16000
-                speech=vad(frame)>=.5
+                speech=vad(np.clip(frame*VAD_INPUT_GAIN,-1.,1.))>=.5
                 if not active:
                     if not speech:history.append(frame);continue
                     active=True;frames=list(history);history.clear();sid+=1;rev=0;last=0;prefix=0

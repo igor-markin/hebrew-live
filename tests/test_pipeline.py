@@ -67,6 +67,25 @@ class PipelineTests(unittest.TestCase):
         raw.put((np.ones(16000,dtype=np.float32),1));raw.put(None)
         segment(raw,box,lambda f:1,threading.Event(),NullLog(),errors)
         self.assertTrue(errors.empty());self.assertTrue(box.get().final);self.assertIsNone(box.get())
+    def test_quiet_speech_reaches_vad_amplified_and_recognition_unchanged(self):
+        from hebrew_live.cli import VAD_INPUT_GAIN
+        raw=queue.Queue();box=Inbox();errors=queue.Queue();seen=[]
+        def vad(frame):
+            seen.append(float(np.abs(frame).max()));return float(seen[-1]>=.3)
+        raw.put((np.full(16000,.06,dtype=np.float32),1));raw.put(None)
+        segment(raw,box,vad,threading.Event(),NullLog(),errors)
+        self.assertTrue(errors.empty())
+        self.assertAlmostEqual(seen[0],.06*VAD_INPUT_GAIN,places=5)
+        fragment=box.get();self.assertTrue(fragment.final)
+        self.assertAlmostEqual(float(np.abs(fragment.audio).max()),.06,places=6)
+    def test_loud_speech_is_clipped_only_for_vad(self):
+        raw=queue.Queue();box=Inbox();errors=queue.Queue();seen=[]
+        def vad(frame):
+            seen.append(float(np.abs(frame).max()));return 1.
+        raw.put((np.full(16000,.8,dtype=np.float32),1));raw.put(None)
+        segment(raw,box,vad,threading.Event(),NullLog(),errors)
+        self.assertTrue(errors.empty());self.assertEqual(max(seen),1.)
+        self.assertAlmostEqual(float(np.abs(box.get().audio).max()),.8,places=6)
 
 if __name__=='__main__':unittest.main()
 

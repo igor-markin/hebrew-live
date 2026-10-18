@@ -14,7 +14,8 @@
 - the loopback UI receives state over Server-Sent Events instead of polling every 150-200 ms, falling back to polling by itself (`HEBREW_LIVE_UI_PUSH=0` switches the stream off);
 - the Whisper encoder runs its self-attention through `mx.fast.scaled_dot_product_attention` by default (FLEURS Hebrew, 792 clips: WER 19.15 -> 19.18 %, CI -0.03...+0.07 pp; 16-19 % faster calls for windows up to 10 s; `HEBREW_LIVE_FUSED_ENCODER=0` restores the upstream implementation, and an unqualified `mlx-whisper` still falls back to it by itself);
 - the first ASR snapshot of a fragment is taken after 1.0 s of speech instead of 1.5 s: the first visible draft appears 24 % sooner (median 2.38 -> 1.80 s on a 7-minute real replay, 1.71 s together with the fused encoder) but is about one word shorter and sometimes less exact; final texts are unchanged (the old value stays in a saved setting, or `HEBREW_LIVE_TIMING=1.5,1,0,4,0.6`);
-- the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`).
+- the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`);
+- the speech detector hears its input amplified six times, so a speakerphone voice 10-20 dB quieter than the near speaker is no longer dropped before recognition (a real 280 s call: 45 instead of 39 of 47 reference lines reached recognition, unchanged first-draft latency); recognition still receives the original audio, and synthetic white/pink noise, mains hum and clicks up to -30 dBFS still produce no speech.
 
 ### Added
 
