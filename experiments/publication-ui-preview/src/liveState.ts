@@ -5,7 +5,7 @@ export type PartialDetail = {part:number|null;direction:string|null;reason:strin
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
   status_code?:string;ui_locale?:'en'|'ru'|'he';target_language?:string;
-  desktop_mode?:boolean;recording_started?:boolean;capture_active?:boolean;
+  desktop_mode?:boolean;calm_drafts?:boolean;merge_sentences?:boolean;recording_started?:boolean;capture_active?:boolean;
   target_languages?:{code:string;name:string;rtl:boolean}[];target_error?:string|null;target_error_code?:string|null;
   target_capabilities_assumed?:boolean;
   publication?:string;paused:boolean;finished:boolean;stopping?:boolean;cancelling?:boolean;
@@ -47,7 +47,7 @@ export function parseLiveState(value:unknown):LiveState {
   if(value.partial_kind!==undefined&&value.partial_kind!==null&&!['known_unprocessed','capture_unknown','mixed'].includes(String(value.partial_kind)))throw new Error('Invalid local API snapshot');
   if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');
   if(value.partial_details!==undefined&&(!Array.isArray(value.partial_details)||!value.partial_details.every(item=>record(item)&&(item.part===null||typeof item.part==='number')&&(item.direction===null||typeof item.direction==='string')&&typeof item.reason==='string'&&(item.start===null||typeof item.start==='number')&&(item.end===null||typeof item.end==='number'))))throw new Error('Invalid local API snapshot');
-  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
+  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
   if(value.phase!==undefined&&(typeof value.phase!=='string'||!phases.has(value.phase)))throw new Error('Invalid local API phase');
   const phase=(value.phase as string|undefined)??(value.finished?'finished':value.paused?'paused':'listening');
@@ -81,8 +81,55 @@ export function mergeLiveState(previous:LiveState,next:LiveState):LiveState {
   return {...next,groups:sameStream?keepStableGroups(previous.groups,next.groups):next.groups};
 }
 
+/**
+ * The pair a bubble shows. A refresh streams its translation from the first word,
+ * so showing that stream over an existing translation shrinks the bubble to a few
+ * words every second; the stream is shown only while the group has no translation.
+ */
+export function shownPair(group:Group,calm=false):Pair|undefined {
+  const durable=group.live?.current||group.final||group.final_progress;
+  if(!calm)return group.stream||durable;
+  return group.stream&&!durable?.translation.trim()?group.stream:durable||group.stream;
+}
+
+/** Length of the leading text whose words are unchanged from `before`, ending at a word boundary. */
+export function unchangedPrefix(before:string,after:string):number {
+  const old=before.split(/\s+/).filter(Boolean);
+  let end=0,index=0;
+  for(const match of after.matchAll(/\S+\s*/g)){
+    if(match[0].trimEnd()!==old[index++])break;
+    end=match.index+match[0].length;
+  }
+  return end;
+}
+
+export type SpeechTurn = {id:string;groups:Group[];position:number};
+/** Bound on one merged bubble, so a long monologue stays a list of virtual rows. */
+export const TURN_MAX_GROUPS = 8;
+
+const groupIssue=(group:Group)=>group.live?.issue||group.final?.issue;
+
+/**
+ * Bubbles to show. The engine closes a group at a sentence end or a technical cut while
+ * the speaker goes on; those groups continue the same bubble, and only a pause (or a
+ * problem) starts a new one, so a closed sentence never moves the next one away.
+ */
+export function speechTurns(groups:Group[],merge=false):SpeechTurn[] {
+  const turns:SpeechTurn[]=[];
+  groups.forEach((group,index)=>{
+    if(!isVisibleGroup(group))return;
+    const last=turns.at(-1);const tail=last?.groups.at(-1);
+    const continued=Boolean(merge&&last&&tail&&tail.complete&&tail.direction===group.direction&&
+      (tail.live?.reason==='sentence'||tail.live?.stage==='technical')&&
+      !groupIssue(tail)&&!groupIssue(group)&&last.groups.length<TURN_MAX_GROUPS);
+    if(continued)last!.groups.push(group);
+    else turns.push({id:group.id,groups:[group],position:index+1});
+  });
+  return turns;
+}
+
 export function isVisibleGroup(group:Group):boolean {
-  const pair=group.stream||group.live?.current||group.final||group.final_progress;
+  const pair=shownPair(group);
   const issue=group.live?.issue||group.final?.issue;
   return Boolean(issue||!group.complete||pair&&(pair.source.trim()||pair.translation.trim()));
 }

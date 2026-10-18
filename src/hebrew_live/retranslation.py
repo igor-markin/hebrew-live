@@ -25,6 +25,36 @@ TRUNCATION_MARKER = ' […]'
 MT_PRIORITY = {'closing': 0, 'first': 1, 'refresh': 2}
 # A refresh is never interrupted once the visible text lags this far behind its audio.
 INTERRUPT_LAG_LIMIT = 4.
+# Continuous speech has no pause to close a group, so every snapshot re-recognised and
+# re-translated the whole growing paragraph. A sentence end that two snapshots in a row
+# agree on, with speech already after it, closes the group there instead.
+SENTENCE_SPLIT_MIN_SECONDS = 3.
+SENTENCE_MIN_WORDS = 3
+SENTENCE_END = re.compile(r'[.?!…](?=\s+\S)')
+
+
+def stable_sentence_end(previous, text):
+    """Length of the longest prefix of `text` that ends a sentence, is followed by more
+    words, and is unchanged since `previous`; 0 when there is none."""
+    stable = len(common_prefix(previous, text))
+    ends = [m.end() for m in SENTENCE_END.finditer(text) if m.end() <= stable]
+    if not ends or len(text[:ends[-1]].split()) < SENTENCE_MIN_WORDS:
+        return 0
+    return ends[-1]
+
+
+def word_boundary_sample(words, length, total):
+    """Sample between the word that completes the first `length` characters of the
+    joined word text and the next word; None when the words do not cover it."""
+    joined = ''
+    for index, word in enumerate(words):
+        joined += word['word']
+        if len(joined.strip()) >= length:
+            if index + 1 >= len(words):
+                return None
+            cut = round((word['end'] + words[index + 1]['start']) / 2 * 16000)
+            return cut if 0 < cut < total else None
+    return None
 
 
 def hold_last_word(text):
@@ -101,7 +131,8 @@ class RetranslationProcessor:
 
     _GROUP_FIELDS=('audio','last','settings','part','source','draft','visible',
                    'last_status','closed','deferred_tail','published_job',
-                   '_mt_first_requested','_mt_closing_pending','sid','start','end')
+                   '_mt_first_requested','_mt_closing_pending','sid','start','end',
+                   'previous_text','previous_words')
 
     def __init__(self, engine, updates, log, cancel, async_mt=None):
         self.engine, self.updates, self.log, self.cancel = engine, updates, log, cancel
@@ -118,6 +149,8 @@ class RetranslationProcessor:
         # The last word of a growing snapshot is cut by the window edge more often than
         # any other (plan 3.3). Off until measured on the corpus.
         self.hold_last_word=os.environ.get('HEBREW_LIVE_HOLD_LAST_WORD','0')=='1'
+        # Closing groups at sentence ends; off by default until measured against main.
+        self.sentence_split=os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
         if self.async_mt:
             self._mt_condition=threading.Condition()
             self._mt_pending=deque()
@@ -147,6 +180,10 @@ class RetranslationProcessor:
         self.published_job = (0, 0)
         self._mt_first_requested=False
         self._mt_closing_pending=False
+        self.previous_text=''
+        self.previous_words=[]
+        self.split_at=None
+        self.split_text=''
 
     def _capture_group(self, detach=False):
         state={key:getattr(self,key,None) for key in self._GROUP_FIELDS}
@@ -365,18 +402,7 @@ class RetranslationProcessor:
         if getattr(e,'backend',None)=='fast':max_seconds=min(max_seconds,20.0)
         limit=round(max_seconds*16000)
         while len(self.audio) > limit:
-            remainder = self.audio[limit:].copy()
-            full_end = self.end
-            self.audio = self.audio[:limit]
-            self.end = self.start+len(self.audio)
-            self.recognize(final=True, closing='budget')
-            next_start = self.end
-            self.reset()
-            self.counter += 1; self.sid = 3_000_000+self.counter
-            self.audio = remainder; self.start = next_start; self.end = full_end
-            self.last, self.settings = f, f.settings
-            self.part = self.log.parts[f.settings.part] if hasattr(self.log, 'parts') else None
-            self.deferred_tail = True
+            self.split_group(limit, 'budget', f)
         closing = f.reason if f.final and f.reason != 'window' else None
         if len(self.audio) == limit and not closing: closing = 'budget'
         if self.deferred_tail and not closing:
@@ -388,6 +414,38 @@ class RetranslationProcessor:
                                minimum_samples=minimum,fragment=f.id,revision=f.revision)
                 return
         self.recognize(final=f.final or bool(closing), closing=closing)
+        if self.split_at is not None and not self.cancel.is_set():
+            cut, self.split_at = self.split_at, None
+            self.log.event('live_sentence_split',segment=self.sid,start=self.start/16000,
+                           cut=(self.start+cut)/16000,end=self.end/16000)
+            self.split_group(cut, 'sentence', f)
+
+    def split_group(self, cut, closing, f):
+        """Close the group at sample `cut`; the rest becomes a new group that waits for
+        the next snapshot."""
+        remainder = self.audio[cut:].copy()
+        full_end = self.end
+        self.audio = self.audio[:cut]
+        self.end = self.start+len(self.audio)
+        text, self.split_text = self.split_text, ''
+        if closing == 'sentence' and text:
+            # Two snapshots already agree on this sentence: decoding its audio again
+            # only changed words the reader had seen.
+            self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
+                           seconds=0., input_seconds=len(self.audio)/16000, start=self.start/16000,
+                           end=self.end/16000, status='accepted', final=True, closing=closing,
+                           source=text, word_alignment=False, reused=True)
+            self.last_status = 'accepted'
+            self.translate(text, True, closing)
+        else:
+            self.recognize(final=True, closing=closing)
+        next_start = self.end
+        self.reset()
+        self.counter += 1; self.sid = 3_000_000+self.counter
+        self.audio = remainder; self.start = next_start; self.end = full_end
+        self.last, self.settings = f, f.settings
+        self.part = self.log.parts[f.settings.part] if hasattr(self.log, 'parts') else None
+        self.deferred_tail = True
 
     def fingerprint(self):
         values=dict(settings=asdict(self.settings),prompt=_PROMPT_HASH,
@@ -437,6 +495,9 @@ class RetranslationProcessor:
         e = self.engine
         began = time.monotonic()
         align_words = not self.text_only_draft or getattr(e,'backend',None) not in ('turbo','multilingual')
+        # Word times locate a sentence end in the audio; only growing groups need them.
+        splittable = self.sentence_split and not final and not closing and len(self.audio) >= SENTENCE_SPLIT_MIN_SECONDS*16000
+        align_words = align_words or splittable
         text = e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words)
         self.last_status = getattr(e, 'recognition_status', None) or ('accepted' if text else 'empty')
         self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
@@ -450,6 +511,33 @@ class RetranslationProcessor:
             if closing: self.finish(closing, valid=False)
             return
         text = text.strip()
+        if splittable:
+            previous, self.previous_text = self.previous_text, text
+            previous_words = self.previous_words
+            words = getattr(e,'recognition_words',None) or []
+            if words:self.previous_words = words
+            if getattr(e,'recognition_issue',None) == 'early repeated recognition':
+                # Text cut before a loop has no word times, and the same audio tends to
+                # loop again. Close the group after as many words of the last timed
+                # snapshot, when that snapshot ends the same word there.
+                count = len(text.split())
+                bare = lambda value: value.strip().strip('.,?!…"\'')
+                same = (len(previous_words) > count and
+                        bare(previous_words[count-1]['word']) == bare(text.split()[-1]))
+                words = previous_words
+                length = len(''.join(w['word'] for w in words[:count]).strip()) if same else 0
+                sentence = text
+            else:
+                length = stable_sentence_end(previous, text)
+                sentence = text[:length].strip()
+            cut = word_boundary_sample(words, length, len(self.audio)) if length else None
+            if cut is not None and cut >= round(SENTENCE_MIN_WORDS*.3*16000):
+                # process() closes the group at the cut with this sentence's text.
+                self.split_at, self.split_text = cut, sentence
+                return
+        self.translate(text, final, closing)
+
+    def translate(self, text, final, closing):
         if self.hold_last_word and not final:
             text = hold_last_word(text)
         if not self.visible or (not self.visible['current']['translation'] and

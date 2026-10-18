@@ -26,6 +26,63 @@ class LiveTests(unittest.TestCase):
  def runf(self,f,text,target,status='accepted'):
   self.results.append((text,target,status));self.p.process(f)
  def pubs(self):return [v for k,_,v in self.q.queue if k=='live_publication']
+ def words(self,text,seconds):
+  parts=text.split();step=seconds/len(parts)
+  return [dict(word=' '+w,start=i*step,end=(i+.8)*step) for i,w in enumerate(parts)]
+ def test_stable_sentence_end_closes_a_growing_group(self):
+  self.p.sentence_split=True
+  calls=[]
+  def recognize(a,*args,**kw):
+   seconds=len(a)/16000;calls.append((seconds,kw.get('align_words'),kw.get('preliminary')))
+   text={4:'אחת שתיים שלוש. ארבע',5:'אחת שתיים שלוש. ארבע חמש'}.get(round(seconds),'אחת שתיים שלוש.')
+   if a[0]>0:text='ארבע חמש שש'  # audio after the split point
+   self.e.recognition_status='accepted';self.e.recognition_words=self.words(text,seconds);return text
+  self.e.recognize=recognize;self.e.translate=lambda text:(self.mt.append(text),iter([('ru:'+text,'stop')]))[1]
+  self.p.process(self.f(0,64000))
+  self.assertEqual(len(self.pubs()),2)  # first snapshot shown; nothing stable yet
+  self.p.process(self.f(0,80000))
+  split=[v for n,v in self.events if n=='live_sentence_split']
+  self.assertEqual(len(split),1)
+  closed=[v for v in self.pubs() if v['stage']=='closed']
+  self.assertEqual(len(closed),1);self.assertEqual(closed[0]['current']['source'],'אחת שתיים שלוש.')
+  self.assertLess(closed[0]['end'],5.)
+  self.assertEqual(len(calls),2)  # the agreed sentence closes without decoding its audio again
+  self.assertEqual(self.mt[-1],'אחת שתיים שלוש.')
+  self.p.process(self.f(0,96000))
+  self.assertEqual(self.pubs()[-1]['current']['source'],'ארבע חמש שש')
+  self.assertNotEqual(self.pubs()[-1]['start'],0.)
+ def test_sentence_split_is_off_by_default(self):
+  def recognize(a,*args,**kw):
+   self.e.recognition_status='accepted';self.e.recognition_words=self.words('אחת שתיים שלוש. ארבע חמש',len(a)/16000)
+   return 'אחת שתיים שלוש. ארבע חמש'
+  self.e.recognize=recognize;self.e.translate=lambda text:iter([('ru','stop')])
+  self.p.process(self.f(0,64000));self.p.process(self.f(0,80000))
+  self.assertFalse([n for n,_ in self.events if n=='live_sentence_split'])
+  self.assertFalse([v for v in self.pubs() if v['stage']!='open'])
+ def test_loop_cut_text_closes_the_group_after_the_last_timed_words(self):
+  self.p.sentence_split=True
+  def recognize(a,*args,**kw):
+   seconds=len(a)/16000
+   if a[0]>0:text,issue='ועוד מילים כאן',None
+   elif round(seconds)==4:text,issue='אחת שתיים שלוש ארבע חמש',None
+   else:text,issue='אחת שתיים שלוש',('early repeated recognition' if not kw.get('preliminary') is False else None)
+   self.e.recognition_status='accepted';self.e.recognition_issue=issue
+   self.e.recognition_words=[] if issue else self.words(text,seconds);return text
+  self.e.recognize=recognize;self.e.translate=lambda text:iter([('ru','stop')])
+  self.p.process(self.f(0,64000));self.p.process(self.f(0,80000))
+  self.assertEqual(len([n for n,_ in self.events if n=='live_sentence_split']),1)
+  closed=[v for v in self.pubs() if v['stage']=='closed'][0]
+  self.assertAlmostEqual(closed["end"],(2.24+2.4)/2,places=2)  # between word 3 and word 4
+ def test_unstable_or_unfinished_sentence_does_not_split(self):
+  from hebrew_live.retranslation import stable_sentence_end,word_boundary_sample
+  self.assertEqual(stable_sentence_end('',''),0)
+  self.assertEqual(stable_sentence_end('אחת שתיים שלוש. ארבע','אחת שתיים שלוש. ארבע חמש'),len('אחת שתיים שלוש.'))
+  self.assertEqual(stable_sentence_end('אחת שתיים שלוש','אחת שתיים שלוש. ארבע'),0)  # changed since last time
+  self.assertEqual(stable_sentence_end('אחת שתיים שלוש.','אחת שתיים שלוש.'),0)  # nothing after it yet
+  self.assertEqual(stable_sentence_end('כן. לא','כן. לא כן'),0)  # too short
+  words=self.words('אחת שתיים שלוש. ארבע',4.)
+  self.assertEqual(word_boundary_sample(words,len('אחת שתיים שלוש.'),64000),round((2.8+3.)/2*16000))
+  self.assertIsNone(word_boundary_sample(words[:3],len('אחת שתיים שלוש.'),64000))
  def test_live_draft_publishes_first_and_conflicting_translation(self):
   self.settings=replace(self.settings,publication='draft')
   self.runf(self.f(0,16000),'a','Она готова')

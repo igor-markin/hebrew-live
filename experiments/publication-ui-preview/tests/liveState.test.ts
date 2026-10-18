@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -96,4 +96,32 @@ test('describes the actual recording phase while an archive is open',()=>{
   assert.equal(archiveRecordingLabel(parseLiveState({...state,phase:'stopping',stopping:true})),'recordingEnding');
   assert.equal(archiveRecordingLabel(parseLiveState({...state,phase:'loading'})),'recordingPreparing');
   assert.equal(archiveRecordingLabel(parseLiveState({...state,phase:'listening'})),'recordingContinues');
+});
+
+test('a refresh stream does not replace a translation already shown',()=>{
+  const current={source:'שלום',translation:'Старый перевод целиком'};
+  const stream={source:'שלום חדש',translation:'Новый'};
+  assert.equal(shownPair({id:'1',direction:'he-ru',complete:false,live:{current,history:[],stage:'open'},stream},true)?.translation,'Старый перевод целиком');
+  assert.equal(shownPair({id:'1',direction:'he-ru',complete:false,live:{current,history:[],stage:'open'},stream})?.translation,'Новый');  // off by default
+  assert.equal(shownPair({id:'1',direction:'he-ru',complete:false,live:{current:{source:'שלום',translation:''},history:[],stage:'open'},stream},true)?.translation,'Новый');
+  assert.equal(shownPair({id:'1',direction:'he-ru',complete:false,stream},true)?.translation,'Новый');
+});
+
+test('unchanged leading words end at a word boundary',()=>{
+  assert.equal(unchangedPrefix('Он пришёл домой','Он пришёл домой поздно'),'Он пришёл домой '.length);
+  assert.equal(unchangedPrefix('Он пришёл домой','Он пришёл в дом'),'Он пришёл '.length);
+  assert.equal(unchangedPrefix('Он при','Он пришёл'),'Он '.length);
+  assert.equal(unchangedPrefix('','Новый текст'),0);
+  assert.equal(unchangedPrefix('Тот же текст','Тот же текст'),'Тот же текст'.length);
+});
+
+test('sentences split while the speaker goes on share one bubble; a pause starts a new one',()=>{
+  const closed=(id:string,reason:string,extra={})=>({id,direction:'he-ru',complete:true,live:{current:{source:id,translation:id},history:[],stage:'closed',reason,...extra}});
+  const open={id:'e',direction:'he-ru',complete:false,live:{current:{source:'e',translation:''},history:[],stage:'open'}};
+  const turns=speechTurns([closed('a','sentence'),closed('b','silence'),closed('c','sentence'),closed('d','sentence',{issue:'Пустой перевод'}),open],true);
+  assert.deepEqual(turns.map(turn=>turn.groups.map(group=>group.id)),[['a','b'],['c'],['d'],['e']]);
+  assert.deepEqual(turns.map(turn=>[turn.id,turn.position]),[['a',1],['c',3],['d',4],['e',5]]);
+  const long=speechTurns(Array.from({length:10},(_,index)=>closed(String(index),'sentence')),true);
+  assert.equal(speechTurns([closed('a','sentence'),closed('b','silence')]).length,2);  // off by default
+  assert.deepEqual(long.map(turn=>turn.groups.length),[8,2]);
 });

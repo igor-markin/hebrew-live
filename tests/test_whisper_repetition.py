@@ -192,6 +192,43 @@ class RepetitionTests(unittest.TestCase):
         self.restored()
         self.assertEqual(self.recognize(), 'שלום.')
 
+    def test_a_loop_rejects_the_whole_window_unless_trimming_is_on(self):
+        self.model.text = 'שלום לכולם ' + 'ה' * 30
+        self.assertEqual(self.recognize(), '')
+        self.assertEqual(self.engine.recognition_status, 'rejected')
+        self.restored()
+
+    @patch.dict(os.environ, {'HEBREW_LIVE_LOOP_TRIM': '1'})
+    def test_words_before_a_loop_are_kept(self):
+        self.model.text = 'שלום לכולם ' + 'ה' * 30
+        self.assertEqual(self.recognize(), 'שלום לכולם')
+        self.assertEqual(self.engine.recognition_status, 'accepted')
+        self.assertTrue(any(k == 'recognition_loop_trimmed' for k, _ in self.events))
+        self.restored()
+        self.model.text = 'ה' * 30
+        self.assertEqual(self.recognize(), '')
+        self.assertEqual(self.engine.recognition_status, 'rejected')
+        self.restored()
+
+    @patch.dict(os.environ, {'HEBREW_LIVE_LOOP_TRIM': '1'})
+    def test_closing_loop_gets_one_sampled_retry(self):
+        from hebrew_live.whisper_repetition import RepeatedDecode
+        temperatures = []
+        def transcribe(audio, temperature, **kwargs):
+            temperatures.append(temperature)
+            if temperature == 0:
+                raise RepeatedDecode('שלום ' + 'ה' * 12, [])
+            return {'segments': [{'text': 'שלום לכולם, מה נשמע?'}]}
+        self.engine.asr = SimpleNamespace(transcribe=transcribe)
+        text = self.engine.recognize(np.zeros(16000), mode='phrases', align_words=False)
+        self.assertEqual(text, 'שלום לכולם, מה נשמע?')
+        self.assertEqual(temperatures, [0.0, 0.3])
+        self.assertEqual(self.engine.recognition_status, 'accepted')
+        self.assertIsNone(self.engine.recognition_issue)
+        temperatures.clear()
+        self.engine.recognize(np.zeros(16000), preliminary=True, mode='phrases', align_words=False)
+        self.assertEqual(temperatures, [0.0])  # drafts never pay for a retry
+
     def test_ordinary_repetitions_are_preserved(self):
         for text in ['כן כן כן, אני מבין.', 'לאט לאט אנחנו עולים.']:
             self.model.text = text
@@ -393,6 +430,16 @@ class LoopStopTests(unittest.TestCase):
         self.run_loop(None, task=task)
         self.assertEqual(calls, [1])
         self.assertNotIn('update', vars(task.decoder))
+
+
+class TrimLoopTests(unittest.TestCase):
+    def test_keeps_text_before_letter_and_phrase_loops(self):
+        from hebrew_live.cli import trim_loop
+        self.assertEqual(trim_loop('ובביתם התגלו וואוווווווווווו'), 'ובביתם התגלו')
+        self.assertEqual(trim_loop('אתה רוצה לסיים לו? אההההההההההההה'), 'אתה רוצה לסיים לו?')
+        self.assertEqual(trim_loop('שלום א ב ג א ב ג א ב ג ד'), 'שלום א ב ג')
+        self.assertEqual(trim_loop('ה' * 30), '')
+        self.assertEqual(trim_loop('כן כן כן, אני מבין.'), 'כן כן כן, אני מבין.')
 
 
 class RepetitionLoopPartialTests(unittest.TestCase):

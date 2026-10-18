@@ -63,6 +63,10 @@ class BrowserUI:
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
                     'recording_started':False,'capture_active':False})
         self.state['desktop_mode']=self.desktop_mode
+        # Live display experiments, off by default: HEBREW_LIVE_CALM_DRAFTS=1 keeps a shown
+        # translation until a refresh is complete; sentence splits merge into one bubble.
+        self.state['calm_drafts']=os.environ.get('HEBREW_LIVE_CALM_DRAFTS','0')=='1'
+        self.state['merge_sentences']=os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
         # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
         self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
         self.closing=False

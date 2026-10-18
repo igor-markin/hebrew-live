@@ -5,8 +5,8 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {archiveRecordingLabel, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, virtualIndexes} from './liveState';
-import type {Group, LiveState, Pair} from './liveState';
+import {archiveRecordingLabel, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, unchangedPrefix, virtualIndexes} from './liveState';
+import type {Group, LiveState, Pair, SpeechTurn} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
@@ -17,6 +17,8 @@ declare global {
 type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
 const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:translator('en')});
 const useI18n=()=>useContext(I18nContext);
+// Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT).
+const DisplayContext=createContext({calm:false,merge:false});
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -33,26 +35,65 @@ async function readJson(url:string,signal?:AbortSignal):Promise<unknown>{
   return response.json();
 }
 
-function BubbleText({pair,direction,originalOpen,onOriginalToggle}:{pair:Pair;direction:string;originalOpen?:boolean;onOriginalToggle?:(open:boolean)=>void}) {
+/** Text whose unchanged leading words stay still; only the words that differ from the last render fade in. */
+function ChangingText({text}:{text:string}) {
+  // Compared with the previous distinct text, so an unrelated re-render keeps the fade.
+  const {calm}=useContext(DisplayContext);
+  const seen=useRef({before:text,shown:text});
+  if(!calm)return <>{text}</>;
+  if(seen.current.shown!==text)seen.current={before:seen.current.shown,shown:text};
+  const kept=unchangedPrefix(seen.current.before,text);
+  if(kept>=text.length)return <>{text}</>;
+  return <>{text.slice(0,kept)}<span className="text-fresh" key={text}>{text.slice(kept)}</span></>;
+}
+
+type Segment={id:string;pair:Pair;pending?:boolean};
+
+/** One bubble's text: closed sentences in the normal colour, the still open part in grey. */
+function SegmentText({segments,field,missing}:{segments:Segment[];field:'translation'|'source';missing:string}) {
+  const {merge}=useContext(DisplayContext);
+  return <>{segments.map((segment,index)=>{
+    const text=segment.pair[field];
+    return <span key={segment.id} className={merge&&segment.pending?'text-pending':undefined}>{index?' ':''}{text?<ChangingText text={text}/>:missing}</span>;
+  })}</>;
+}
+
+function BubbleText({pair,segments,direction,originalOpen,onOriginalToggle}:{pair?:Pair;segments?:Segment[];direction:string;originalOpen?:boolean;onOriginalToggle?:(open:boolean)=>void}) {
   const {locale,tx}=useI18n();
   const [source,target]=directionParts(direction);const targetRtl=isRtlLanguage(target);
+  const parts=segments||[{id:'only',pair:pair!}];
   return <div className="bubble-copy">
-    <p className="translation" lang={htmlLanguage(target)} dir={targetRtl?'rtl':'ltr'}>{pair.translation||tx('translating')}</p>
+    <p className="translation" lang={htmlLanguage(target)} dir={targetRtl?'rtl':'ltr'}><SegmentText segments={parts} field="translation" missing={tx('translating')}/></p>
     <details className="bubble-original" open={originalOpen} onToggle={onOriginalToggle?event=>onOriginalToggle(event.currentTarget.open):undefined}>
       <summary>{tx('original')}</summary>
       <div className="bubble-source">
         <span className="bubble-source-label">{tx('recognized',{language:languageName(locale,source,source)})}</span>
-        <p lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}>{pair.source||tx('speechMissing')}</p>
+        <p lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}><SegmentText segments={parts} field="source" missing={tx('speechMissing')}/></p>
       </div>
     </details>
   </div>;
 }
 
-const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,originalOpen,onOriginalToggle}:{group:Group;position:number;onRetry?:(id:string)=>void;retrying:boolean;retryEnabled:boolean;originalOpen:boolean;onOriginalToggle:(id:string,open:boolean)=>void}) {
-  const {locale,tx}=useI18n();
+type SpeechProps={turn:SpeechTurn;onRetry?:(id:string)=>void;retrying:boolean;retryEnabled:boolean;originalOpen:boolean;onOriginalToggle:(id:string,open:boolean)=>void};
+const sameSpeech=(a:SpeechProps,b:SpeechProps)=>a.turn.id===b.turn.id&&a.turn.position===b.turn.position&&
+  a.turn.groups.length===b.turn.groups.length&&a.turn.groups.every((group,index)=>group===b.turn.groups[index])&&
+  a.onRetry===b.onRetry&&a.retrying===b.retrying&&a.retryEnabled===b.retryEnabled&&
+  a.originalOpen===b.originalOpen&&a.onOriginalToggle===b.onOriginalToggle;
+
+const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOpen,onOriginalToggle}:SpeechProps) {
+  const {locale,tx}=useI18n();const {calm}=useContext(DisplayContext);
+  const group=turn.groups.at(-1)!;const position=turn.position;
+  if(turn.groups.length>1){
+    const [,target]=directionParts(group.direction);
+    const segments=turn.groups.map(item=>({id:item.id,pair:shownPair(item,calm)||{source:'',translation:''},pending:!item.complete}));
+    return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
+      <BubbleText segments={segments} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(turn.id,open)}/>
+      {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
+    </article>;
+  }
   const live=group.live;
   const issue=live?.issue||group.final?.issue;
-  const pair=group.stream||live?.current||group.final||group.final_progress;
+  const pair=shownPair(group,calm);
   if(!pair&&!issue)return null;
   const shown=pair||{source:'',translation:''};
   const empty=group.complete&&!shown.source.trim()&&!shown.translation.trim();
@@ -67,7 +108,7 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
     {empty
       ? <p className={`fragment-failed ${shortMiss?'fragment-muted':''}`}><Icon kind="warning"/><span>{shortMiss?tx('speechMissing'):tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
-      : <BubbleText pair={shown} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
+      : <BubbleText segments={[{id:group.id,pair:shown,pending:!group.complete}]} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}
@@ -75,31 +116,32 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
     {issue&&onRetry&&<div className="fragment-retry"><Button variant="tertiary" isDisabled={!retryEnabled||retrying} onPress={()=>onRetry(group.id)}>{retrying?tx('retrying'):tx('retry')}</Button>{!retryEnabled&&!retrying&&<small>{tx('pauseFirst')}</small>}</div>}
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}
   </article>;
-});
+},sameSpeech);
 
 const ESTIMATED_CARD_HEIGHT=170;
 const CARD_GAP=10;
 const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,retrying,retryEnabled}:{groups:Group[];scope:string;scroller:React.RefObject<HTMLElement|null>;onRetry?:(id:string)=>void;retrying?:string|null;retryEnabled:boolean}){
-  const visible=useMemo(()=>groups.flatMap((group,index)=>isVisibleGroup(group)?[{group,position:index+1}]:[]),[groups]);
+  const {merge}=useContext(DisplayContext);
+  const visible=useMemo(()=>speechTurns(groups,merge),[groups,merge]);
   const [heights,setHeights]=useState<Record<string,number>>({});
   const heightsRef=useRef<Record<string,number>>({});
   const [openOriginals,setOpenOriginals]=useState<Set<string>>(()=>new Set());
   const [range,setRange]=useState<[number,number]>([0,Math.min(visible.length,12)]);
   const anchorId=useRef<string|null>(null);const [pinnedId,setPinnedId]=useState<string|null>(null);
   const observers=useRef(new Map<string,ResizeObserver>());
-  const offsets=useMemo(()=>{const values=[0];for(const {group} of visible)values.push(values.at(-1)!+(heights[group.id]||ESTIMATED_CARD_HEIGHT)+CARD_GAP);return values;},[visible,heights]);
+  const offsets=useMemo(()=>{const values=[0];for(const {id} of visible)values.push(values.at(-1)!+(heights[id]||ESTIMATED_CARD_HEIGHT)+CARD_GAP);return values;},[visible,heights]);
   const total=offsets.at(-1)||0;
   const updateRange=useCallback(()=>{
     const node=scroller.current;if(!node)return;
     const top=node.scrollTop;const bottom=top+node.clientHeight;
     let start=0;while(start<visible.length&&offsets[start+1]<top)start++;
     let end=start;while(end<visible.length&&offsets[end]<bottom)end++;
-    anchorId.current=visible[start]?.group.id||null;start=Math.max(0,start-5);end=Math.min(visible.length,end+6);
+    anchorId.current=visible[start]?.id||null;start=Math.max(0,start-5);end=Math.min(visible.length,end+6);
     setRange(old=>old[0]===start&&old[1]===end?old:[start,end]);
   },[offsets,scroller,visible.length]);
   useEffect(()=>{const node=scroller.current;if(!node)return;updateRange();node.addEventListener('scroll',updateRange,{passive:true});const observer=new ResizeObserver(updateRange);observer.observe(node);return()=>{node.removeEventListener('scroll',updateRange);observer.disconnect();};},[scroller,updateRange]);
   useEffect(()=>{const selection=()=>{const selected=document.getSelection()?.anchorNode;const element=selected instanceof Element?selected:selected?.parentElement;const row=element?.closest<HTMLElement>('[data-virtual-id]');setPinnedId(row?.dataset.virtualId||null);};document.addEventListener('selectionchange',selection);return()=>document.removeEventListener('selectionchange',selection);},[]);
-  useEffect(()=>{if(pinnedId&&!visible.some(item=>item.group.id===pinnedId))setPinnedId(null);if(anchorId.current&&!visible.some(item=>item.group.id===anchorId.current))anchorId.current=null;},[pinnedId,visible]);
+  useEffect(()=>{if(pinnedId&&!visible.some(item=>item.id===pinnedId))setPinnedId(null);if(anchorId.current&&!visible.some(item=>item.id===anchorId.current))anchorId.current=null;},[pinnedId,visible]);
   useLayoutEffect(updateRange,[total,updateRange]);
   useEffect(()=>()=>{for(const observer of observers.current.values())observer.disconnect();observers.current.clear();},[]);
   const measure=useCallback((id:string,index:number,node:HTMLDivElement|null)=>{
@@ -108,16 +150,16 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
       if(!height||old[id]===height)return;
       const before=old[id]||ESTIMATED_CARD_HEIGHT;const container=scroller.current;
       heightsRef.current={...old,[id]:height};
-      const anchorIndex=anchorId.current===null?-1:visible.findIndex(item=>item.group.id===anchorId.current);
+      const anchorIndex=anchorId.current===null?-1:visible.findIndex(item=>item.id===anchorId.current);
       if(container&&anchorIndex>=0&&index<anchorIndex)container.scrollTop+=height-before;
       setHeights(heightsRef.current);
     };record();const observer=new ResizeObserver(record);observer.observe(node);
     observers.current.set(id,observer);
   },[scroller,visible]);
   const toggleOriginal=useCallback((id:string,open:boolean)=>setOpenOriginals(old=>{const next=new Set(old);if(open)next.add(id);else next.delete(id);return next;}),[]);
-  const rendered=useMemo(()=>virtualIndexes(visible.length,range,pinnedId===null?-1:visible.findIndex(item=>item.group.id===pinnedId)),[pinnedId,range,visible]);
+  const rendered=useMemo(()=>virtualIndexes(visible.length,range,pinnedId===null?-1:visible.findIndex(item=>item.id===pinnedId)),[pinnedId,range,visible]);
   return <div className="virtual-message-list" style={{height:total}} data-rendered-count={rendered.length}>
-    {rendered.map(index=>{const {group,position}=visible[index];const [,target]=directionParts(group.direction);return <div key={scope+group.id} ref={node=>{measure(group.id,index,node);}} data-virtual-index={index} data-virtual-id={group.id} className={`virtual-message-row ${isRtlLanguage(target)?'virtual-message-row--reverse':''}`} style={{transform:`translateY(${offsets[index]}px)`}}><Speech group={group} position={position} onRetry={onRetry} retrying={retrying===group.id} retryEnabled={retryEnabled} originalOpen={openOriginals.has(group.id)} onOriginalToggle={toggleOriginal}/></div>;})}
+    {rendered.map(index=>{const turn=visible[index];const [,target]=directionParts(turn.groups[0].direction);return <div key={scope+turn.id} ref={node=>{measure(turn.id,index,node);}} data-virtual-index={index} data-virtual-id={turn.id} className={`virtual-message-row ${isRtlLanguage(target)?'virtual-message-row--reverse':''}`} style={{transform:`translateY(${offsets[index]}px)`}}><Speech turn={turn} onRetry={onRetry} retrying={turn.groups.some(group=>group.id===retrying)} retryEnabled={retryEnabled} originalOpen={openOriginals.has(turn.id)} onOriginalToggle={toggleOriginal}/></div>;})}
   </div>;
 });
 
@@ -204,7 +246,8 @@ export default function Live(){
   const visibleGroups=shown?.groups||[];
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
-  const lastPair=lastGroup?.live?.current||lastGroup?.final||lastGroup?.final_progress;
+  const lastPair=lastGroup&&shownPair(lastGroup,!!state.calm_drafts);
+  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences}),[state.calm_drafts,state.merge_sentences]);
   const followKey=selected?'archive':`${lastGroup?.id||''}:${lastGroup?.revision??''}:${lastPair?.source||''}:${lastPair?.translation||''}`;
   const follow=useFollowLatest(followKey,!selected);
 
@@ -417,7 +460,7 @@ export default function Live(){
       {selected&&partialNotice&&<p role="status" className="unavailable global-error">{partialNotice}</p>}
       {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
-        <MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>
+        <DisplayContext.Provider value={display}><MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/></DisplayContext.Provider>
         {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx('readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
         {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>

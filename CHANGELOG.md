@@ -21,7 +21,7 @@
 ### Added
 
 - diagnostics: `mlx_runtime` (wheel tags, device), `mt_generation`, `mt_cancel`, `mt_interrupted`, `mt_prioritized`; `scripts/diagnose_latency.py` now reports time to the first visible draft, normalized erasure, time to stable words, lost-speech rate, slow-down over time and the new events;
-- opt-in experiments, all off by default: `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
+- opt-in experiments, all off by default: `HEBREW_LIVE_LOOP_TRIM=1` (a Whisper decode that ends in a loop keeps the words before it, and a closing decode that loops gets one retry at temperature 0.3), `HEBREW_LIVE_SENTENCE_SPLIT=1` (a growing group closes at a sentence end two snapshots agree on, with that text, and the live UI keeps such sentences in one bubble with the still open text grey), `HEBREW_LIVE_CALM_DRAFTS=1` (the live UI keeps a shown translation until a refresh is complete and fades in only changed words), `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
 - local measurement tooling in `experiments/corpus` (manifest, real-window replay, end-to-end A/B, metrics) and `experiments/nn-audit-2026-10`.
 
 ## 0.1.0-alpha.3 — 2026-10-06

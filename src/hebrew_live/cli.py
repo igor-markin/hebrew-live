@@ -363,6 +363,31 @@ def translation_loop(text,source):
     return repeat_run(text)>repeat_run(source)
 
 
+LOOP_RETRY_TEMPERATURE=.3
+def loop_trim_enabled():
+    # Off by default until measured against main on saved recordings.
+    return os.environ.get('HEBREW_LIVE_LOOP_TRIM','0')=='1'
+
+
+def trim_loop(text):
+    """Text before the first runaway loop, keeping one copy of a repeated phrase."""
+    cut=len(text)
+    letters=re.search(r"([^\W\d_])\1{11,}",text,re.IGNORECASE)
+    if letters:
+        cut=text.rfind(' ',0,letters.start())+1
+    spans=[m.span() for m in re.finditer(r"\w+",text)]
+    words=[text[a:b].lower() for a,b in spans]
+    for start in range(len(words)):
+        if spans[start][0]>=cut:break
+        for size in range(3,min(16,(len(words)-start)//3)+1):
+            if words[start:start+size]==words[start+size:start+size*2]==words[start+size*2:start+size*3]:
+                cut=min(cut,spans[start+size][0]);break
+        else:continue
+        break
+    kept=text[:cut].rstrip(' ,')
+    return '' if repetition_loop(kept) else kept
+
+
 class Engine:
     def __init__(self, folder, log, language='he', backend='turbo',
                  asr_path=None, translation_path=None, role='both'):
@@ -454,24 +479,50 @@ class Engine:
         word_timestamps = align_words or prefix > 0
         from .whisper_reuse import reuse_alignment
         from .whisper_repetition import reject_repeated_decode, RepeatedDecode
-        try:
+        def decode(temperature):
             with reject_repeated_decode(early,self.log.event,loop_stop):
                 with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
-                    result=self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
-                        temperature=0.0,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
+                    return self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
+                        temperature=temperature,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
+        trimmed=None
+        try:
+            result=decode(0.0)
         except RepeatedDecode as exc:
-            self.recognition_status='rejected';self.recognition_issue='early repeated recognition'
-            self.recognition_words=[]
-            self.raw_recognition=exc.text
+            self.recognition_issue='early repeated recognition'
             self.log.event('recognition_early_repetition',reason=self.recognition_issue,
                            raw_text=exc.text,tokens=exc.tokens)
-            return ''
-        self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
-        words=([w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
-               if word_timestamps else [])
+            if not loop_trim_enabled():
+                self.recognition_status='rejected';self.recognition_words=[]
+                self.raw_recognition=exc.text
+                return ''
+            # Whisper often loops only after correct words. Keep those words instead of
+            # losing the whole window. Trimmed text has no word times, so a prefix
+            # (context) window cannot be split and stays rejected.
+            trimmed=trim_loop(exc.text) if prefix==0 else ''
+            result=None
+            if not preliminary and prefix==0:
+                # The closing decode decides what stays on screen: one sampled retry.
+                try:result=decode(LOOP_RETRY_TEMPERATURE)
+                except RepeatedDecode as retry:
+                    again=trim_loop(retry.text)
+                    if len(again.split())>len(trimmed.split()):trimmed=again
+                self.log.event('recognition_loop_retry',accepted=result is not None)
+            if result is None:
+                if len(trimmed.split())<2:
+                    self.recognition_status='rejected';self.recognition_words=[]
+                    self.raw_recognition=exc.text
+                    return ''
+                self.log.event('recognition_loop_trimmed',text=trimmed)
+        if result is not None:
+            self.recognition_issue=None
+            self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
+            words=([w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
+                   if word_timestamps else [])
+            text=(''.join(w['word'] for w in words) if word_timestamps else
+                  ''.join(s.get('text','') for s in result.get('segments',[]))).strip()
+        else:
+            words,text=[],trimmed
         self.recognition_words=words
-        text=(''.join(w['word'] for w in words) if word_timestamps else
-              ''.join(s.get('text','') for s in result.get('segments',[]))).strip()
         self.raw_recognition=text
         from .script_filter import clearly_non_hebrew
         if self.language=='he' and source_language=='he' and clearly_non_hebrew(text):
