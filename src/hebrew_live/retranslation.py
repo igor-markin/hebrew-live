@@ -525,7 +525,7 @@ class RetranslationProcessor:
         first_token = False
         def clear_preview():
             if preview:self.updates.put(('live_stream_clear',job.group,{}))
-        from .cli import repetition_loop
+        from .cli import translation_loop
         pieces=None
         try:
             # The group's last committed translation drafts the new one (speculative
@@ -543,7 +543,7 @@ class RetranslationProcessor:
                                   output_chars=len(output))
                     self.mt_event('mt_discarded',job,reason='superseded_while_generating');return None
                 output += piece
-                if repetition_loop(output): issue = 'Повтор генерации'; break
+                if translation_loop(output,text): issue = 'Повтор генерации'; break
                 now = time.monotonic()
                 if piece and not first_token:
                     self.mt_event('mt_first_token',job,seconds=now-began)

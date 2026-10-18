@@ -345,6 +345,24 @@ def repetition_loop(text,partial=False):
     return False
 
 
+def repeat_run(text):
+    """Most consecutive copies of any phrase of 1-15 words in `text`."""
+    words=re.findall(r"\w+",text.lower());best=1
+    for size in range(1,min(16,len(words)//2)+1):
+        for start in range(len(words)-size*2+1):
+            phrase=words[start:start+size];count=1
+            while words[start+size*count:start+size*(count+1)]==phrase:count+=1
+            best=max(best,count)
+    return best
+
+def translation_loop(text,source):
+    """A runaway translation loop. A phrase the speaker repeated ("זה הבעיה, זה הבעיה,
+    זה הבעיה") is translated with as many copies, which alone is not a loop."""
+    if not repetition_loop(text):return False
+    if re.search(r"([^\W\d_])\1{11,}",text,re.IGNORECASE):return True
+    return repeat_run(text)>repeat_run(source)
+
+
 class Engine:
     def __init__(self, folder, log, language='he', backend='turbo',
                  asr_path=None, translation_path=None, role='both'):
@@ -491,7 +509,7 @@ class Engine:
             for piece,reason in mt_generate.generate(self.model,self.tokenizer,ids,max_tokens=max_tokens,
                                                      sampler=make_sampler(temp=0),stats=stats,step=step):
                 candidate=generated+piece
-                if repetition_loop(candidate):
+                if translation_loop(candidate,text):
                     reason='repetition'
                     yield '', 'repetition'
                     finished=True;return

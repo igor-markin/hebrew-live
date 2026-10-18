@@ -15,7 +15,8 @@
 - the Whisper encoder runs its self-attention through `mx.fast.scaled_dot_product_attention` by default (FLEURS Hebrew, 792 clips: WER 19.15 -> 19.18 %, CI -0.03...+0.07 pp; 16-19 % faster calls for windows up to 10 s; `HEBREW_LIVE_FUSED_ENCODER=0` restores the upstream implementation, and an unqualified `mlx-whisper` still falls back to it by itself);
 - the first ASR snapshot of a fragment is taken after 1.0 s of speech instead of 1.5 s: the first visible draft appears 24 % sooner (median 2.38 -> 1.80 s on a 7-minute real replay, 1.71 s together with the fused encoder) but is about one word shorter and sometimes less exact; final texts are unchanged (the old value stays in a saved setting, or `HEBREW_LIVE_TIMING=1.5,1,0,4,0.6`);
 - the desktop engine build refuses an MLX wheel without the macOS 26 neural-accelerator kernels (`macosx_26_0`);
-- the speech detector hears its input amplified six times, so a speakerphone voice 10-20 dB quieter than the near speaker is no longer dropped before recognition (a real 280 s call: 45 instead of 39 of 47 reference lines reached recognition, unchanged first-draft latency); recognition still receives the original audio, and synthetic white/pink noise, mains hum and clicks up to -30 dBFS still produce no speech.
+- the speech detector hears its input amplified six times, so a speakerphone voice 10-20 dB quieter than the near speaker is no longer dropped before recognition (a real 280 s call: 45 instead of 39 of 47 reference lines reached recognition, unchanged first-draft latency); recognition still receives the original audio, and synthetic white/pink noise, mains hum and clicks up to -30 dBFS still produce no speech;
+- a translation that repeats a phrase as many times as the speaker did ("זה הבעיה, זה הבעיה, זה הבעיה") is no longer cut as a generation loop; three real closing translations lost their whole phrase this way, and a loop still stops at one copy more than the source has.
 
 ### Added
 

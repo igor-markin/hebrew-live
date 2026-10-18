@@ -206,7 +206,7 @@ class PhraseProcessor:
 
     def translate(self,unit,sid=None,track=True):
         if self.cancel.is_set():return
-        from .cli import repetition_loop
+        from .cli import translation_loop
         if sid is None:
             self.counter+=1;sid=1_000_000+self.counter
         self.updates.put(('context',sid,self.settings))
@@ -234,7 +234,7 @@ class PhraseProcessor:
             for piece,reason in e.translate(unit.source):
                 if self.cancel.is_set():issue='Отменено';break
                 output+=piece
-                if repetition_loop(output):issue='Повтор генерации';break
+                if translation_loop(output,unit.source):issue='Повтор генерации';break
                 match=re.search(r'\s+\S*$',output)
                 candidate=output[:match.start()].rstrip() if match else ''
                 if candidate.startswith(published) and candidate!=published:

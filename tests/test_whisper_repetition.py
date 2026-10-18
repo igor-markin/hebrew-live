@@ -412,3 +412,22 @@ class RepetitionLoopPartialTests(unittest.TestCase):
             if repetition_loop(text[:end], partial=True):
                 for tail in ('', 'x', ' y', 'ה' * 3):
                     self.assertTrue(repetition_loop(text[:end] + tail))
+
+
+class TranslationLoopTests(unittest.TestCase):
+    # Real closing translations cut as "Повтор генерации" on 2026-10-18.
+    SOURCE = 'בן אדם קצת מצליח, כולם פותחים עליו עיניים. זה הבעיה, זה הבעיה, זה הבעיה. הרבה כסף.'
+
+    def test_a_phrase_the_speaker_repeated_is_not_a_loop(self):
+        from hebrew_live.cli import translation_loop
+        for text in ('Человек немного преуспевает. Вот в этом проблема, вот в этом проблема, вот в этом проблема',
+                     'Вот в этом и заключается проблема, вот в этом и заключается проблема, вот в этом и заключается проблема.'):
+            self.assertFalse(translation_loop(text, self.SOURCE))
+
+    def test_more_copies_than_the_source_is_a_loop(self):
+        from hebrew_live.cli import translation_loop
+        text = 'Вот в этом проблема, ' * 4
+        self.assertTrue(translation_loop(text, self.SOURCE))
+        self.assertTrue(translation_loop('Он сказал, что он сказал, что он сказал, что', 'הוא אמר'))
+        self.assertTrue(translation_loop('Ааааааааааааа', self.SOURCE))
+        self.assertFalse(translation_loop('Да, да, да.', 'כן כן כן'))
