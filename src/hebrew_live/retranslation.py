@@ -502,18 +502,20 @@ class RetranslationProcessor:
                                   source='', translation=''))
             while sum(len(item['audio']) for item in list(self.turn)[1:]) > CONTEXT_WINDOW_SECONDS*16000:
                 self.turn.popleft()
-            self.right_context = remainder[:round(CONTEXT_RIGHT_SECONDS*16000)]
-            try:self.recognize(final=True, closing=closing, fallback=text)
-            finally:self.right_context = None
-        elif closing == 'sentence' and text:
-            # Two snapshots already agree on this sentence: decoding its audio again
-            # only changed words the reader had seen.
+        if closing == 'sentence' and text:
+            # Two snapshots already agree on this sentence, each decoded with the audio
+            # around it: decoding the cut-out sentence again, even with context, dropped
+            # words they agreed on ("איגור?", "יוני 27") and changed words the reader had seen.
             self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
-                           seconds=0., input_seconds=len(self.audio)/16000, start=self.start/16000,
+                           seconds=0., input_seconds=len(self.audio)/16000, context_seconds=0., start=self.start/16000,
                            end=self.end/16000, status='accepted', final=True, closing=closing,
                            source=text, word_alignment=False, reused=True)
             self.last_status = 'accepted'
             self.translate(text, True, closing)
+        elif self.sentence_context:
+            self.right_context = remainder[:round(CONTEXT_RIGHT_SECONDS*16000)]
+            try:self.recognize(final=True, closing=closing, fallback=text)
+            finally:self.right_context = None
         else:
             self.recognize(final=True, closing=closing)
         next_start = self.end
