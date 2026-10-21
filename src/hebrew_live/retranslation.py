@@ -200,8 +200,8 @@ class RetranslationProcessor:
         self.hold_last_word=os.environ.get('HEBREW_LIVE_HOLD_LAST_WORD','0')=='1'
         # Closing groups at sentence ends; off by default until measured against main.
         self.sentence_split=os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
-        # Sentence freezing with context; turns sentence splits on. Off by default.
-        self.sentence_context=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
+        # Sentence freezing with context (also under the ticker view); turns sentence splits on. Off by default.
+        self.sentence_context=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1' or os.environ.get('HEBREW_LIVE_TICKER','0')=='1'
         self.sentence_split=self.sentence_split or self.sentence_context
         # Closed groups of the current speaker turn: audio and text for the context of
         # the next sentence. A pause or a settings change starts a new turn.

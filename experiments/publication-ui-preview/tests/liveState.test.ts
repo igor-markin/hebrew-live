@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,tickerParagraphs,agreeWords,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -132,4 +132,27 @@ test('an open sentence never gets shorter on screen; a closed one shows its own 
   assert.equal(heldText('Для получения информации о судах','Для информации.',false),'Для информации.');
   assert.doesNotThrow(()=>parseLiveState({...state,frozen_sentences:true}));
   assert.throws(()=>parseLiveState({...state,frozen_sentences:'yes'}));
+});
+
+test('the ticker keeps closed sentences in place and ends with the open one; a pause starts a paragraph',()=>{
+  const closed=(id:string,reason:string,extra={})=>({id,direction:'he-ru',complete:true,live:{current:{source:id,translation:id},history:[],stage:'closed',reason,...extra}});
+  const open={id:'e',direction:'he-ru',complete:false,live:{current:{source:'e',translation:'e'},history:[],stage:'open'}};
+  const empty={id:'x',direction:'he-ru',complete:true,live:{current:{source:'',translation:''},history:[],stage:'unavailable',issue:'Речь не распознана'}};
+  const paragraphs=tickerParagraphs([closed('a','sentence'),closed('b','silence'),empty,closed('c','sentence'),closed('d','sentence',{issue:'Пустой перевод'}),open]);
+  assert.deepEqual(paragraphs.map(item=>item.sentences.map(({group,pending})=>group.id+(pending?'?':''))),[['a','b'],['c'],['d'],['e?']]);
+  assert.deepEqual(tickerParagraphs([closed('a','sentence'),open]).map(item=>item.sentences.length),[2]);
+  assert.doesNotThrow(()=>parseLiveState({...state,ticker_view:true}));
+  assert.throws(()=>parseLiveState({...state,ticker_view:1}));
+});
+
+test('an open sentence turns black only where two translations in a row agree',()=>{
+  let value=agreeWords(undefined,1,'Я хочу взять у тебя');
+  assert.equal(value.agreed,0);
+  value=agreeWords(value,2,'Я хочу сообщить вам');
+  assert.equal(value.agreed,2);
+  assert.equal(agreeWords(value,2,'другое'),value);  // same revision: no change
+  value=agreeWords(value,3,'Я хочу сообщить вам, что заседание');
+  assert.equal(value.agreed,4);
+  value=agreeWords(value,4,'Хочу вам сообщить');
+  assert.equal(value.agreed,0);
 });

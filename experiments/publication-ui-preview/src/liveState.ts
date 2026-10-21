@@ -5,7 +5,7 @@ export type PartialDetail = {part:number|null;direction:string|null;reason:strin
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
   status_code?:string;ui_locale?:'en'|'ru'|'he';target_language?:string;
-  desktop_mode?:boolean;calm_drafts?:boolean;merge_sentences?:boolean;frozen_sentences?:boolean;recording_started?:boolean;capture_active?:boolean;
+  desktop_mode?:boolean;calm_drafts?:boolean;merge_sentences?:boolean;frozen_sentences?:boolean;ticker_view?:boolean;recording_started?:boolean;capture_active?:boolean;
   target_languages?:{code:string;name:string;rtl:boolean}[];target_error?:string|null;target_error_code?:string|null;
   target_capabilities_assumed?:boolean;
   publication?:string;paused:boolean;finished:boolean;stopping?:boolean;cancelling?:boolean;
@@ -47,7 +47,7 @@ export function parseLiveState(value:unknown):LiveState {
   if(value.partial_kind!==undefined&&value.partial_kind!==null&&!['known_unprocessed','capture_unknown','mixed'].includes(String(value.partial_kind)))throw new Error('Invalid local API snapshot');
   if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');
   if(value.partial_details!==undefined&&(!Array.isArray(value.partial_details)||!value.partial_details.every(item=>record(item)&&(item.part===null||typeof item.part==='number')&&(item.direction===null||typeof item.direction==='string')&&typeof item.reason==='string'&&(item.start===null||typeof item.start==='number')&&(item.end===null||typeof item.end==='number'))))throw new Error('Invalid local API snapshot');
-  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
+  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.ticker_view)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
   if(value.phase!==undefined&&(typeof value.phase!=='string'||!phases.has(value.phase)))throw new Error('Invalid local API phase');
   const phase=(value.phase as string|undefined)??(value.finished?'finished':value.paused?'paused':'listening');
@@ -137,6 +137,49 @@ export function speechTurns(groups:Group[],merge=false):SpeechTurn[] {
     else turns.push({id:group.id,groups:[group],position:index+1});
   });
   return turns;
+}
+
+export type TickerSentence = {group:Group;pending:boolean};
+export type Agreement = {revision:number;words:string[];agreed:number};
+
+// Words compare without case and trailing punctuation: "вам" and "вам," are the same word mid-sentence.
+const wordKey=(word:string)=>word.toLowerCase().replace(/[.,!?;:…»"')]+$/u,'');
+const leadingMatch=(a:string[],b:string[])=>{let n=0;while(n<a.length&&n<b.length&&wordKey(a[n])===wordKey(b[n]))n++;return n;};
+
+/**
+ * Words of an open sentence that two translations in a row agree on: they are shown in black,
+ * the rest stays grey until a later version confirms it. Agreed words stay agreed while the
+ * new text still starts with them. Keyed on the revision, so a repeated render changes nothing.
+ */
+export function agreeWords(previous:Agreement|undefined,revision:number,text:string):Agreement {
+  if(previous&&previous.revision===revision)return previous;
+  const words=text.split(/\s+/).filter(Boolean);
+  if(!previous)return {revision,words,agreed:0};
+  const kept=leadingMatch(previous.words.slice(0,previous.agreed),words)===previous.agreed?previous.agreed:0;
+  return {revision,words,agreed:Math.max(kept,leadingMatch(previous.words,words))};
+}
+export type TickerParagraph = {id:string;sentences:TickerSentence[]};
+
+/**
+ * Paragraphs of the ticker view. Closed sentences keep their place and text; the open one
+ * ends the last paragraph in grey and only changes colour when it closes, so nothing above
+ * it ever moves. A pause (a group closed by silence, not at a sentence end or a technical
+ * cut) or a problem starts a new paragraph.
+ */
+export function tickerParagraphs(groups:Group[]):TickerParagraph[] {
+  const paragraphs:TickerParagraph[]=[];
+  let continues=false;
+  for(const group of groups){
+    if(!isVisibleGroup(group))continue;
+    const pair=shownPair(group,true);
+    const issue=Boolean(groupIssue(group));
+    if(group.complete&&!pair?.translation.trim())continue;
+    const last=paragraphs.at(-1);
+    if(last&&continues&&!issue)last.sentences.push({group,pending:!group.complete});
+    else paragraphs.push({id:group.id,sentences:[{group,pending:!group.complete}]});
+    continues=group.complete&&!issue&&(group.live?.reason==='sentence'||group.live?.stage==='technical');
+  }
+  return paragraphs;
 }
 
 export function isVisibleGroup(group:Group):boolean {
