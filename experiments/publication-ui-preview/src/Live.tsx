@@ -67,12 +67,15 @@ function SegmentText({segments,field,missing}:{segments:Segment[];field:'transla
 
 /** Height a card keeps while its turn is open, so a closing sentence or a slower refresh never pulls the text under the reader upwards. */
 function useNoShrink(open:boolean) {
-  const ref=useRef<HTMLElement|null>(null);const tallest=useRef(0);
+  const ref=useRef<HTMLElement|null>(null);const tallest=useRef({height:0,width:0});
   useLayoutEffect(()=>{
     const node=ref.current;if(!node)return;
-    if(!open){tallest.current=0;node.style.minHeight='';return;}
-    const record=()=>{const height=node.getBoundingClientRect().height;
-      if(height>tallest.current){tallest.current=height;node.style.minHeight=`${height}px`;}};
+    if(!open){tallest.current={height:0,width:0};node.style.minHeight='';return;}
+    const record=()=>{const {width}=node.getBoundingClientRect();
+      // A narrower or wider window rewraps the text: the old height means nothing then.
+      if(width!==tallest.current.width){tallest.current={height:0,width};node.style.minHeight='';}
+      const natural=node.getBoundingClientRect().height;
+      if(natural>tallest.current.height){tallest.current.height=natural;node.style.minHeight=`${natural}px`;}};
     record();const observer=new ResizeObserver(record);observer.observe(node);
     return()=>observer.disconnect();
   });
