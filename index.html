@@ -19,7 +19,9 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="assets/icon-64.png" type="image/png">
   <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="stylesheet" href="/brand/v1/brand.css">
   <link rel="stylesheet" href="style.css">
+  <script src="/brand/v1/brand.js" defer></script>
   <script>try{var t=localStorage.getItem("site-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
   <script src="app.js" defer></script>
 </head>
@@ -212,19 +214,25 @@
     </div>
   </section>
 
-  <section class="section maker-wrap" aria-labelledby="maker-title">
+  <section class="section maker-wrap">
     <div class="wrap">
-      <div class="maker">
-        <img class="maker-photo" src="/assets/igor-320.webp" width="72" height="72" alt="">
-        <div class="maker-copy">
-          <h2 id="maker-title" data-i18n="makerTitle">Built by Igor Markin</h2>
-          <p data-i18n="makerText">Senior full-stack engineer in Israel. I build LLM-powered products that hold up in production.</p>
+      <aside class="im-author" data-im-product="hebrew-live" aria-labelledby="im-author-title-0">
+        <a class="im-author-photo" href="/" tabindex="-1" aria-hidden="true"><img src="/assets/igor-320.webp" srcset="/assets/igor-320.webp 320w, /assets/igor-640.webp 640w" sizes="80px" width="80" height="80" loading="lazy" alt="Igor Markin"></a>
+        <div class="im-author-text">
+          <p class="im-author-kicker">The author</p>
+          <h2 class="im-author-title" id="im-author-title-0"><a href="/">Built by Igor Markin</a></h2>
+          <p class="im-author-lead">Senior full-stack engineer in Israel. I build LLM-powered products that hold up in production.</p>
         </div>
-        <div class="maker-cta">
-          <a class="btn btn-primary" href="/" data-i18n="makerSite">About me</a>
-          <a class="btn btn-ghost" href="mailto:9588604@gmail.com" data-i18n="makerMail">Email me</a>
+        <div class="im-author-actions">
+          <a class="im-author-btn im-author-btn-primary" href="/#contact">Work with me</a>
+          <a class="im-author-btn im-author-btn-secondary" href="mailto:9588604@gmail.com">Email me</a>
         </div>
-      </div>
+        <nav class="im-author-also" aria-label="More of my projects">
+          <span class="im-author-also-label">More of my projects:</span>
+          <a class="im-author-chip" href="/live-markdown-preview/" lang="en"><img src="/brand/v1/icons/live-markdown-preview.svg" width="20" height="20" alt="">Live Markdown Preview</a>
+          <a class="im-author-chip" href="/torhair/" lang="en"><img src="/brand/v1/icons/torhair.svg" width="20" height="20" alt="">Torhair</a>
+        </nav>
+      </aside>
     </div>
   </section>
 

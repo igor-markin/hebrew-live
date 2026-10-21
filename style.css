@@ -402,19 +402,23 @@ h2 { margin-top: 14px; max-width: 18em; font-size: clamp(32px, 4.2vw, 52px); fon
 
 /* ---------- Maker ---------- */
 .maker-wrap { padding-top: 0; }
-.maker {
-  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  padding: 32px 36px; border-radius: 26px; color: #eceaff;
-  background:
+/* Shared author block from /brand/v1/, in the night colours of the hero */
+.maker-wrap {
+  --im-card:
     radial-gradient(520px 260px at 90% 0%, rgba(139,108,246,.4), transparent 65%),
     radial-gradient(420px 220px at 0% 100%, rgba(63,224,191,.18), transparent 65%),
     linear-gradient(180deg, var(--night) 0%, var(--night-2) 100%);
+  --im-card-ink: #fff;
+  --im-card-muted: rgba(236,234,255,.72);
+  --im-card-line: rgba(255,255,255,.12);
+  --im-chip: rgba(255,255,255,.08);
+  --im-accent: linear-gradient(180deg, #6ff0d3 0%, var(--mint) 100%);
+  --im-accent-ink: #071a16;
+  --im-accent-shadow: 0 10px 30px -10px rgba(63,224,191,.7), inset 0 1px 0 rgba(255,255,255,.5);
+  --im-accent-color: var(--mint);
+  --im-ring: rgba(63,224,191,.35);
+  --im-radius: 26px;
 }
-.maker-photo { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 3px rgba(63,224,191,.35); }
-.maker-copy { flex: 1 1 320px; }
-.maker h2 { margin: 0; max-width: none; font-size: clamp(24px, 3vw, 32px); color: #fff; }
-.maker p { margin-top: 6px; color: rgba(236,234,255,.72); }
-.maker-cta { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .foot { border-top: 1px solid var(--line); padding: 30px 0 40px; }
 .foot-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
@@ -452,7 +456,6 @@ h2 { margin-top: 14px; max-width: 18em; font-size: clamp(32px, 4.2vw, 52px); fon
   .steps li::before { inset-inline-start: 18px; top: 20px; }
   .code { align-items: flex-start; }
   .alpha-card { padding: 28px 22px; }
-  .maker { padding: 26px 22px; }
   .alpha-card ul { grid-template-columns: 1fr; }
   .tabs { display: flex; border-radius: 16px; }
   .tabs button { flex: 1 1 auto; }
