@@ -1,6 +1,6 @@
 {
   "name": "hebrew-live-desktop",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Local live Hebrew speech translation for macOS",
   "author": "Igor Markin",
   "private": true,
