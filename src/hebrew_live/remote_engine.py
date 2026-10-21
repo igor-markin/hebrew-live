@@ -187,7 +187,7 @@ class RemoteEngine:
         self._shutdown_grace = shutdown_grace;self._cancel_grace = cancel_grace
         self._shutdown_started = None;self._request_id = 0;self._closed = False
         # translate(text, hint=...) reaches the child; the bridge preview engine has no hints.
-        self.accepts_hint=bridge_models is None
+        self.accepts_hint=self.accepts_context=bridge_models is None
         self._rpc_lock=threading.Lock()
         self._cancel_message=os.environ.get('HEBREW_LIVE_MT_INTERRUPT','1')!='0'
         context = multiprocessing.get_context("spawn")
@@ -394,7 +394,7 @@ class _SplitMemory:
 class SplitRemoteEngine:
     """One process owns ASR, another owns MT; only immutable job state crosses stages."""
     independent_mt=True
-    accepts_hint=True
+    accepts_hint=accepts_context=True
 
     def __init__(self, folder, log, language="he", backend="turbo", asr_path=None,
                  translation_path=None, direction="he-en", topic="none", stop=None,

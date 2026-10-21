@@ -65,8 +65,12 @@ class BrowserUI:
         self.state['desktop_mode']=self.desktop_mode
         # Live display experiments, off by default: HEBREW_LIVE_CALM_DRAFTS=1 keeps a shown
         # translation until a refresh is complete; sentence splits merge into one bubble.
-        self.state['calm_drafts']=os.environ.get('HEBREW_LIVE_CALM_DRAFTS','0')=='1'
-        self.state['merge_sentences']=os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
+        # HEBREW_LIVE_SENTENCE_CONTEXT=1 freezes closed sentences: one card per speaker turn,
+        # a line per sentence, the open part grey, and visible text never shrinks.
+        frozen=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
+        self.state['calm_drafts']=frozen or os.environ.get('HEBREW_LIVE_CALM_DRAFTS','0')=='1'
+        self.state['merge_sentences']=frozen or os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
+        self.state['frozen_sentences']=frozen
         # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
         self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
         self.closing=False

@@ -5,7 +5,7 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {archiveRecordingLabel, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, unchangedPrefix, virtualIndexes} from './liveState';
+import {archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Group, LiveState, Pair, SpeechTurn} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -17,8 +17,9 @@ declare global {
 type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
 const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:translator('en')});
 const useI18n=()=>useContext(I18nContext);
-// Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT).
-const DisplayContext=createContext({calm:false,merge:false});
+// Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT,
+// HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences).
+const DisplayContext=createContext({calm:false,merge:false,frozen:false});
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -36,11 +37,12 @@ async function readJson(url:string,signal?:AbortSignal):Promise<unknown>{
 }
 
 /** Text whose unchanged leading words stay still; only the words that differ from the last render fade in. */
-function ChangingText({text}:{text:string}) {
+function ChangingText({text:incoming,hold=false}:{text:string;hold?:boolean}) {
   // Compared with the previous distinct text, so an unrelated re-render keeps the fade.
   const {calm}=useContext(DisplayContext);
-  const seen=useRef({before:text,shown:text});
-  if(!calm)return <>{text}</>;
+  const seen=useRef({before:incoming,shown:incoming});
+  if(!calm)return <>{incoming}</>;
+  const text=heldText(seen.current.shown,incoming,hold);
   if(seen.current.shown!==text)seen.current={before:seen.current.shown,shown:text};
   const kept=unchangedPrefix(seen.current.before,text);
   if(kept>=text.length)return <>{text}</>;
@@ -51,11 +53,33 @@ type Segment={id:string;pair:Pair;pending?:boolean};
 
 /** One bubble's text: closed sentences in the normal colour, the still open part in grey. */
 function SegmentText({segments,field,missing}:{segments:Segment[];field:'translation'|'source';missing:string}) {
-  const {merge}=useContext(DisplayContext);
+  const {merge,frozen}=useContext(DisplayContext);
+  if(frozen)return <>{segments.map(segment=>{
+    // A line per sentence; a closed one never changes again, the open one is grey.
+    const text=segment.pair[field];
+    return <span key={segment.id} className={`sentence-line ${segment.pending?'text-pending':''}`}>{text?<ChangingText text={text} hold={segment.pending}/>:missing}</span>;
+  })}</>;
   return <>{segments.map((segment,index)=>{
     const text=segment.pair[field];
     return <span key={segment.id} className={merge&&segment.pending?'text-pending':undefined}>{index?' ':''}{text?<ChangingText text={text}/>:missing}</span>;
   })}</>;
+}
+
+/** Height a card keeps while its turn is open, so a closing sentence or a slower refresh never pulls the text under the reader upwards. */
+function useNoShrink(open:boolean) {
+  const ref=useRef<HTMLElement|null>(null);const tallest=useRef({height:0,width:0});
+  useLayoutEffect(()=>{
+    const node=ref.current;if(!node)return;
+    if(!open){tallest.current={height:0,width:0};node.style.minHeight='';return;}
+    const record=()=>{const {width}=node.getBoundingClientRect();
+      // A narrower or wider window rewraps the text: the old height means nothing then.
+      if(width!==tallest.current.width){tallest.current={height:0,width};node.style.minHeight='';}
+      const natural=node.getBoundingClientRect().height;
+      if(natural>tallest.current.height){tallest.current.height=natural;node.style.minHeight=`${natural}px`;}};
+    record();const observer=new ResizeObserver(record);observer.observe(node);
+    return()=>observer.disconnect();
+  });
+  return ref;
 }
 
 function BubbleText({pair,segments,direction,originalOpen,onOriginalToggle}:{pair?:Pair;segments?:Segment[];direction:string;originalOpen?:boolean;onOriginalToggle?:(open:boolean)=>void}) {
@@ -81,12 +105,13 @@ const sameSpeech=(a:SpeechProps,b:SpeechProps)=>a.turn.id===b.turn.id&&a.turn.po
   a.originalOpen===b.originalOpen&&a.onOriginalToggle===b.onOriginalToggle;
 
 const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOpen,onOriginalToggle}:SpeechProps) {
-  const {locale,tx}=useI18n();const {calm}=useContext(DisplayContext);
+  const {locale,tx}=useI18n();const {calm,frozen}=useContext(DisplayContext);
   const group=turn.groups.at(-1)!;const position=turn.position;
-  if(turn.groups.length>1){
+  const holdRef=useNoShrink(frozen&&!group.complete);
+  if(turn.groups.length>1||frozen&&!turn.groups.some(item=>item.live?.issue||item.final?.issue)){
     const [,target]=directionParts(group.direction);
     const segments=turn.groups.map(item=>({id:item.id,pair:shownPair(item,calm)||{source:'',translation:''},pending:!item.complete}));
-    return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
+    return <article ref={holdRef} className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${frozen?'speech-card--frozen':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
       <BubbleText segments={segments} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(turn.id,open)}/>
       {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     </article>;
@@ -247,7 +272,7 @@ export default function Live(){
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
   const lastPair=lastGroup&&shownPair(lastGroup,!!state.calm_drafts);
-  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences}),[state.calm_drafts,state.merge_sentences]);
+  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences]);
   const followKey=selected?'archive':`${lastGroup?.id||''}:${lastGroup?.revision??''}:${lastPair?.source||''}:${lastPair?.translation||''}`;
   const follow=useFollowLatest(followKey,!selected);
 
