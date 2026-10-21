@@ -417,6 +417,7 @@
   function paintTheme() {
     const on = isDark();
     root.classList.toggle('dark-on', on);
+    document.querySelector('meta[name="theme-color"]').content = on ? '#0d1130' : '#f3f1ff';
     themeBtn.setAttribute('aria-label', t(on ? 'themeLight' : 'themeDark'));
   }
   themeBtn.addEventListener('click', () => {
