@@ -189,7 +189,7 @@ class BrowserUI:
                 if self.headers.get_content_type()!='application/json':return self.reply(415,b'{}')
                 try:
                     size=int(self.headers.get('Content-Length','0'))
-                    if not 0<size<=1024:return self.reply(400,b'{}')
+                    if not 0<size<=8192:return self.reply(400,b'{}')  # A ticker report carries one sentence.
                     payload=json.loads(self.rfile.read(size));action=payload.get('action')
                     if action=='ui_preview_seen':
                         identity=payload.get('group');preview_id=payload.get('preview_id')
@@ -210,6 +210,19 @@ class BrowserUI:
                         if event is not None and isinstance(part,int):
                             event('ui_preview_seen',part=part,group=identity,preview_id=preview_id,
                                   backend_to_dom_ack=elapsed)
+                        return self.reply(200,b'{"ok":true}')
+                    if action=='ui_ticker':
+                        # What the ticker shows for an open sentence: agreed words in black, the rest grey.
+                        identity=payload.get('group');black=payload.get('black');grey=payload.get('grey');source=payload.get('source')
+                        if (not isinstance(identity,str) or len(identity)>128 or not isinstance(black,str) or
+                                not isinstance(grey,str) or len(black)+len(grey)>4000 or source not in ('live','stream')):
+                            return self.reply(400,b'{}')
+                        with owner.lock:
+                            group=next((item for item in owner.state.get('groups',[]) if item.get('id')==identity),None)
+                            part=group.get('part') if isinstance(group,dict) else None
+                            event=owner.on_preview_seen
+                        if event is not None and isinstance(part,int):
+                            event('ui_ticker',part=part,group=identity,source=source,black=black,grey=grey)
                         return self.reply(200,b'{"ok":true}')
                     if action=='delete_session':
                         if payload.get('confirmed') is not True:return self.reply(400,b'{}')

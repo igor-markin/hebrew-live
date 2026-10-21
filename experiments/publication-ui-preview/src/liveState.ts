@@ -140,24 +140,26 @@ export function speechTurns(groups:Group[],merge=false):SpeechTurn[] {
 }
 
 export type TickerSentence = {group:Group;pending:boolean};
-export type Agreement = {revision:number;words:string[];agreed:number};
+export type Agreement = {words:string[];agreed:number};
 
 // Words compare without case and trailing punctuation: "вам" and "вам," are the same word mid-sentence.
 const wordKey=(word:string)=>word.toLowerCase().replace(/[.,!?;:…»"')]+$/u,'');
 const leadingMatch=(a:string[],b:string[])=>{let n=0;while(n<a.length&&n<b.length&&wordKey(a[n])===wordKey(b[n]))n++;return n;};
 
 /**
- * Words of an open sentence that two translations in a row agree on: they are shown in black,
- * the rest stays grey until a later version confirms it. Agreed words stay agreed while the
- * new text still starts with them. Keyed on the revision, so a repeated render changes nothing.
+ * Words of an open sentence that two different translations in a row agree on: they are shown in
+ * black, the rest stays grey until a later version confirms it. Agreed words stay agreed while the
+ * new text still starts with them. The same text again (a re-render, or a streamed refresh that
+ * changed nothing on screen) is not a second opinion and changes nothing.
  */
-export function agreeWords(previous:Agreement|undefined,revision:number,text:string):Agreement {
-  if(previous&&previous.revision===revision)return previous;
+export function agreeWords(previous:Agreement|undefined,text:string):Agreement {
   const words=text.split(/\s+/).filter(Boolean);
-  if(!previous)return {revision,words,agreed:0};
+  if(!previous)return {words,agreed:0};
+  if(previous.words.join(' ')===words.join(' '))return previous;
   const kept=leadingMatch(previous.words.slice(0,previous.agreed),words)===previous.agreed?previous.agreed:0;
-  return {revision,words,agreed:Math.max(kept,leadingMatch(previous.words,words))};
+  return {words,agreed:Math.max(kept,leadingMatch(previous.words,words))};
 }
+
 export type TickerParagraph = {id:string;sentences:TickerSentence[]};
 
 /**

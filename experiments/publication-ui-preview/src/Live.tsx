@@ -145,13 +145,20 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
 
 /**
  * One sentence of the ticker, memoised on the group so a new sentence never re-renders the old ones.
- * An open sentence shows the words two translations in a row agreed on in black and the rest in grey.
+ * An open sentence shows the words two translations in a row agreed on in black and the rest in grey;
+ * a translation still streaming in for the first time is all grey. What an open sentence shows is
+ * reported to the diagnostics log.
  */
 const TickerSentence=memo(function TickerSentence({group,pending,agreed}:{group:Group;pending:boolean;agreed:number}) {
   const pair=shownPair(group,true);const text=pair?.translation||'';
-  if(!pending)return <span className="ticker-sentence" data-group={group.id} title={pair?.source||undefined}>{text} </span>;
   const words=text.split(/\s+/).filter(Boolean);
-  const black=words.slice(0,agreed).join(' ');const grey=words.slice(agreed).join(' ');
+  const black=pending?words.slice(0,agreed).join(' '):text;const grey=pending?words.slice(agreed).join(' '):'';
+  const source=group.live?.current.translation.trim()?'live':'stream';
+  useEffect(()=>{
+    if(!pending)return;
+    void fetch('../action',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'ui_ticker',group:group.id,source,black,grey})}).catch(()=>{});
+  },[pending,group.id,source,black,grey]);
   return <span className="ticker-sentence" data-group={group.id} title={pair?.source||undefined}>
     {black}{black&&grey?' ':''}{grey&&<span className="text-pending">{grey}</span>}{' '}
   </span>;
@@ -167,8 +174,11 @@ const TickerView=memo(function TickerView({groups}:{groups:Group[]}) {
   const paragraphs:TickerParagraph[]=useMemo(()=>tickerParagraphs(groups),[groups]);
   if(!paragraphs.length)return null;
   const [,target]=directionParts(groups[0].direction);
+  // Only published translations count as opinions; a streamed preview is never compared.
   const agreed=(group:Group)=>{
-    const next=agreeWords(agreements.current.get(group.id),group.revision??0,shownPair(group,true)?.translation||'');
+    const text=group.live?.current.translation||'';
+    if(!text.trim())return 0;
+    const next=agreeWords(agreements.current.get(group.id),text);
     agreements.current.set(group.id,next);return next.agreed;
   };
   return <article className="ticker" lang={htmlLanguage(target)} dir={isRtlLanguage(target)?'rtl':'ltr'}>
