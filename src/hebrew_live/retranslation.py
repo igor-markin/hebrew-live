@@ -41,6 +41,11 @@ CONTEXT_RIGHT_SECONDS = 1.5
 CONTEXT_WINDOW_SECONDS = 28.  # Whisper hears 30 s at most
 MT_CONTEXT_SENTENCES = 2
 MT_CONTEXT_CHARS = 400
+# A closing decode sometimes skips the group's first words ("בעכו. אה, בעכו." before
+# "אני צריך ללכת"): its first word starts this late although the last open snapshot
+# heard words there. Those words come back from that snapshot.
+LEADING_GAP_SECONDS = 1.
+LEADING_ANCHOR_WORDS = 2
 # A technical cut looks this far back for a pause between words, never inside a number.
 TECHNICAL_CUT_SEARCH_SECONDS = 6.
 NUMBER_WORDS = frozenset('''אפס אחת אחד שתיים שתים שניים שנים שתי שני שלוש שלושה שלושת ארבע ארבעה
@@ -129,6 +134,18 @@ def next_mt_job(pending, prioritize=True):
     jumped = list(pending).index(best)
     pending.remove(best)
     return best, jumped
+
+def leading_words(snapshot, text):
+    """Words of `snapshot` before the place where `text` begins in it, or ''."""
+    bare = lambda value: value.strip('.,?!…"\'()-')
+    before, after = snapshot.split(), text.split()
+    anchor = [bare(word) for word in after[:LEADING_ANCHOR_WORDS]]
+    if len(after) < LEADING_ANCHOR_WORDS or not all(anchor):return ''
+    for index in range(1, len(before)-len(anchor)+1):
+        if [bare(word) for word in before[index:index+len(anchor)]] == anchor:
+            return ' '.join(before[:index])
+    return ''
+
 
 def common_prefix(left, right):
     """Exact adjacent prefix, including punctuation, at word boundaries."""
@@ -238,6 +255,7 @@ class RetranslationProcessor:
         self._mt_first_requested=False
         self._mt_closing_pending=False
         self.previous_text=''
+        self.open_texts=[]
         self.previous_words=[]
         self.split_at=None
         self.split_text=''
@@ -621,7 +639,9 @@ class RetranslationProcessor:
         align_words = not self.text_only_draft or getattr(e,'backend',None) not in ('turbo','multilingual')
         # Word times locate a sentence end in the audio; only growing groups need them.
         splittable = self.sentence_split and not final and not closing and len(self.audio) >= SENTENCE_SPLIT_MIN_SECONDS*16000
-        align_words = align_words or splittable
+        # Word times show a closing decode that skipped the group's first words.
+        leading = self.sentence_context and final and bool(closing)
+        align_words = align_words or splittable or leading
         text, context_samples = self._decode(final, align_words)
         self.last_status = getattr(e, 'recognition_status', None) or ('accepted' if text else 'empty')
         reused = False
@@ -641,6 +661,8 @@ class RetranslationProcessor:
             if closing: self.finish(closing, valid=False)
             return
         text = text.strip()
+        if not final:self.open_texts.append(text)
+        elif leading and not reused:text = self.recover_leading(text)
         if splittable:
             previous, self.previous_text = self.previous_text, text
             previous_words = self.previous_words
@@ -666,6 +688,18 @@ class RetranslationProcessor:
                 self.split_at, self.split_text = cut, sentence
                 return
         self.translate(text, final, closing)
+
+    def recover_leading(self, text):
+        words = getattr(self.engine,'recognition_words',None) or []
+        if not words or words[0]['start'] < LEADING_GAP_SECONDS:return text
+        # A later snapshot may already have lost the same words: take the latest that has them.
+        snapshot, prefix = next(((snapshot, prefix) for snapshot in reversed(self.open_texts)
+                                 for prefix in [leading_words(snapshot, text)] if prefix), ('', ''))
+        if not prefix:return text
+        self.log.event('live_leading_recovered', segment=self.sid, start=self.start/16000,
+                       end=self.end/16000, first_word=words[0]['start'], snapshot=snapshot,
+                       decoded=text, prefix=prefix)
+        return prefix+' '+text
 
     def translate(self, text, final, closing):
         if self.hold_last_word and not final:
