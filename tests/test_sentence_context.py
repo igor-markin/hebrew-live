@@ -36,28 +36,25 @@ class SentenceContextTests(unittest.TestCase):
   return Fragment(1,1,self.audio[start:end].copy(),0,time.monotonic(),final,self.settings,end/16000,0,reason)
  def pubs(self):return [v for k,_,v in self.q.queue if k=='live_publication']
 
- def test_closed_sentence_is_decoded_and_translated_with_its_neighbours(self):
+ def test_closed_sentence_keeps_the_agreed_text_and_is_context_for_the_next(self):
   self.p.process(self.f(0,64000));self.p.process(self.f(0,80000))
-  closing=self.calls[-1]
   cut=round(self.pubs()[-1]['end']*16000)
-  self.assertEqual(closing['start'],0)
-  self.assertAlmostEqual(closing['until'],cut/16000,places=3)
-  self.assertAlmostEqual(closing['seconds'],cut/16000+1.5,places=3)  # 1.5 s heard after the sentence
+  self.assertTrue(all(call['until'] is None for call in self.calls))  # the cut-out sentence is not decoded again
   closed=[v for v in self.pubs() if v['stage']=='closed']
-  self.assertEqual(closed[0]['current']['source'],'אחת שתיים שלוש!')  # the context decode, not the snapshot
-  self.assertEqual(self.mt[-1],('אחת שתיים שלוש!',()))
+  self.assertEqual(closed[0]['current']['source'],'אחת שתיים שלוש.')  # the text two snapshots agreed on
+  self.assertEqual(self.mt[-1],('אחת שתיים שלוש.',()))
   self.p.process(self.f(0,96000))
   following=self.calls[-1]
   self.assertEqual(following['start'],0)  # the closed sentence's audio is heard again as context
   self.assertAlmostEqual(following['prefix'],cut/16000,places=3)
-  self.assertEqual(self.mt[-1],('ארבע חמש שש',(('אחת שתיים שלוש!','ru:אחת שתיים שלוש!'),)))
+  self.assertEqual(self.mt[-1],('ארבע חמש שש',(('אחת שתיים שלוש.','ru:אחת שתיים שלוש.'),)))
   self.assertEqual(self.pubs()[-1]['current']['source'],'ארבע חמש שש')
-  self.assertEqual([round(v['context_seconds'],2) for n,v in self.events if n=='live_asr'][-1],round(cut/16000,2))
+  self.assertEqual([round(v['context_seconds'],2) for n,v in self.events if n=='live_asr' and not v.get('reused')][-1],round(cut/16000,2))
 
  def test_a_pause_starts_a_turn_without_context(self):
   self.p.process(self.f(0,64000));self.p.process(self.f(0,80000))
   self.p.process(self.f(0,96000,final=True,reason='silence'))
-  self.assertEqual(self.mt[-1][1],(('אחת שתיים שלוש!','ru:אחת שתיים שלוש!'),))
+  self.assertEqual(self.mt[-1][1],(('אחת שתיים שלוש.','ru:אחת שתיים שלוש.'),))
   self.p.process(self.f(120000,152000))
   self.assertEqual(self.calls[-1]['prefix'],0.)
   self.assertEqual(self.calls[-1]['start'],120000)
