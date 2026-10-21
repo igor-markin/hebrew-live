@@ -5,8 +5,8 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, unchangedPrefix, virtualIndexes} from './liveState';
-import type {Group, LiveState, Pair, SpeechTurn} from './liveState';
+import {archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import type {Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
@@ -18,8 +18,8 @@ type Translate=(key:TextKey,values?:Record<string,string|number>)=>string;
 const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:translator('en')});
 const useI18n=()=>useContext(I18nContext);
 // Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT,
-// HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences).
-const DisplayContext=createContext({calm:false,merge:false,frozen:false});
+// HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences, HEBREW_LIVE_TICKER for the ticker view).
+const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false});
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -142,6 +142,32 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}
   </article>;
 },sameSpeech);
+
+/** One closed sentence of the ticker: memoised on the group, so a new sentence never re-renders the old ones. */
+const TickerSentence=memo(function TickerSentence({group,pending}:{group:Group;pending:boolean}) {
+  const pair=shownPair(group,true);const text=pair?.translation||'';
+  return <span className={`ticker-sentence ${pending?'text-pending':''}`} data-group={group.id} title={pair?.source||undefined}>
+    {pending?<ChangingText text={text} hold/>:text}{' '}
+  </span>;
+});
+
+/**
+ * Ticker view: the conversation as plain paragraphs. Closed sentences never change; the sentence
+ * still being spoken ends the text in grey, is updated in place and turns black when it closes.
+ */
+const TickerView=memo(function TickerView({groups}:{groups:Group[]}) {
+  const {tx}=useI18n();
+  const paragraphs:TickerParagraph[]=useMemo(()=>tickerParagraphs(groups),[groups]);
+  if(!paragraphs.length)return null;
+  const [,target]=directionParts(groups[0].direction);
+  return <article className="ticker" lang={htmlLanguage(target)} dir={isRtlLanguage(target)?'rtl':'ltr'}>
+    {paragraphs.map(paragraph=><p key={paragraph.id} className="ticker-paragraph">
+      {paragraph.sentences.map(({group,pending})=>shownPair(group,true)?.translation.trim()
+        ?<TickerSentence key={group.id} group={group} pending={pending}/>
+        :<span key={group.id} className="ticker-sentence text-pending">{tx('translating')}</span>)}
+    </p>)}
+  </article>;
+});
 
 const ESTIMATED_CARD_HEIGHT=170;
 const CARD_GAP=10;
@@ -272,7 +298,7 @@ export default function Live(){
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
   const lastPair=lastGroup&&shownPair(lastGroup,!!state.calm_drafts);
-  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences]);
+  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences,ticker:!!state.ticker_view}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences,state.ticker_view]);
   const followKey=selected?'archive':`${lastGroup?.id||''}:${lastGroup?.revision??''}:${lastPair?.source||''}:${lastPair?.translation||''}`;
   const follow=useFollowLatest(followKey,!selected);
 
@@ -485,7 +511,7 @@ export default function Live(){
       {selected&&partialNotice&&<p role="status" className="unavailable global-error">{partialNotice}</p>}
       {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
-        <DisplayContext.Provider value={display}><MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/></DisplayContext.Provider>
+        <DisplayContext.Provider value={display}>{display.ticker&&!selected?<TickerView groups={visibleGroups}/>:<MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>}</DisplayContext.Provider>
         {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx('readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
         {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>

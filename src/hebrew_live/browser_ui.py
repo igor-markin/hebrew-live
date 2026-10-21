@@ -67,10 +67,14 @@ class BrowserUI:
         # translation until a refresh is complete; sentence splits merge into one bubble.
         # HEBREW_LIVE_SENTENCE_CONTEXT=1 freezes closed sentences: one card per speaker turn,
         # a line per sentence, the open part grey, and visible text never shrinks.
-        frozen=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
+        # HEBREW_LIVE_TICKER=1 builds on frozen sentences: closed sentences flow as plain paragraphs
+        # that never change, and only the sentence still being spoken is a grey line updated in place.
+        ticker=os.environ.get('HEBREW_LIVE_TICKER','0')=='1'
+        frozen=ticker or os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
         self.state['calm_drafts']=frozen or os.environ.get('HEBREW_LIVE_CALM_DRAFTS','0')=='1'
         self.state['merge_sentences']=frozen or os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
         self.state['frozen_sentences']=frozen
+        self.state['ticker_view']=ticker
         # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
         self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
         self.closing=False
