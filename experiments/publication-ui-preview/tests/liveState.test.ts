@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,tickerParagraphs,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,tickerParagraphs,agreeWords,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -143,4 +143,16 @@ test('the ticker keeps closed sentences in place and ends with the open one; a p
   assert.deepEqual(tickerParagraphs([closed('a','sentence'),open]).map(item=>item.sentences.length),[2]);
   assert.doesNotThrow(()=>parseLiveState({...state,ticker_view:true}));
   assert.throws(()=>parseLiveState({...state,ticker_view:1}));
+});
+
+test('an open sentence turns black only where two translations in a row agree',()=>{
+  let value=agreeWords(undefined,1,'Я хочу взять у тебя');
+  assert.equal(value.agreed,0);
+  value=agreeWords(value,2,'Я хочу сообщить вам');
+  assert.equal(value.agreed,2);
+  assert.equal(agreeWords(value,2,'другое'),value);  // same revision: no change
+  value=agreeWords(value,3,'Я хочу сообщить вам, что заседание');
+  assert.equal(value.agreed,4);
+  value=agreeWords(value,4,'Хочу вам сообщить');
+  assert.equal(value.agreed,0);
 });

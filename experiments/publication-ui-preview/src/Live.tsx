@@ -5,8 +5,8 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
-import type {Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
+import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
@@ -143,27 +143,38 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
   </article>;
 },sameSpeech);
 
-/** One closed sentence of the ticker: memoised on the group, so a new sentence never re-renders the old ones. */
-const TickerSentence=memo(function TickerSentence({group,pending}:{group:Group;pending:boolean}) {
+/**
+ * One sentence of the ticker, memoised on the group so a new sentence never re-renders the old ones.
+ * An open sentence shows the words two translations in a row agreed on in black and the rest in grey.
+ */
+const TickerSentence=memo(function TickerSentence({group,pending,agreed}:{group:Group;pending:boolean;agreed:number}) {
   const pair=shownPair(group,true);const text=pair?.translation||'';
-  return <span className={`ticker-sentence ${pending?'text-pending':''}`} data-group={group.id} title={pair?.source||undefined}>
-    {pending?<ChangingText text={text} hold/>:text}{' '}
+  if(!pending)return <span className="ticker-sentence" data-group={group.id} title={pair?.source||undefined}>{text} </span>;
+  const words=text.split(/\s+/).filter(Boolean);
+  const black=words.slice(0,agreed).join(' ');const grey=words.slice(agreed).join(' ');
+  return <span className="ticker-sentence" data-group={group.id} title={pair?.source||undefined}>
+    {black}{black&&grey?' ':''}{grey&&<span className="text-pending">{grey}</span>}{' '}
   </span>;
 });
 
 /**
  * Ticker view: the conversation as plain paragraphs. Closed sentences never change; the sentence
- * still being spoken ends the text in grey, is updated in place and turns black when it closes.
+ * still being spoken ends the text, its unconfirmed words in grey, and turns black when it closes.
  */
 const TickerView=memo(function TickerView({groups}:{groups:Group[]}) {
   const {tx}=useI18n();
+  const agreements=useRef(new Map<string,Agreement>());
   const paragraphs:TickerParagraph[]=useMemo(()=>tickerParagraphs(groups),[groups]);
   if(!paragraphs.length)return null;
   const [,target]=directionParts(groups[0].direction);
+  const agreed=(group:Group)=>{
+    const next=agreeWords(agreements.current.get(group.id),group.revision??0,shownPair(group,true)?.translation||'');
+    agreements.current.set(group.id,next);return next.agreed;
+  };
   return <article className="ticker" lang={htmlLanguage(target)} dir={isRtlLanguage(target)?'rtl':'ltr'}>
     {paragraphs.map(paragraph=><p key={paragraph.id} className="ticker-paragraph">
       {paragraph.sentences.map(({group,pending})=>shownPair(group,true)?.translation.trim()
-        ?<TickerSentence key={group.id} group={group} pending={pending}/>
+        ?<TickerSentence key={group.id} group={group} pending={pending} agreed={pending?agreed(group):0}/>
         :<span key={group.id} className="ticker-sentence text-pending">{tx('translating')}</span>)}
     </p>)}
   </article>;

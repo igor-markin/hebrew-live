@@ -109,7 +109,7 @@
 .live-feed .ticker {max-width:760px;width:100%;margin:0 auto;padding:4px 4px 24px}
 .live-feed .ticker-paragraph {margin:0 0 18px;font-size:21px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .live-feed .ticker-sentence {color:var(--foreground);transition:color 400ms ease-out}
-.live-feed .ticker-sentence.text-pending {color:var(--muted)}
+.live-feed .ticker-sentence.text-pending,.live-feed .ticker-sentence .text-pending {color:var(--muted)}
 @media(prefers-reduced-motion:reduce){.live-feed .ticker-sentence{transition:none}}
 @media(max-width:640px){.live-feed .ticker-paragraph{font-size:18px}}
 .bubble-source {max-width:min(460px,calc(100vw - 32px));max-height:min(380px,45vh);overflow:auto;padding:14px 18px;background:var(--surface);color:var(--foreground);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 32px #0002;z-index:60;user-select:text}
