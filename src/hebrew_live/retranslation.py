@@ -31,6 +31,54 @@ INTERRUPT_LAG_LIMIT = 4.
 SENTENCE_SPLIT_MIN_SECONDS = 3.
 SENTENCE_MIN_WORDS = 3
 SENTENCE_END = re.compile(r'[.?!…](?=\s+\S)')
+# Sentence freezing with context (HEBREW_LIVE_SENTENCE_CONTEXT). A sentence decoded from its
+# own short window loses the words at its edges ("הקישו אחת" became "הקישוחת"), so every
+# decode also hears the audio before it in the same speaker turn, and a closing decode the
+# first moments after it; only the words inside the sentence are kept.
+CONTEXT_SNAPSHOT_SECONDS = 8.
+CONTEXT_CLOSING_SECONDS = 15.
+CONTEXT_RIGHT_SECONDS = 1.5
+CONTEXT_WINDOW_SECONDS = 28.  # Whisper hears 30 s at most
+MT_CONTEXT_SENTENCES = 2
+MT_CONTEXT_CHARS = 400
+# A technical cut looks this far back for a pause between words, never inside a number.
+TECHNICAL_CUT_SEARCH_SECONDS = 6.
+NUMBER_WORDS = frozenset('''אפס אחת אחד שתיים שתים שניים שנים שתי שני שלוש שלושה שלושת ארבע ארבעה
+ארבעת חמש חמישה חמשת שש שישה ששת שבע שבעה שבעת שמונה שמונת תשע תשעה תשעת עשר עשרה עשרים
+שלושים ארבעים חמישים שישים שבעים שמונים תשעים מאה מאות אלף אלפים כוכבית סולמית'''.split())
+
+
+def number_word(word):
+    bare = word.strip().strip('.,?!…"\'()-')
+    return any(c.isdigit() for c in bare) or bare in NUMBER_WORDS or bare[1:] in NUMBER_WORDS and bare[:1] in 'וה'
+
+
+def technical_cut(words, audio, limit):
+    """Sample at which to close a group that reached `limit` samples: the best pause
+    between two words of the last snapshot in the final seconds before the limit, a
+    sentence end first, never between two parts of a number; failing that the quietest
+    moment there; failing that the limit itself."""
+    low = limit-round(TECHNICAL_CUT_SEARCH_SECONDS*16000)
+    best = None
+    for left, right in zip(words, words[1:]):
+        cut = round((left['end']+right['start'])/2*16000)
+        if not low <= cut <= limit or number_word(left['word']) and number_word(right['word']):
+            continue
+        mark = left['word'].strip()[-1:]
+        score = (3 if mark in '.?!…' else 1 if mark in ',;:' else 0)+4*max(0., right['start']-left['end'])
+        if best is None or score >= best[0]:
+            best = (score, cut)
+    if best is not None:
+        return best[1]
+    if words:
+        return limit  # Words cover the window, but every gap there splits a number.
+    frame = 1600
+    if limit-low < frame*2 or len(audio) < limit:
+        return limit
+    rms = np.sqrt(np.convolve(np.square(audio[low:limit]), np.ones(frame)/frame, 'valid'))
+    if not len(rms) or rms.min() >= .3*rms.mean():
+        return limit
+    return low+int(np.argmin(rms))+frame//2
 
 
 def stable_sentence_end(previous, text):
@@ -116,6 +164,7 @@ class DraftMT:
     first_ready_at: float
     catchup_used: bool = False
     hint: str = ''
+    context: tuple = ()
 
 @dataclass(frozen=True)
 class MTResult:
@@ -151,6 +200,14 @@ class RetranslationProcessor:
         self.hold_last_word=os.environ.get('HEBREW_LIVE_HOLD_LAST_WORD','0')=='1'
         # Closing groups at sentence ends; off by default until measured against main.
         self.sentence_split=os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
+        # Sentence freezing with context; turns sentence splits on. Off by default.
+        self.sentence_context=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
+        self.sentence_split=self.sentence_split or self.sentence_context
+        # Closed groups of the current speaker turn: audio and text for the context of
+        # the next sentence. A pause or a settings change starts a new turn.
+        self.turn=deque()
+        self.turn_continues=False
+        self.right_context=None
         if self.async_mt:
             self._mt_condition=threading.Condition()
             self._mt_pending=deque()
@@ -334,6 +391,9 @@ class RetranslationProcessor:
         technical = reason in ('window', 'audio_gap', 'budget')
         if valid and self.last_status == 'accepted' and self.draft:
             self.publish(self.source, self.draft, 'technical' if technical else 'closed', reason=reason,job=job)
+            for item in self.turn:
+                if item['group'] == self.sid and not self.draft.endswith(TRUNCATION_MARKER):
+                    item['source'], item['translation'] = self.source, self.draft
         else:
             current = self.visible['current'] if self.visible else {'source':'', 'translation':''}
             recognition_issue = getattr(self.engine,'recognition_issue',None)
@@ -360,6 +420,7 @@ class RetranslationProcessor:
         # For an already processed draft, control alone is not new evidence.
         self.finish(reason, valid=False)
         self.reset()
+        self.turn.clear();self.turn_continues = False
         if reason == 'direction':self.floor = 0
 
     def process(self, f):
@@ -378,6 +439,9 @@ class RetranslationProcessor:
             self.flush('audio_gap')
         data = np.asarray(f.audio, dtype=np.float32)
         if self.audio is None:
+            if not self.turn_continues or self.turn and self.turn[-1]['end'] != left:
+                self.turn.clear()
+            self.turn_continues = False
             self.counter += 1; self.sid = 3_000_000+self.counter
             self.start = left
             self.audio = data[left-incoming_start:].copy()
@@ -402,8 +466,13 @@ class RetranslationProcessor:
         if getattr(e,'backend',None)=='fast':max_seconds=min(max_seconds,20.0)
         limit=round(max_seconds*16000)
         while len(self.audio) > limit:
-            self.split_group(limit, 'budget', f)
+            cut = technical_cut(self.previous_words, self.audio, limit) if self.sentence_context else limit
+            if cut != limit:
+                self.log.event('live_technical_cut', segment=self.sid, limit=(self.start+limit)/16000,
+                               cut=(self.start+cut)/16000)
+            self.split_group(cut, 'budget', f)
         closing = f.reason if f.final and f.reason != 'window' else None
+        if closing:self.turn_continues = False  # a pause ends the speaker turn
         if len(self.audio) == limit and not closing: closing = 'budget'
         if self.deferred_tail and not closing:
             from .tuning import DEFAULTS
@@ -428,7 +497,15 @@ class RetranslationProcessor:
         self.audio = self.audio[:cut]
         self.end = self.start+len(self.audio)
         text, self.split_text = self.split_text, ''
-        if closing == 'sentence' and text:
+        if self.sentence_context:
+            self.turn.append(dict(group=self.sid, start=self.start, end=self.end, audio=self.audio.copy(),
+                                  source='', translation=''))
+            while sum(len(item['audio']) for item in list(self.turn)[1:]) > CONTEXT_WINDOW_SECONDS*16000:
+                self.turn.popleft()
+            self.right_context = remainder[:round(CONTEXT_RIGHT_SECONDS*16000)]
+            try:self.recognize(final=True, closing=closing, fallback=text)
+            finally:self.right_context = None
+        elif closing == 'sentence' and text:
             # Two snapshots already agree on this sentence: decoding its audio again
             # only changed words the reader had seen.
             self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
@@ -446,6 +523,7 @@ class RetranslationProcessor:
         self.last, self.settings = f, f.settings
         self.part = self.log.parts[f.settings.part] if hasattr(self.log, 'parts') else None
         self.deferred_tail = True
+        self.turn_continues = self.sentence_context
 
     def fingerprint(self):
         values=dict(settings=asdict(self.settings),prompt=_PROMPT_HASH,
@@ -484,12 +562,56 @@ class RetranslationProcessor:
                     self.last.end,self.last.offset,self.fingerprint(),
                     'closing' if closing else 'refresh' if self._mt_first_requested or self.visible and self.visible['current']['translation'] else 'first',
                     closing,parent.first_ready_at if parent else time.monotonic(),bool(parent),
-                    self.draft)
+                    self.draft,self.mt_context())
         if parent:self.mt_event('mt_superseded',parent,replacement_version=job.version)
         self.mt_event('mt_requested',job)
         return job
 
-    def recognize(self, final, closing):
+    def context_audio(self, seconds):
+        """The turn's audio just before this group, at most `seconds` long."""
+        pieces = []
+        wanted = round(seconds*16000)
+        edge = self.start
+        for item in reversed(self.turn):
+            if item['group'] == self.sid:continue  # the sentence being closed
+            if wanted <= 0 or item['end'] != edge:break
+            piece = item['audio'][-wanted:]
+            pieces.append(piece);wanted -= len(piece);edge = item['start']
+        return np.concatenate(pieces[::-1]) if pieces else np.empty(0, dtype=np.float32)
+
+    def mt_context(self):
+        """(source, translation) of the last closed sentences right before this group."""
+        if not self.sentence_context:return ()
+        pairs = []
+        edge = self.start
+        for item in reversed(self.turn):
+            if item['group'] == self.sid:continue
+            if (len(pairs) >= MT_CONTEXT_SENTENCES or item['end'] != edge or not item['translation'] or
+                    sum(len(source) for source, _ in pairs)+len(item['source']) > MT_CONTEXT_CHARS):
+                break
+            pairs.append((item['source'], item['translation']));edge = item['start']
+        return tuple(pairs[::-1])
+
+    def _decode(self, final, align_words):
+        """Recognise the group; with sentence context, inside a window that also holds the
+        turn's preceding audio and, for a closing decode, the audio right after the group."""
+        e = self.engine
+        left = (self.context_audio(min(CONTEXT_CLOSING_SECONDS if final else CONTEXT_SNAPSHOT_SECONDS,
+                                       CONTEXT_WINDOW_SECONDS-len(self.audio)/16000-CONTEXT_RIGHT_SECONDS))
+                if self.sentence_context else ())
+        right = self.right_context if self.sentence_context and self.right_context is not None else ()
+        if not len(left) and not len(right):
+            return e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words), 0
+        prefix = len(left)/16000
+        options = dict(until=prefix+len(self.audio)/16000) if len(right) else {}
+        window = np.concatenate((left, self.audio, right)).astype(np.float32)
+        text = e.recognize(window, prefix, preliminary=not final, mode='phrases', align_words=True, **options)
+        words = getattr(e, 'recognition_words', None) or []
+        if words:
+            e.recognition_words = [dict(w, start=w['start']-prefix, end=w['end']-prefix) for w in words]
+        return text, len(window)-len(self.audio)
+
+    def recognize(self, final, closing, fallback=''):
         if self.cancel.is_set():return
         self.deferred_tail = False
         e = self.engine
@@ -498,12 +620,18 @@ class RetranslationProcessor:
         # Word times locate a sentence end in the audio; only growing groups need them.
         splittable = self.sentence_split and not final and not closing and len(self.audio) >= SENTENCE_SPLIT_MIN_SECONDS*16000
         align_words = align_words or splittable
-        text = e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words)
+        text, context_samples = self._decode(final, align_words)
         self.last_status = getattr(e, 'recognition_status', None) or ('accepted' if text else 'empty')
+        reused = False
+        if fallback and (self.last_status != 'accepted' or not text.strip()):
+            # The context decode lost a sentence two snapshots agreed on: keep their text.
+            text, self.last_status, reused = fallback, 'accepted', True
         self.log.event('live_asr', segment=self.sid, fragment=self.last.id, revision=self.last.revision,
-                       seconds=time.monotonic()-began, input_seconds=len(self.audio)/16000,
+                       seconds=time.monotonic()-began, input_seconds=(len(self.audio)+context_samples)/16000,
+                       context_seconds=context_samples/16000,
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
-                       final=final, closing=closing, source=text,word_alignment=align_words)
+                       final=final, closing=closing, source=text,word_alignment=align_words,
+                       **(dict(reused=True) if reused else {}))
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'
             if closing and self.catchup_parent:
@@ -619,6 +747,7 @@ class RetranslationProcessor:
             # The group's last committed translation drafts the new one (speculative
             # decoding); engines that do not know hints are called as before.
             options={'hint':job.hint} if job.hint and getattr(e,'accepts_hint',False) else {}
+            if job.context and getattr(e,'accepts_context',False):options['context']=job.context
             pieces=e.translate_for(text,job.settings,**options) if self.async_mt else e.translate(text,**options)
             for piece, end_reason in pieces:
                 if self.cancel.is_set():

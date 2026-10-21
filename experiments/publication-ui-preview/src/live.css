@@ -99,6 +99,11 @@
 .live-feed .text-fresh {animation:text-fresh 320ms ease-out}
 @keyframes text-fresh {from{opacity:.25}to{opacity:1}}
 @media(prefers-reduced-motion:reduce){.live-feed .text-fresh{animation:none}}
+.live-feed .sentence-line {display:block}
+.live-feed .sentence-line+.sentence-line {margin-top:6px}
+.live-feed .text-pending {transition:color 300ms ease-out}
+/* Frozen sentences: the newest card is not marked by an accent border that jumps between cards. */
+.live-feed .chat-bubble.speech-card--frozen,.live-feed .chat-bubble.speech-card--frozen:last-child {border-color:var(--border);background:var(--soft);animation:none}
 .live-feed .bubble-history .translation {font-size:17px;color:var(--muted)}
 .bubble-source {max-width:min(460px,calc(100vw - 32px));max-height:min(380px,45vh);overflow:auto;padding:14px 18px;background:var(--surface);color:var(--foreground);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 32px #0002;z-index:60;user-select:text}
 .bubble-source-label {display:block;font:500 11px/1.5 'Noto Sans',sans-serif;color:var(--muted);margin-bottom:6px}

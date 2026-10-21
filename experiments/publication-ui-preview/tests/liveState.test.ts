@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -124,4 +124,12 @@ test('sentences split while the speaker goes on share one bubble; a pause starts
   const long=speechTurns(Array.from({length:10},(_,index)=>closed(String(index),'sentence')),true);
   assert.equal(speechTurns([closed('a','sentence'),closed('b','silence')]).length,2);  // off by default
   assert.deepEqual(long.map(turn=>turn.groups.length),[8,2]);
+});
+
+test('an open sentence never gets shorter on screen; a closed one shows its own text',()=>{
+  assert.equal(heldText('Для получения информации о судах','Для получения',true),'Для получения информации о судах');
+  assert.equal(heldText('Для получения','Чтобы получить информацию о судах',true),'Чтобы получить информацию о судах');
+  assert.equal(heldText('Для получения информации о судах','Для информации.',false),'Для информации.');
+  assert.doesNotThrow(()=>parseLiveState({...state,frozen_sentences:true}));
+  assert.throws(()=>parseLiveState({...state,frozen_sentences:'yes'}));
 });

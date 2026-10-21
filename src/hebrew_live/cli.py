@@ -464,7 +464,9 @@ class Engine:
         self.warmup()
         self.log.event('model_load_complete',**values)
 
-    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True):
+    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True, until=None):
+        """`prefix` and `until` (seconds) bound the words kept from a window that also holds
+        neighbouring audio for context."""
         if getattr(self,'role','both')=='mt':raise RuntimeError('MT worker cannot recognize audio')
         self.recognition_status='empty'
         self.recognition_issue=None
@@ -476,7 +478,7 @@ class Engine:
         early=((preliminary or loop_stop) and mode=='phrases' and getattr(self,'early_reject',False)
                and getattr(self,'backend',None)=='turbo' and self.language=='he'
                and source_language=='he')
-        word_timestamps = align_words or prefix > 0
+        word_timestamps = align_words or prefix > 0 or until is not None
         from .whisper_reuse import reuse_alignment
         from .whisper_repetition import reject_repeated_decode, RepeatedDecode
         def decode(temperature):
@@ -498,9 +500,9 @@ class Engine:
             # Whisper often loops only after correct words. Keep those words instead of
             # losing the whole window. Trimmed text has no word times, so a prefix
             # (context) window cannot be split and stays rejected.
-            trimmed=trim_loop(exc.text) if prefix==0 else ''
+            trimmed=trim_loop(exc.text) if prefix==0 and until is None else ''
             result=None
-            if not preliminary and prefix==0:
+            if not preliminary and prefix==0 and until is None:
                 # The closing decode decides what stays on screen: one sampled retry.
                 try:result=decode(LOOP_RETRY_TEMPERATURE)
                 except RepeatedDecode as retry:
@@ -516,7 +518,8 @@ class Engine:
         if result is not None:
             self.recognition_issue=None
             self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
-            words=([w for s in result.get('segments',[]) for w in s.get('words',[]) if (w['start']+w['end'])/2>=prefix]
+            words=([w for s in result.get('segments',[]) for w in s.get('words',[])
+                    if prefix<=(w['start']+w['end'])/2 and (until is None or (w['start']+w['end'])/2<until)]
                    if word_timestamps else [])
             text=(''.join(w['word'] for w in words) if word_timestamps else
                   ''.join(s.get('text','') for s in result.get('segments',[]))).strip()
@@ -540,14 +543,15 @@ class Engine:
             self.log.event('recognition_repetition');self.recognition_issue='repeated recognition';return ''
         self.recognition_status='accepted' if text else 'empty'
         return text
-    accepts_hint=True
-    def translate(self, text, hint=''):
-        """Stream the translation; `hint` is the previous translation of the same growing phrase."""
+    accepts_hint=accepts_context=True
+    def translate(self, text, hint='', context=()):
+        """Stream the translation; `hint` is the previous translation of the same growing phrase,
+        `context` the (source, translation) pairs of the sentences right before it."""
         if getattr(self,'role','both')=='asr':raise RuntimeError('ASR worker cannot translate text')
         from mlx_lm.sample_utils import make_sampler
         from . import mt_generate
         from .translation import prompt
-        ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]))
+        ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]),pairs=context)
         max_tokens=mt_generate.max_tokens_for(len(self.tokenizer.encode(text,add_special_tokens=False)))
         stats={};reason=None;generated='';began=time.monotonic();finished=False
         step=None
