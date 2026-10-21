@@ -75,10 +75,6 @@
     footLabel: "Links",
     privacy: "Privacy",
     thirdParty: "Models and licences",
-    makerTitle: "Built by Igor Markin",
-    makerText: "Senior full-stack engineer in Israel. I build LLM-powered products that hold up in production.",
-    makerSite: "About me",
-    makerMail: "Email me",
     themeDark: "Dark theme",
     themeLight: "Light theme",
   };
@@ -157,10 +153,6 @@
     shotAlt0: "Сохранённая сессия: фразы на иврите и их перевод на английский",
     shotAlt1: "Экран живого перевода перед началом записи",
     shotAlt2: "Панель настроек с языком интерфейса и перевода",
-    makerTitle: "Сделал Игорь Маркин",
-    makerText: "Senior full-stack разработчик в Израиле. Делаю продукты на LLM, которые выдерживают production.",
-    makerSite: "Обо мне",
-    makerMail: "Написать",
     themeDark: "Тёмная тема",
     themeLight: "Светлая тема",
   };
@@ -212,8 +204,6 @@
     a4: 'הקוד פתוח תחת Apache-2.0. על המודלים חלים תנאי היוצרים שלהם.',
     feedback: 'מצאתם באג? פתחו issue ←',
     footLabel: 'קישורים', privacy: 'פרטיות', thirdParty: 'מודלים ורישיונות',
-    makerTitle: 'נבנה על ידי איגור מרקין', makerText: 'מפתח Full-Stack בכיר בישראל. אני בונה מוצרים מבוססי LLM שעובדים בייצור.',
-    makerSite: 'עליי', makerMail: 'לכתוב לי',
     themeDark: 'ערכת נושא כהה', themeLight: 'ערכת נושא בהירה',
   };
 
@@ -417,6 +407,7 @@
   function paintTheme() {
     const on = isDark();
     root.classList.toggle('dark-on', on);
+    document.querySelector('meta[name="theme-color"]').content = on ? '#0d1130' : '#f3f1ff';
     themeBtn.setAttribute('aria-label', t(on ? 'themeLight' : 'themeDark'));
   }
   themeBtn.addEventListener('click', () => {
