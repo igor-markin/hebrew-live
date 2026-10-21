@@ -145,14 +145,14 @@ test('the ticker keeps closed sentences in place and ends with the open one; a p
   assert.throws(()=>parseLiveState({...state,ticker_view:1}));
 });
 
-test('an open sentence turns black only where two translations in a row agree',()=>{
-  let value=agreeWords(undefined,1,'Я хочу взять у тебя');
+test('an open sentence turns black only where two different translations in a row agree',()=>{
+  let value=agreeWords(undefined,'Я хочу взять у тебя');
   assert.equal(value.agreed,0);
-  value=agreeWords(value,2,'Я хочу сообщить вам');
+  assert.equal(agreeWords(value,'Я хочу взять у тебя'),value);  // the same text again is no second opinion
+  value=agreeWords(value,'Я хочу сообщить вам');
   assert.equal(value.agreed,2);
-  assert.equal(agreeWords(value,2,'другое'),value);  // same revision: no change
-  value=agreeWords(value,3,'Я хочу сообщить вам, что заседание');
+  value=agreeWords(value,'Я хочу сообщить вам, что заседание');
   assert.equal(value.agreed,4);
-  value=agreeWords(value,4,'Хочу вам сообщить');
+  value=agreeWords(value,'Хочу вам сообщить');
   assert.equal(value.agreed,0);
 });

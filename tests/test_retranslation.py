@@ -541,6 +541,21 @@ class LiveTransportTests(unittest.TestCase):
    self.assertGreaterEqual(received[0][1]['backend_to_dom_ack'],.05)
    with self.assertRaises(__import__('urllib.error',fromlist=['HTTPError']).HTTPError):send('7:2')
    ui.finished_seen.set()
+ def test_ticker_report_reaches_the_diagnostics(self):
+  import json,urllib.request,urllib.error
+  from hebrew_live.browser_ui import BrowserUI
+  with BrowserUI(open_browser=False) as ui:
+   received=[]
+   ui.on_preview_seen=lambda event,**data:received.append((event,data))
+   ui.state['groups']=[dict(id='0:3000001',part=1)]
+   def send(**values):
+    request=urllib.request.Request(ui.url+'action',data=json.dumps(dict(action='ui_ticker',**values)).encode(),
+     headers={'Origin':'http://'+ui.host,'Content-Type':'application/json'})
+    return urllib.request.urlopen(request)
+   with send(group='0:3000001',source='live',black='Хочу вам',grey='сообщить') as response:self.assertEqual(response.status,200)
+   self.assertEqual(received,[('ui_ticker',dict(part=1,group='0:3000001',source='live',black='Хочу вам',grey='сообщить'))])
+   with self.assertRaises(urllib.error.HTTPError):send(group='0:3000001',source='other',black='',grey='')
+   ui.finished_seen.set()
  def test_assets_and_publication_action(self):
   import json,urllib.request,urllib.error,tempfile
   from pathlib import Path
