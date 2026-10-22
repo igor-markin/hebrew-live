@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 from hebrew_live.cli import Fragment
 from hebrew_live.stream import Settings
-from hebrew_live.retranslation import RetranslationProcessor,technical_cut,number_word
+from hebrew_live.retranslation import RetranslationProcessor,technical_cut,number_word,leading_words
 from hebrew_live.translation import prompt
 
 
@@ -70,6 +70,24 @@ class SentenceContextTests(unittest.TestCase):
   self.p.process(self.f(0,64000));self.p.process(self.f(0,80000))
   closed=[v for v in self.pubs() if v['stage']=='closed']
   self.assertEqual(closed[0]['current']['source'],'אחת שתיים שלוש.')
+
+ def test_closing_decode_that_skips_the_first_words_takes_them_from_the_snapshot(self):
+  def recognize(a,prefix=0.,**kw):
+   seconds=len(a)/16000
+   if kw.get('preliminary') and seconds<5.5:text='בעכו. אה, בעכו. אה, אני צריך ללכת';span=(0,seconds)
+   else:text='אני צריך ללכת ברגליים, כן?';span=(2.,seconds)  # the first two seconds are skipped
+   self.e.recognition_status='accepted';self.e.recognition_words=words(text,*span);return text
+  self.e.recognize=recognize
+  self.p.process(self.f(0,80000));self.p.process(self.f(0,88000))  # the later snapshot skips them too
+  self.p.process(self.f(0,96000,final=True,reason='silence'))
+  self.assertEqual(self.mt[-1][0],'בעכו. אה, בעכו. אה, אני צריך ללכת ברגליים, כן?')
+  self.assertEqual([v['prefix'] for n,v in self.events if n=='live_leading_recovered'],['בעכו. אה, בעכו. אה,'])
+
+ def test_leading_words_need_an_anchor_inside_the_snapshot(self):
+  self.assertEqual(leading_words('מה קורה? אני צריך','אני צריך ללכת'),'מה קורה?')
+  self.assertEqual(leading_words('אני צריך ללכת','אני צריך ללכת ברגליים'),'')  # nothing was skipped
+  self.assertEqual(leading_words('מה קורה? בואי','אני צריך ללכת'),'')  # no anchor
+  self.assertEqual(leading_words('מה קורה? אני','אני'),'')  # one word is no anchor
 
  def test_technical_cut_prefers_a_pause_outside_numbers(self):
   limit=20*16000
