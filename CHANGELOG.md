@@ -4,6 +4,7 @@
 
 ### Changed
 
+- finished sentences of a growing draft group stay on screen as shown: once two recognitions in a row agree on a sentence that is followed by more speech, its translation is frozen and only the rest of the group is translated again, continuing from the shown translation; a streaming preview no longer replaces a longer visible version; translation text is 17 px instead of 20 px (2026-10-29 call replay: finished sentences rewritten 296 -> 66, bubble collapses 424 -> 12; `HEBREW_LIVE_FREEZE_SENTENCES=0` restores whole-group re-translation, the split-worker pipeline keeps it);
 - translation drives `mlx_lm.generate_step` directly instead of `stream_generate`: the same text and finish reasons (84 of 84 compared sequences identical), without the per-call wired-memory toggling that cost 0.33-0.46 s per translation (`HEBREW_LIVE_MT_GENERATE=stock` restores it);
 - the translation token budget grows with the source (96-512 tokens instead of a fixed 256) and a translation that still reaches it is shown with an explicit `[…]` instead of being dropped (`HEBREW_LIVE_MT_MAX_TOKENS=256` restores the old limit);
 - a streaming translation can be cancelled between tokens: the engine process polls for a cancel message, so an abandoned or stale generation ends within one token instead of being drained for seconds or the process being killed; a refresh overtaken by newer queued audio is stopped, and the split-worker MT queue serves closing, first, then refresh jobs (`HEBREW_LIVE_MT_INTERRUPT=0` restores finishing every translation, in order);
