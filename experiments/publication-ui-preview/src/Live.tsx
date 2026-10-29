@@ -77,7 +77,9 @@ const Speech=memo(function Speech({group,position,onRetry,retrying,retryEnabled,
   </article>;
 });
 
-const ESTIMATED_CARD_HEIGHT=170;
+// Rows not measured yet take the average measured height, so a new bubble does not
+// first reserve a tall slot and then shrink the feed under the reader.
+const ESTIMATED_CARD_HEIGHT=90;
 const CARD_GAP=10;
 const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,retrying,retryEnabled}:{groups:Group[];scope:string;scroller:React.RefObject<HTMLElement|null>;onRetry?:(id:string)=>void;retrying?:string|null;retryEnabled:boolean}){
   const visible=useMemo(()=>groups.flatMap((group,index)=>isVisibleGroup(group)?[{group,position:index+1}]:[]),[groups]);
@@ -87,7 +89,8 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   const [range,setRange]=useState<[number,number]>([0,Math.min(visible.length,12)]);
   const anchorId=useRef<string|null>(null);const [pinnedId,setPinnedId]=useState<string|null>(null);
   const observers=useRef(new Map<string,ResizeObserver>());
-  const offsets=useMemo(()=>{const values=[0];for(const {group} of visible)values.push(values.at(-1)!+(heights[group.id]||ESTIMATED_CARD_HEIGHT)+CARD_GAP);return values;},[visible,heights]);
+  const estimate=useMemo(()=>{const measured=Object.values(heights);return measured.length?Math.round(measured.reduce((sum,value)=>sum+value,0)/measured.length):ESTIMATED_CARD_HEIGHT;},[heights]);
+  const offsets=useMemo(()=>{const values=[0];for(const {group} of visible)values.push(values.at(-1)!+(heights[group.id]||estimate)+CARD_GAP);return values;},[visible,heights,estimate]);
   const total=offsets.at(-1)||0;
   const updateRange=useCallback(()=>{
     const node=scroller.current;if(!node)return;
@@ -106,14 +109,14 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
     observers.current.get(id)?.disconnect();observers.current.delete(id);if(!node)return;
     const record=()=>{const height=Math.ceil(node.getBoundingClientRect().height);const old=heightsRef.current;
       if(!height||old[id]===height)return;
-      const before=old[id]||ESTIMATED_CARD_HEIGHT;const container=scroller.current;
+      const before=old[id]||estimate;const container=scroller.current;
       heightsRef.current={...old,[id]:height};
       const anchorIndex=anchorId.current===null?-1:visible.findIndex(item=>item.group.id===anchorId.current);
       if(container&&anchorIndex>=0&&index<anchorIndex)container.scrollTop+=height-before;
       setHeights(heightsRef.current);
     };record();const observer=new ResizeObserver(record);observer.observe(node);
     observers.current.set(id,observer);
-  },[scroller,visible]);
+  },[estimate,scroller,visible]);
   const toggleOriginal=useCallback((id:string,open:boolean)=>setOpenOriginals(old=>{const next=new Set(old);if(open)next.add(id);else next.delete(id);return next;}),[]);
   const rendered=useMemo(()=>virtualIndexes(visible.length,range,pinnedId===null?-1:visible.findIndex(item=>item.group.id===pinnedId)),[pinnedId,range,visible]);
   return <div className="virtual-message-list" style={{height:total}} data-rendered-count={rendered.length}>
