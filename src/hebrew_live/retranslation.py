@@ -16,6 +16,9 @@ import threading
 import time
 from types import SimpleNamespace
 import numpy as np
+from .sentence_freeze import CONTEXT_SENTENCES, pair_finished, same_prefix, sentence_start, split_sentences, tail_after, target_cut
+# Seconds of silence after which the next group no longer continues the previous one.
+CARRY_GAP = 3.
 
 _PROMPT_HASH = hashlib.sha256(Path(__file__).with_name('translation.py').read_bytes()).hexdigest()
 STREAM_PREVIEW_INTERVAL = 0.1
@@ -181,7 +184,11 @@ class DraftMT:
     first_ready_at: float
     catchup_used: bool = False
     hint: str = ''
+    # Shown (source, translation) pairs before this job's text, which the translator
+    # continues, and how many frozen sentences of the group precede it.
     context: tuple = ()
+    frozen: int = 0
+    previous: tuple = ()  # The group's earlier recognized texts; a sentence is frozen only once it repeats.
 
 @dataclass(frozen=True)
 class MTResult:
@@ -198,7 +205,7 @@ class RetranslationProcessor:
     _GROUP_FIELDS=('audio','last','settings','part','source','draft','visible',
                    'last_status','closed','deferred_tail','published_job',
                    '_mt_first_requested','_mt_closing_pending','sid','start','end',
-                   'previous_text','previous_words')
+                   'previous_text','previous_words','frozen_source','frozen_target','seen_texts','previous_seen')
 
     def __init__(self, engine, updates, log, cancel, async_mt=None):
         self.engine, self.updates, self.log, self.cancel = engine, updates, log, cancel
@@ -220,6 +227,10 @@ class RetranslationProcessor:
         # Sentence freezing with context (also under the ticker view); turns sentence splits on. Off by default.
         self.sentence_context=os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1' or os.environ.get('HEBREW_LIVE_TICKER','0')=='1'
         self.sentence_split=self.sentence_split or self.sentence_context
+        # Finished sentences stay as shown; only the rest of the group is translated again.
+        # The independent MT worker and the sentence-split modes keep their own behaviour.
+        self.freeze_enabled=os.environ.get('HEBREW_LIVE_FREEZE_SENTENCES','1')!='0' and not self.async_mt
+        self.carry=();self.carry_end=None
         # Closed groups of the current speaker turn: audio and text for the context of
         # the next sentence. A pause or a settings change starts a new turn.
         self.turn=deque()
@@ -259,6 +270,8 @@ class RetranslationProcessor:
         self.previous_words=[]
         self.split_at=None
         self.split_text=''
+        self.frozen_source=[];self.frozen_target=[]
+        self.seen_texts=[];self.previous_seen=()
 
     def _capture_group(self, detach=False):
         state={key:getattr(self,key,None) for key in self._GROUP_FIELDS}
@@ -374,6 +387,8 @@ class RetranslationProcessor:
         start,end=(job.start,job.end) if job else (self.start,self.end)
         captured,offset=(job.captured_at,job.captured_offset) if job else (self.last.end,self.last.offset)
         previous = self.visible
+        if self.freeze and stage != 'unavailable':
+            source, target = self.with_frozen(source, target)
         snapshot = dict(source=source, translation=target, fragment=job.fragment if job else self.last.id,
                         revision=job.revision if job else self.last.revision,
                         source_status='accepted' if job else self.last_status)
@@ -407,11 +422,15 @@ class RetranslationProcessor:
     def finish(self, reason, valid=False, job=None):
         if self.last is None or self.closed: return
         technical = reason in ('window', 'audio_gap', 'budget')
-        if valid and self.last_status == 'accepted' and self.draft:
+        if valid and self.last_status == 'accepted' and (self.draft or self.frozen_target):
             self.publish(self.source, self.draft, 'technical' if technical else 'closed', reason=reason,job=job)
             for item in self.turn:
                 if item['group'] == self.sid and not self.draft.endswith(TRUNCATION_MARKER):
-                    item['source'], item['translation'] = self.source, self.draft
+                    item['source'], item['translation'] = self.with_frozen(self.source, self.draft)
+            if self.freeze:
+                pairs=[*zip(self.frozen_source,self.frozen_target),*([(self.source,self.draft)] if self.draft else [])]
+                self.carry=tuple(pairs[-CONTEXT_SENTENCES:])
+                self.carry_end=self.end
         else:
             current = self.visible['current'] if self.visible else {'source':'', 'translation':''}
             recognition_issue = getattr(self.engine,'recognition_issue',None)
@@ -439,6 +458,7 @@ class RetranslationProcessor:
         self.finish(reason, valid=False)
         self.reset()
         self.turn.clear();self.turn_continues = False
+        if reason in ('direction','settings'):self.carry=();self.carry_end=None
         if reason == 'direction':self.floor = 0
 
     def process(self, f):
@@ -560,10 +580,31 @@ class RetranslationProcessor:
                        fingerprint=job.fingerprint,kind=job.kind,first_ready_at=job.first_ready_at,
                        catchup_used=job.catchup_used,**extra)
 
+    @property
+    def freeze(self):
+        return self.freeze_enabled and not self.sentence_split
+
+    def with_frozen(self, source, target):
+        """The whole group as shown: frozen sentences followed by the current tail."""
+        return (' '.join([*self.frozen_source, source]).strip(),
+                ' '.join([*self.frozen_target, target]).strip())
+
+    def visible_length(self, job):
+        visible=self.visible if job.group==getattr(self,'sid',None) else None
+        return len(visible['current']['translation']) if visible else 0
+
+    def freeze_context(self):
+        """Shown pairs the translator continues: the latest frozen sentences, preceded by the
+        end of the previous group when this one starts right after it (a technical split or a
+        short breath); after a real pause the model would continue an unrelated sentence."""
+        carry=self.carry if self.carry_end is not None and self.start-self.carry_end<CARRY_GAP*16000 else ()
+        return tuple([*carry,*zip(self.frozen_source,self.frozen_target)][-CONTEXT_SENTENCES:])
+
     def job_current(self, job):
         valid=(not self.cancel.is_set() and self.settings==job.settings and
                self.sid==job.group and not self.closed and self.fingerprint()==job.fingerprint and
-               (job.id,job.version)>=self.published_job)
+               (job.id,job.version)>=self.published_job and
+               (not self.freeze or job.frozen==len(self.frozen_source)))
         if valid and self.async_mt and job.kind=='refresh':
             with self._mt_condition:
                 valid=self._mt_latest.get(job.group)==(job.id,job.version)
@@ -582,7 +623,8 @@ class RetranslationProcessor:
                     self.last.end,self.last.offset,self.fingerprint(),
                     'closing' if closing else 'refresh' if self._mt_first_requested or self.visible and self.visible['current']['translation'] else 'first',
                     closing,parent.first_ready_at if parent else time.monotonic(),bool(parent),
-                    self.draft,self.mt_context())
+                    self.draft,self.freeze_context() if self.freeze else self.mt_context(),
+                    len(self.frozen_source),self.previous_seen)
         if parent:self.mt_event('mt_superseded',parent,replacement_version=job.version)
         self.mt_event('mt_requested',job)
         return job
@@ -704,6 +746,14 @@ class RetranslationProcessor:
     def translate(self, text, final, closing):
         if self.hold_last_word and not final:
             text = hold_last_word(text)
+        self.previous_seen=tuple(self.seen_texts[-8:]);self.seen_texts.append(text)
+        if self.freeze and self.frozen_source:
+            text = tail_after(' '.join(self.frozen_source), text)
+            if not text:
+                # Nothing beyond the frozen sentences: the shown group is already complete.
+                self.source = self.draft = ''
+                if closing: self.finish(closing, valid=True)
+                return
         if not self.visible or (not self.visible['current']['translation'] and
                                 not (self.async_mt and self._mt_outstanding)):
             self.publish(text, '')  # Keep a pending first pair stable until its translation arrives.
@@ -807,9 +857,13 @@ class RetranslationProcessor:
                         current=self._mt_latest.get(job.group)==(job.id,job.version)
                 if current and end_reason != 'stop' and now-last_preview_at >= STREAM_PREVIEW_INTERVAL:
                     candidate = streamable_prefix(output)
-                    if candidate and candidate != preview:
+                    shown_source,shown=(self.with_frozen(text,candidate) if self.freeze
+                                        else (text,candidate))
+                    # A preview never replaces a longer visible version: the bubble would
+                    # collapse to a few words and grow back on every refresh.
+                    if candidate and candidate != preview and len(shown) >= self.visible_length(job):
                         self.updates.put(('live_stream',job.group,dict(
-                            source=text,translation=candidate,start=job.start/16000,end=job.end/16000,
+                            source=shown_source,translation=shown,start=job.start/16000,end=job.end/16000,
                             preview_id=f'{job.id}:{job.version}',preview_emitted_at=now)))
                         if not preview:
                             self.mt_event('mt_first_preview',job,seconds=now-began,
@@ -858,11 +912,16 @@ class RetranslationProcessor:
                 if job.closing: self.finish(job.closing, valid=False)
                 return
             output=result.output.strip()
+            if self.freeze and job.context and not self.frozen_target:
+                output=sentence_start(output,job.context[-1][1])
             self.source, self.draft = job.source, output
+            if self.freeze:
+                self.freeze_finished(job,output)
+                job=replace(job,frozen=len(self.frozen_source))  # Still current after freezing.
             if job.closing:
                 self.finish(job.closing, valid=True,job=job)
             else:
-                self.publish(job.source, output,job=job)
+                self.publish(self.source, self.draft,job=job)
         finally:
             # A durable publication normally replaces the preview. Clear it
             # explicitly when publication is unchanged or fails halfway through.
@@ -870,3 +929,25 @@ class RetranslationProcessor:
             if current is not None:
                 self._mt_group_states[job.group]=self._capture_group(detach=True)
                 self._restore_group(current)
+
+    def freeze_finished(self, job, output):
+        """Move the finished sentences of a translated tail into the frozen part."""
+        if job.closing:
+            self.frozen_source.append(job.source);self.frozen_target.append(output)
+            self.source = self.draft = ''
+            return
+        count,sources=pair_finished(job.source,False)
+        frozen=' '.join(self.frozen_source)
+        stable=max((same_prefix(sources,split_sentences(tail_after(frozen,text))) for text in job.previous),default=0)
+        targets=split_sentences(output)
+        for count in range(min(count,stable),0,-1):
+            cut=target_cut(sources,targets,count)
+            if cut:break
+        else:return
+        if cut==count:
+            self.frozen_source+=sources[:count];self.frozen_target+=targets[:count]
+        else:
+            self.frozen_source.append(' '.join(sources[:count]));self.frozen_target.append(' '.join(targets[:cut]))
+        self.source=' '.join(sources[count:]);self.draft=' '.join(targets[cut:])
+        self.log.event('sentences_frozen',segment=job.group,count=count,
+                       frozen=len(self.frozen_source))
