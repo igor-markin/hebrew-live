@@ -16,7 +16,9 @@ import threading
 import time
 from types import SimpleNamespace
 import numpy as np
-from .sentence_freeze import CONTEXT_SENTENCES, pair_finished, same_prefix, sentence_start, split_sentences, tail_after
+from .sentence_freeze import CONTEXT_SENTENCES, pair_finished, same_prefix, sentence_start, split_sentences, tail_after, target_cut
+# Seconds of silence after which the next group no longer continues the previous one.
+CARRY_GAP = 3.
 
 _PROMPT_HASH = hashlib.sha256(Path(__file__).with_name('translation.py').read_bytes()).hexdigest()
 STREAM_PREVIEW_INTERVAL = 0.1
@@ -186,7 +188,7 @@ class DraftMT:
     # continues, and how many frozen sentences of the group precede it.
     context: tuple = ()
     frozen: int = 0
-    previous: str = ''  # The group's previous recognized text; a sentence is frozen only once it repeats.
+    previous: tuple = ()  # The group's earlier recognized texts; a sentence is frozen only once it repeats.
 
 @dataclass(frozen=True)
 class MTResult:
@@ -203,7 +205,7 @@ class RetranslationProcessor:
     _GROUP_FIELDS=('audio','last','settings','part','source','draft','visible',
                    'last_status','closed','deferred_tail','published_job',
                    '_mt_first_requested','_mt_closing_pending','sid','start','end',
-                   'previous_text','previous_words','frozen_source','frozen_target','seen','previous_seen')
+                   'previous_text','previous_words','frozen_source','frozen_target','seen_texts','previous_seen')
 
     def __init__(self, engine, updates, log, cancel, async_mt=None):
         self.engine, self.updates, self.log, self.cancel = engine, updates, log, cancel
@@ -269,7 +271,7 @@ class RetranslationProcessor:
         self.split_at=None
         self.split_text=''
         self.frozen_source=[];self.frozen_target=[]
-        self.seen=self.previous_seen=''
+        self.seen_texts=[];self.previous_seen=()
 
     def _capture_group(self, detach=False):
         state={key:getattr(self,key,None) for key in self._GROUP_FIELDS}
@@ -593,8 +595,9 @@ class RetranslationProcessor:
 
     def freeze_context(self):
         """Shown pairs the translator continues: the latest frozen sentences, preceded by the
-        end of the previous group when it closed less than 30 s before this one starts."""
-        carry=self.carry if self.carry_end is not None and self.start-self.carry_end<30*16000 else ()
+        end of the previous group when this one starts right after it (a technical split or a
+        short breath); after a real pause the model would continue an unrelated sentence."""
+        carry=self.carry if self.carry_end is not None and self.start-self.carry_end<CARRY_GAP*16000 else ()
         return tuple([*carry,*zip(self.frozen_source,self.frozen_target)][-CONTEXT_SENTENCES:])
 
     def job_current(self, job):
@@ -743,7 +746,7 @@ class RetranslationProcessor:
     def translate(self, text, final, closing):
         if self.hold_last_word and not final:
             text = hold_last_word(text)
-        self.previous_seen, self.seen = self.seen, text
+        self.previous_seen=tuple(self.seen_texts[-8:]);self.seen_texts.append(text)
         if self.freeze and self.frozen_source:
             text = tail_after(' '.join(self.frozen_source), text)
             if not text:
@@ -933,11 +936,18 @@ class RetranslationProcessor:
             self.frozen_source.append(job.source);self.frozen_target.append(output)
             self.source = self.draft = ''
             return
-        count,sources,targets=pair_finished(job.source,output,False)
-        previous=split_sentences(tail_after(' '.join(self.frozen_source),job.previous))
-        count=min(count,same_prefix(sources,previous))
-        if not count:return
-        self.frozen_source+=sources[:count];self.frozen_target+=targets[:count]
-        self.source=' '.join(sources[count:]);self.draft=' '.join(targets[count:])
+        count,sources=pair_finished(job.source,False)
+        frozen=' '.join(self.frozen_source)
+        stable=max((same_prefix(sources,split_sentences(tail_after(frozen,text))) for text in job.previous),default=0)
+        targets=split_sentences(output)
+        for count in range(min(count,stable),0,-1):
+            cut=target_cut(sources,targets,count)
+            if cut:break
+        else:return
+        if cut==count:
+            self.frozen_source+=sources[:count];self.frozen_target+=targets[:count]
+        else:
+            self.frozen_source.append(' '.join(sources[:count]));self.frozen_target.append(' '.join(targets[:cut]))
+        self.source=' '.join(sources[count:]);self.draft=' '.join(targets[cut:])
         self.log.event('sentences_frozen',segment=job.group,count=count,
                        frozen=len(self.frozen_source))

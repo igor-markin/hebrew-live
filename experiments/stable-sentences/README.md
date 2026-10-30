@@ -29,3 +29,9 @@ the old pipeline's final re-translation of the whole group no longer replaces it
 The same replay on `stable-release` (alpha.4 code, both runs with the preview rule, so
 only freezing differs): finished sentences rewritten 196 -> 66, bubble collapses 12 -> 13,
 MT p50 0.49 -> 0.45 s, p95 1.47 -> 1.03 s.
+
+After the 2026-10-30 live test (a TV clip where nothing froze: the first sentence flipped
+between recognitions and the model split `11 וואו,` into two sentences), a sentence may
+agree with any earlier recognition of the group, translation sentences are paired by
+text share when the counts differ, and context crosses groups only after a pause under
+3 s. Call replay: rewritten 66 -> 50; TV clip replay: 15 -> 1.

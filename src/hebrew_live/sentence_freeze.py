@@ -72,26 +72,38 @@ def same_prefix(sentences, previous):
 
 def sentence_start(text, before):
     """A new bubble that continues the previous group starts with a capital letter unless
-    the previous text stopped mid-sentence."""
-    if text and not finished(before) or not text[:1].islower():
+    the previous text stopped mid-sentence; a stray leading comma is dropped."""
+    text = text.lstrip(',;: ')
+    if not text or not finished(before) or not text[:1].islower():
         return text
     return text[0].upper() + text[1:]
 
 
-def pair_finished(source, translation, closing):
-    """How many leading sentences of `source` can be frozen with `translation`.
+def pair_finished(source, closing):
+    """How many leading sentences of `source` are finished speech, and its sentences.
 
-    Returns (count, source_sentences, translation_sentences). Every sentence but the
-    last is finished speech; the last one counts only when the group closes. Without a
-    one-to-one sentence match nothing is frozen, except on closing where the whole pair
-    is final anyway."""
+    Every sentence but the last is followed by more speech; the last one counts only when
+    the group closes."""
     sources = split_sentences(source)
-    targets = split_sentences(translation)
     if closing:
-        return len(sources), sources, targets
+        return len(sources), sources
     count = 0
     while count < len(sources) - 1 and finished(sources[count]):
         count += 1
-    if count and len(sources) == len(targets) and all(finished(sentence) for sentence in targets[:count]):
-        return count, sources, targets
-    return 0, sources, targets
+    return count, sources
+
+
+def target_cut(sources, targets, count, tolerance=.1):
+    """How many leading translation sentences render the first `count` source sentences,
+    or None. One to one when both sides have as many sentences; otherwise the finished
+    translation sentence boundary whose share of the text is closest to the source share,
+    within `tolerance` (the model may split `11 וואו,` into `11. Ого,`)."""
+    if len(targets) == len(sources):
+        return count if all(finished(sentence) for sentence in targets[:count]) else None
+    share = lambda parts, upto: len(' '.join(parts[:upto])) / max(1, len(' '.join(parts)))
+    wanted = share(sources, count)
+    cuts = [index for index in range(1, len(targets)) if finished(targets[index - 1])]
+    if not cuts:
+        return None
+    best = min(cuts, key=lambda index: abs(share(targets, index) - wanted))
+    return best if abs(share(targets, best) - wanted) <= tolerance else None

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 from hebrew_live.cli import Fragment
 from hebrew_live.retranslation import RetranslationProcessor
-from hebrew_live.sentence_freeze import pair_finished,sentence_start,split_sentences,tail_after
+from hebrew_live.sentence_freeze import pair_finished,sentence_start,split_sentences,tail_after,target_cut
 from hebrew_live.stream import Settings
 from hebrew_live.translation import prompt
 
@@ -18,14 +18,20 @@ class HelperTests(unittest.TestCase):
   self.assertEqual(tail_after('אני לא יכול להשיג את הכסף.','אני לא יכולה להשיג כסף. מהבנק שלי'),'מהבנק שלי')
   self.assertEqual(tail_after('','א ב'),'א ב')
   self.assertEqual(tail_after('א ב ג.','א ב ג.'),'')
- def test_pair_finished_needs_one_to_one_sentences(self):
-  self.assertEqual(pair_finished('א. ב. ג','A. B. C',False)[0],2)
-  self.assertEqual(pair_finished('א. ב','A. B. C',False)[0],0)
-  self.assertEqual(pair_finished('א.','A.',False)[0],0)
-  self.assertEqual(pair_finished('א. ב','A B',True)[0],2)
+ def test_pair_finished_counts_sentences_followed_by_speech(self):
+  self.assertEqual(pair_finished('א. ב. ג',False)[0],2)
+  self.assertEqual(pair_finished('א.',False)[0],0)
+  self.assertEqual(pair_finished('א. ב',True)[0],2)
+ def test_target_cut_pairs_one_to_one_or_by_text_share(self):
+  self.assertEqual(target_cut(['א.','ב.','ג'],['A.','B.','C'],2),2)
+  self.assertIsNone(target_cut(['א.','ב'],['A','B'],1))
+  sources=['אחת שתיים שלוש ארבע חמש.','שש שבע שמונה תשע עשר']
+  self.assertEqual(target_cut(sources,['11.','One two three four five.','Six seven eight nine ten'],1),2)
+  self.assertIsNone(target_cut(sources,['One.','Two.','Three four five six seven eight nine ten'],1))
  def test_sentence_start(self):
   self.assertEqual(sentence_start('деньги придут','Готово.'),'Деньги придут')
   self.assertEqual(sentence_start('и деньги','потому что'),'и деньги')
+  self.assertEqual(sentence_start(', 11. Ого','Спасибо.'),'11. Ого')
  def test_prompt_forces_shown_translation_as_answer_start(self):
   tokenizer=SimpleNamespace(encode=lambda text,add_special_tokens=False:text)
   text=prompt(tokenizer,'milmmt','ב','he-ru',pairs=(('א.','А.'),))
@@ -94,6 +100,17 @@ class FreezeTests(unittest.TestCase):
   self.step(32000,'אב. ג ד ה','C D E')
   self.assertEqual(self.mt,['א.','אב. ג','אב. ג ד','ג ד ה'])
   self.assertEqual(self.shown()[-1],'AB. C D E')
+ def test_sentence_agreeing_with_an_earlier_recognition_is_frozen(self):
+  self.step(8000,'א.','A.')
+  self.step(16000,'אא. ב','X. B')
+  self.step(24000,'א. ב ג','A. B C')  # Agrees with the first recognition, not the second.
+  self.step(32000,'א. ב ג ד','B C D')
+  self.assertEqual(self.mt[-1],'ב ג ד')
+ def test_no_context_after_a_pause(self):
+  self.step(16000,'א.','A.',final=True)
+  self.step(16000*6,'ב','b',start=16000*5)
+  self.assertEqual(self.contexts[-1],[])
+  self.assertEqual(self.shown()[-1],'b')
  def test_switch_restores_whole_group_translation(self):
   with patch.dict(os.environ,{'HEBREW_LIVE_FREEZE_SENTENCES':'0'}):
    self.p=RetranslationProcessor(self.e,self.q,self.log,threading.Event())
