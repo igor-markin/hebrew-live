@@ -1,5 +1,6 @@
 export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number};
-export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number};
+export type NumberIssue = {kind:'missing'|'extra';number:string};
+export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[]};
 export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair};
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
@@ -35,6 +36,7 @@ function group(value:unknown): value is Group {
   if(value.final!==undefined&&!pair(value.final)||value.final_progress!==undefined&&!pair(value.final_progress)||value.stream!==undefined&&!pair(value.stream))return false;
   if(value.live!==undefined){
     if(!record(value.live)||!pair(value.live.current)||!Array.isArray(value.live.history)||!value.live.history.every(pair)||typeof value.live.stage!=='string'||!optionalString(value.live.issue)||!optionalString(value.live.reason)||!optionalNumber(value.live.start)||!optionalNumber(value.live.end))return false;
+    if(value.live.numbers!==undefined&&(!Array.isArray(value.live.numbers)||!value.live.numbers.every(item=>record(item)&&(item.kind==='missing'||item.kind==='extra')&&typeof item.number==='string'&&/^\d{1,40}$/.test(item.number))))return false;
   }
   return true;
 }
@@ -230,4 +232,33 @@ export function phoneStatusText(status:string|null|undefined):PhoneStatusText {
 /** The phone is chosen for a recording that has not started and is not known to be ready: Start would only fail. */
 export function phoneBlocksStart(state:LiveState):boolean {
   return !state.recording_started&&state.input_source==='phone'&&state.phone_status!=='ready';
+}
+
+/**
+ * Figures to check under a bubble: those the engine found on one side of a closed phrase and
+ * not the other, once each. An open phrase never has a note: its figures change every second.
+ */
+export function numberNotes(groups:Group[]):string[] {
+  const seen:string[]=[];
+  for(const group of groups){
+    if(!group.complete||!group.live||!['closed','technical'].includes(group.live.stage))continue;
+    for(const item of group.live.numbers||[])if(!seen.includes(item.number))seen.push(item.number);
+  }
+  return seen;
+}
+
+export type VocabularyEntry={he:string;ru:string;en:string};
+export type VocabularyList={entries:VocabularyEntry[];damaged:boolean;enabled:boolean;limit:number;lengths:{he:number;ru:number;en:number}};
+
+export function parseVocabulary(value:unknown):VocabularyList {
+  const field=(item:unknown)=>typeof item==='string';
+  if(!record(value)||!Array.isArray(value.entries)||!value.entries.every(item=>record(item)&&field(item.he)&&field(item.ru)&&field(item.en))||
+    typeof value.damaged!=='boolean'||typeof value.enabled!=='boolean'||typeof value.limit!=='number'||!record(value.lengths)||
+    !['he','ru','en'].every(key=>typeof (value.lengths as Record<string,unknown>)[key]==='number'))throw new Error('Invalid vocabulary');
+  return value as VocabularyList;
+}
+
+/** A Hebrew word of two letters or fewer, which prefixes can glue onto other words. */
+export function shortHebrew(word:string):boolean {
+  return [...word.replace(/[^\u05d0-\u05ea]/g,'')].length<=2&&/[\u05d0-\u05ea]/.test(word)&&!word.trim().includes(' ');
 }

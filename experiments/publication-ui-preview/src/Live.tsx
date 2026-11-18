@@ -5,8 +5,8 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
-import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
+import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 
@@ -98,6 +98,13 @@ function BubbleText({pair,segments,direction,originalOpen,onOriginalToggle}:{pai
   </div>;
 }
 
+/** A calm note under a closed bubble whose figures differ between source and translation. */
+function NumberNote({groups}:{groups:Group[]}) {
+  const {tx}=useI18n();
+  const notes=numberNotes(groups);
+  return notes.length?<span className="bubble-status number-note">{tx('checkNumber',{numbers:notes.join(', ')})}</span>:null;
+}
+
 type SpeechProps={turn:SpeechTurn;onRetry?:(id:string)=>void;retrying:boolean;retryEnabled:boolean;originalOpen:boolean;onOriginalToggle:(id:string,open:boolean)=>void};
 const sameSpeech=(a:SpeechProps,b:SpeechProps)=>a.turn.id===b.turn.id&&a.turn.position===b.turn.position&&
   a.turn.groups.length===b.turn.groups.length&&a.turn.groups.every((group,index)=>group===b.turn.groups[index])&&
@@ -114,6 +121,7 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
     return <article ref={holdRef} className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${frozen?'speech-card--frozen':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
       <BubbleText segments={segments} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(turn.id,open)}/>
       {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
+      <NumberNote groups={turn.groups}/>
     </article>;
   }
   const live=group.live;
@@ -137,6 +145,7 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}
+    <NumberNote groups={[group]}/>
     {issue&&!shortMiss&&(unconfirmedDraft?<span className="bubble-status bubble-unconfirmed">{issueText(locale,issue)}</span>:<p className="unavailable bubble-issue">{issueText(locale,issue)}</p>)}
     {issue&&onRetry&&<div className="fragment-retry"><Button variant="tertiary" isDisabled={!retryEnabled||retrying} onPress={()=>onRetry(group.id)}>{retrying?tx('retrying'):tx('retry')}</Button>{!retryEnabled&&!retrying&&<small>{tx('pauseFirst')}</small>}</div>}
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}
@@ -238,6 +247,66 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
+const emptyEntry:VocabularyEntry={he:'',ru:'',en:''};
+
+/** The owner's words in Settings: the engine re-reads the file, so edits apply from the next phrase. */
+function VocabularyEditor() {
+  const {tx}=useI18n();
+  const [list,setList]=useState<VocabularyList|null>(null);
+  const [error,setError]=useState('');
+  const [form,setForm]=useState<VocabularyEntry>(emptyEntry);
+  const [editing,setEditing]=useState<string|null>(null);
+  const [busy,setBusy]=useState(false);
+  const load=useCallback(async()=>{
+    try{setList(parseVocabulary(await readJson('../vocabulary')));setError('');}catch{setError(tx('vocabularyLoadError'));}
+  },[tx]);
+  const failure=(code:unknown)=>{
+    const keys:Record<string,TextKey>={empty_hebrew:'vocabularyEmptyHebrew',not_hebrew:'vocabularyNotHebrew',no_translation:'vocabularyNoTranslation',
+      too_long:'vocabularyTooLong',too_many:'vocabularyTooMany',damaged:'vocabularyDamaged'};
+    return tx(keys[String(code)]||'vocabularyError',{limit:list?.limit??500});
+  };
+  const send=async(body:object)=>{
+    setBusy(true);setError('');
+    try{
+      const response=await fetch('../action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:timeoutSignal()});
+      const data:unknown=await response.json().catch(()=>({}));
+      if(!response.ok){setError(failure((data as {error?:unknown}).error));return false;}
+      setList(parseVocabulary(data));return true;
+    }catch{setError(tx('vocabularyError'));return false;}
+    finally{setBusy(false);}
+  };
+  const submit=async(event:React.FormEvent)=>{
+    event.preventDefault();
+    if(!form.he.trim()){setError(tx('vocabularyEmptyHebrew'));return;}
+    if(!form.ru.trim()&&!form.en.trim()){setError(tx('vocabularyNoTranslation'));return;}
+    if(await send({action:'vocabulary_set',value:form,...(editing?{previous:editing}:{})})){setForm(emptyEntry);setEditing(null);}
+  };
+  const field=(key:keyof VocabularyEntry,label:TextKey,rtl=false)=><label className="vocabulary-field"><span>{tx(label)}</span>
+    <input value={form[key]} dir={rtl?'rtl':'auto'} lang={key} maxLength={list?.lengths[key]??120} disabled={busy}
+      onChange={event=>setForm(old=>({...old,[key]:event.target.value}))}/></label>;
+  const blocked=busy||!list||list.damaged;
+  return <details className="vocabulary" onToggle={event=>{if(event.currentTarget.open)void load();}}>
+    <summary>{tx('vocabulary')}{list?` · ${list.entries.length}`:''}</summary>
+    <p className="vocabulary-note">{tx('vocabularyHint')}</p>
+    <p className={`vocabulary-note ${shortHebrew(form.he)?'vocabulary-note--warn':''}`}>{tx('vocabularyShort')}</p>
+    {list&&!list.enabled&&<p className="vocabulary-note vocabulary-note--warn">{tx('vocabularyOff')}</p>}
+    {list?.damaged&&<p className="vocabulary-error" role="alert">{tx('vocabularyDamaged')}</p>}
+    <form className="vocabulary-form" onSubmit={event=>void submit(event)}>
+      {field('he','vocabularyHebrew',true)}{field('ru','vocabularyRussian')}{field('en','vocabularyEnglish')}
+      <div className="vocabulary-buttons">
+        <button type="submit" className="vocabulary-submit" disabled={blocked}>{editing?tx('vocabularySave'):tx('vocabularyAdd')}</button>
+        {editing&&<button type="button" className="vocabulary-cancel" disabled={busy} onClick={()=>{setEditing(null);setForm(emptyEntry);setError('');}}>{tx('vocabularyCancel')}</button>}
+      </div>
+    </form>
+    {error&&<p className="vocabulary-error" role="alert">{error}</p>}
+    {list?(list.entries.length?<ul className="vocabulary-list">{list.entries.map(entry=><li key={entry.he}>
+      <span><strong lang="he" dir="rtl">{entry.he}</strong><small>{[entry.ru,entry.en].filter(Boolean).join(' · ')}</small></span>
+      <button type="button" disabled={blocked} onClick={()=>{setEditing(entry.he);setForm(entry);setError('');}}>{tx('vocabularyEdit')}</button>
+      <button type="button" disabled={blocked} onClick={()=>{if(window.confirm(tx('vocabularyDeleteConfirm',{word:entry.he})))void send({action:'vocabulary_delete',he:entry.he});}}>{tx('vocabularyDelete')}</button>
+    </li>)}</ul>:<p className="vocabulary-note">{tx('vocabularyEmpty')}</p>):!error&&<p className="vocabulary-note">{tx('vocabularyLoading')}</p>}
+  </details>;
+}
+
 /** Microphone or phone, chosen before recording starts; for the phone, whether a call can be taken now. */
 function InputSource({state,pending,onAction}:{state:LiveState;pending:boolean;onAction:(action:string,value?:string|boolean)=>void}){
   const {tx}=useI18n();
@@ -281,6 +350,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
+          <VocabularyEditor/>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
         </div>
