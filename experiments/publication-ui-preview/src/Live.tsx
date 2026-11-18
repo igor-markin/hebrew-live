@@ -5,7 +5,7 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, parseLiveState, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -238,6 +238,21 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
+/** Microphone or phone, chosen before recording starts; for the phone, whether a call can be taken now. */
+function InputSource({state,pending,onAction}:{state:LiveState;pending:boolean;onAction:(action:string,value?:string|boolean)=>void}){
+  const {tx}=useI18n();
+  const phone=state.input_source==='phone';const checking=state.phone_status==='checking'||state.phone_status==null;
+  const locked=pending||!!state.input_source_locked||!!state.stopping;
+  const option=(value:'microphone'|'phone',label:string)=><button type="button" role="radio" aria-checked={state.input_source===value||(!state.input_source&&value==='microphone')} disabled={locked} onClick={()=>{if(state.input_source!==value)onAction('input_source',value);}}>{label}</button>;
+  return <div className="input-source">
+    <span className="input-source-label" id="input-source-label">{tx('inputSource')}</span>
+    <div className="input-source-options" role="radiogroup" aria-labelledby="input-source-label">{option('microphone',tx('inputMicrophone'))}{option('phone',tx('inputPhone'))}</div>
+    {phone&&<span className={`phone-status ${state.phone_status==='ready'?'phone-status--ready':checking?'':'phone-status--problem'}`} role="status">{tx(phoneStatusText(state.phone_status))}</span>}
+    {phone&&<Button variant="tertiary" className="phone-check" isDisabled={pending||checking} onPress={()=>onAction('check_phone')}>{tx('phoneCheckAgain')}</Button>}
+    {phone&&<small className="input-source-hint">{tx('phoneHint')}</small>}
+  </div>;
+}
+
 function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
@@ -248,12 +263,14 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
   const archiveState=archiveKey?tx(archiveKey as TextKey):'';
   const statusKey=state.stopping?(state.cancelling?'cancelling':'finishing'):state.status_code;
   const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session','runtime_status','partial_processing','restart_required'].includes(statusKey)?tx(statusKey as TextKey):state.status;
-  const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind;
+  const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind==='Телефон'?tx('inputPhone'):state.input_kind;
+  const device=state.input_kind==='Телефон'?tx('phoneSession'):state.device;
+  const choosing=!selected&&!state.finished&&!state.recording_started;
   return <section className="live-controls" aria-label={tx('recordingControls')}>
     <div className="live-toolbar">
-      <div className="live-status" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localizedStatus}</strong><small>{direction}{state.device?' · '+state.device:inputKind?' · '+inputKind:''}{archiveState?' · '+archiveState:''}</small></span></div>
+      <div className="live-status" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localizedStatus}</strong><small>{direction}{device?' · '+device:inputKind?' · '+inputKind:''}{archiveState?' · '+archiveState:''}</small></span></div>
       {state.finished?(state.can_start_new?<Button variant="primary" isDisabled={pending} onPress={()=>onAction('start_session')}><Icon kind="play"/>{tx('newRecording')}</Button>:null):state.stopping?<Button variant="tertiary" className="cancel-processing" isDisabled={pending||state.cancelling} onPress={()=>{if(window.confirm(tx('cancelConfirm')))onAction('cancel_processing');}}><Icon kind="stop"/>{state.cancelling?tx('cancelShort'):tx('cancelRemaining')}</Button>:<div className="session-buttons" role="group" aria-label={tx('recordingControls')}>
-        <Button variant="primary" className="finish-button" isDisabled={busy} onPress={()=>onAction('pause')}><Icon kind={state.paused?'play':'pause'}/>{state.paused?(state.desktop_mode&&state.status_code==='ready_to_start'?tx('startRecording'):tx('continue')):tx('pause')}</Button>
+        <Button variant="primary" className="finish-button" isDisabled={busy||phoneBlocksStart(state)} onPress={()=>onAction('pause')}><Icon kind={state.paused?'play':'pause'}/>{state.paused?(state.desktop_mode&&state.status_code==='ready_to_start'?tx('startRecording'):tx('continue')):tx('pause')}</Button>
         <Button variant="tertiary" isDisabled={busy||(state.desktop_mode&&!state.recording_started)} onPress={()=>onAction('stop')}><Icon kind="stop"/>{tx('finishRecording')}</Button>
       </div>}
       {window.hebrewLive&&<Button variant="tertiary" onPress={()=>void window.hebrewLive?.showHelp()}><Icon kind="help"/>{tx('helpFeedback')}</Button>}
@@ -269,6 +286,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
         </div>
       </details>
     </div>
+    {choosing&&<InputSource state={state} pending={pending} onAction={onAction}/>}
   </section>;
 }
 
@@ -469,7 +487,7 @@ export default function Live(){
   const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const preferenceAction=action==='ui_locale'||action==='save_raw_audio';
+    const preferenceAction=['ui_locale','save_raw_audio','input_source','check_phone'].includes(action);
     if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
@@ -480,6 +498,8 @@ export default function Live(){
       if(action==='cancel_processing')setState(old=>({...old,cancelling:true,status_code:'cancelling'}));
       if(action==='start_session')setState(old=>({...old,can_start_new:false}));
       if(action==='save_raw_audio'&&typeof value==='boolean')setState(old=>({...old,save_raw_audio:value}));
+      if(action==='input_source'&&(value==='microphone'||value==='phone'))setState(old=>({...old,input_source:value,input_error:null,...(value==='phone'?{phone_status:'checking'}:{})}));
+      if(action==='check_phone')setState(old=>({...old,phone_status:'checking'}));
       if(action==='exports_ready'){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
       if(action==='quit'){
         if(state.finished){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
@@ -528,6 +548,7 @@ export default function Live(){
       <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
+      {!selected&&state.input_error&&(state.input_error==='phone_stopped'||state.phone_status!=='ready')&&<p className="unavailable global-error" role="alert">{tx(state.input_error==='phone_stopped'?'phoneStopped':'phoneNotReadyAtStart',{reason:tx(phoneStatusText(state.phone_status))})}</p>}
       {!selected&&state.retry_error&&<p className="unavailable global-error" role="alert">{issueText(locale,state.retry_error)}</p>}
       {!selected&&state.target_error&&<p className="unavailable global-error" role="alert">{tx(state.target_error_code==='target_preference_not_saved'?'targetPreferenceError':state.target_error_code==='target_busy'?'targetBusyError':'targetChangeError')}</p>}
       {!selected&&partialNotice&&<p className="unavailable global-error" role="status">{partialNotice}</p>}
@@ -536,7 +557,7 @@ export default function Live(){
       {selected&&selectedArchive?.warning&&!selectedArchive.partial&&<p role="status" className="reading-note">{selectedArchive.warning==='В журнале есть неполная запись.'?tx('archiveIncomplete'):selectedArchive.warning}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
         <DisplayContext.Provider value={display}>{display.ticker&&!selected?<TickerView groups={visibleGroups}/>:<MessageCards key={`${selected||state.session||'current'}:${shown?.generation??0}`} groups={visibleGroups} scope={selected||'current'} scroller={follow.containerRef} onRetry={selected||state.finished||!state.retry_supported?undefined:retryFragment} retrying={state.retrying_group} retryEnabled={!selected&&state.paused&&!state.finished&&!state.stopping&&!state.model_switching}/>}</DisplayContext.Provider>
-        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx('readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
+        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{selected?(selectedArchive?tx('noMessages'):archiveError?tx('conversationUnavailable'):archiveLoading===selected?tx('loadingConversation'):tx('chooseAgain')):loading?tx('loadingBeforeRecord'):state.finished?(closed?tx('closed'):state.can_start_new?tx('readyNew'):tx('recordingFinished')):state.paused?(state.desktop_mode&&!state.recording_started?tx(state.input_source==='phone'?'readyToStartPhoneHint':'readyToStartHint'):tx('readyToSpeak')):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
         {((selected&&selectedArchive)||(!selected&&state.finished))&&<section className="live-exports"><h2>{tx('sessionSaved')}</h2><p>{tx((selected?selectedArchive?.audio_saved:state.audio_saved)===false?'filesInFolderNoAudio':'filesInFolder')}</p><code>{selected?selectedArchive?.session_path:state.session}</code><Button isDisabled={closed||pending} onPress={()=>void act(selected?'open_archive_folder':'open_folder',selected||undefined)}><Icon kind="folder"/>{tx('openFinder')}</Button></section>}
       </section>
       {!selected&&!follow.following&&state.groups.length>0&&<Button className="follow-latest" variant="primary" onPress={follow.resume}><Icon kind="down"/>{tx('backToCurrent')}</Button>}

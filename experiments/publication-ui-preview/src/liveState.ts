@@ -16,6 +16,7 @@ export type LiveState = {
   retry_supported?:boolean;
   save_raw_audio?:boolean;save_raw_audio_locked?:boolean;audio_saved?:boolean;partial?:boolean;integrity_warning?:string|null;
   partial_kind?:'known_unprocessed'|'capture_unknown'|'mixed'|null;partial_ranges?:string[];partial_details?:PartialDetail[];capture_discontinuity?:boolean;
+  input_source?:'microphone'|'phone';input_source_locked?:boolean;phone_status?:string|null;input_error?:'phone_not_ready'|'phone_stopped'|null;
 };
 
 const phases = new Set(['loading','opening','listening','paused','stopping','finished','error','exited']);
@@ -48,6 +49,8 @@ export function parseLiveState(value:unknown):LiveState {
   if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');
   if(value.partial_details!==undefined&&(!Array.isArray(value.partial_details)||!value.partial_details.every(item=>record(item)&&(item.part===null||typeof item.part==='number')&&(item.direction===null||typeof item.direction==='string')&&typeof item.reason==='string'&&(item.start===null||typeof item.start==='number')&&(item.end===null||typeof item.end==='number'))))throw new Error('Invalid local API snapshot');
   if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.ticker_view)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
+  if(value.input_source!==undefined&&!['microphone','phone'].includes(String(value.input_source))||!optionalBoolean(value.input_source_locked)||!optionalString(value.phone_status)||
+    value.input_error!==undefined&&value.input_error!==null&&!['phone_not_ready','phone_stopped'].includes(String(value.input_error)))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
   if(value.phase!==undefined&&(typeof value.phase!=='string'||!phases.has(value.phase)))throw new Error('Invalid local API phase');
   const phase=(value.phase as string|undefined)??(value.finished?'finished':value.paused?'paused':'listening');
@@ -211,4 +214,20 @@ export function archiveRecordingLabel(state:LiveState):string {
 export function partialNoticeKind(state:LiveState):'known_unprocessed'|'capture_unknown'|'mixed'|'generic'|null {
   if(state.partial_kind)return state.partial_kind;
   return state.partial?'generic':null;
+}
+
+/** Window text for each phone check result; a code this build does not know reads as unclear. */
+export const PHONE_STATUS_TEXT={checking:'phoneChecking',ready:'phoneReady',no_device:'phoneNoDevice',unauthorized:'phoneUnauthorized',
+  offline:'phoneOffline',several_devices:'phoneSeveral',no_scrcpy:'phoneNoScrcpy',no_adb:'phoneNoAdb',wrong_mode:'phoneWrongMode',
+  no_permissions:'phoneNoPermissions',adb_failed:'phoneAdbFailed',timeout:'phoneTimeout',unknown:'phoneUnknown',capture_failed:'phoneCaptureFailed'} as const;
+export type PhoneStatusText=typeof PHONE_STATUS_TEXT[keyof typeof PHONE_STATUS_TEXT];
+
+export function phoneStatusText(status:string|null|undefined):PhoneStatusText {
+  if(status===null||status===undefined)return 'phoneChecking';   // chosen, first answer not here yet
+  return (PHONE_STATUS_TEXT as Record<string,PhoneStatusText>)[status]||'phoneUnknown';
+}
+
+/** The phone is chosen for a recording that has not started and is not known to be ready: Start would only fail. */
+export function phoneBlocksStart(state:LiveState):boolean {
+  return !state.recording_started&&state.input_source==='phone'&&state.phone_status!=='ready';
 }

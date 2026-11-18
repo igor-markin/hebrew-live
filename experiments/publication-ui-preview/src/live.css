@@ -211,3 +211,19 @@ html[dir="rtl"] .session-row {text-align:right}
 html[dir="rtl"] .session-entry .session-row {padding-right:10px;padding-left:38px}
 html[dir="rtl"] .session-delete {right:auto;left:6px}
 @media(max-width:900px){html[dir="rtl"] .messenger-shell{padding:0 12px}}
+
+/* Microphone or phone, before recording starts. */
+.input-source {display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:13px}
+.input-source-label {color:var(--muted);font-weight:600}
+.input-source-options {display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.input-source-options button {padding:7px 14px;border:0;background:transparent;color:var(--foreground);font:inherit;font-weight:600;cursor:pointer}
+.input-source-options button+button {border-left:1px solid var(--border)}
+.input-source-options button[aria-checked=true] {background:var(--accent);color:var(--accent-foreground)}
+.input-source-options button:disabled {cursor:default;opacity:.6}
+.input-source-options button:focus-visible {outline:2px solid var(--focus);outline-offset:-2px}
+.phone-status {font-weight:600}
+.phone-status--ready {color:var(--accent)}
+.phone-status--problem {color:#b3261e}
+:root[data-theme=dark] .phone-status--problem {color:#f2b8b5}
+.input-source .phone-check {height:32px;font-size:13px}
+.input-source-hint {flex-basis:100%;color:var(--muted);font-size:12px}

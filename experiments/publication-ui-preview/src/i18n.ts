@@ -53,6 +53,16 @@ const en={
   repeatedGeneration:'Repeated generation',translationIncomplete:'Translation did not finish',emptyTranslation:'Empty translation',translationError:'Translation error',retryFailed:'Processing again failed.',
   cancelledFragment:'Cancelled',translationLimit:'Translation limit reached',nonHebrewSkipped:'Non-Hebrew text was recognized; translation was skipped.',finalUnavailable:'A finished version is unavailable; the early text was not confirmed.',
   retryStateChanged:'The session state changed or the original fragment recording is unavailable.',archiveIncomplete:'The technical log contains an incomplete record.',inputFile:'File',inputMicrophone:'Microphone',
+  inputSource:'Listen to',inputPhone:'Phone',phoneCheckAgain:'Check again',phoneChecking:'Checking the phone…',
+  phoneReady:'Phone connected, waiting for a call',phoneNoDevice:'Connect the phone by USB cable',phoneUnauthorized:'Allow USB debugging on the phone',
+  phoneOffline:'The phone does not answer: unplug the cable and plug it in again',phoneSeveral:'Several Android devices are connected: leave only the phone',
+  phoneNoScrcpy:'Install scrcpy: brew install scrcpy',phoneNoAdb:'Install adb: brew install --cask android-platform-tools',
+  phoneWrongMode:'Restart the phone normally: it is in recovery or bootloader mode',phoneNoPermissions:'This Mac has no permission to use the phone over USB',
+  phoneAdbFailed:'adb did not work: check the cable and try again',phoneTimeout:'adb did not answer within 3 seconds: try again',
+  phoneUnknown:'The phone state is unclear: reconnect the cable and check again',phoneCaptureFailed:'The phone stopped sending audio: check the cable and try again',
+  phoneHint:'Only the other person on the call is recognized; your voice and the room are not.',
+  phoneSession:'Phone · only the other side of the call is recognized',phoneNotReadyAtStart:'Recording did not start: {reason}',
+  phoneStopped:'Phone audio stopped: {reason}',readyToStartPhoneHint:'Press “Start recording” when you are ready. Phone audio is not taken before that.',
   renderFailed:'The screen could not be displayed',renderRecovery:'The last response did not change saved data. Reload the page to restore the interface.',reload:'Reload page',
   direction:'{source} → {target}'
 };
@@ -87,6 +97,16 @@ const ru:Dictionary={
   targetChangeError:'Не удалось поставить смену языка в очередь. Попробуй снова.',targetBusyError:'Язык перевода не изменён: состояние записи успело измениться. Повтори, когда элементы управления станут доступны.',targetPreferenceError:'Язык изменён для этой сессии, но выбор не удалось сохранить для следующей.',repeatedGeneration:'Повтор генерации',translationIncomplete:'Перевод не завершён',emptyTranslation:'Пустой перевод',translationError:'Ошибка перевода',retryFailed:'Повторная обработка не удалась.',
   cancelledFragment:'Отменено',translationLimit:'Достигнут лимит перевода',nonHebrewSkipped:'Распознан текст на другом языке; перевод пропущен.',finalUnavailable:'Завершённая версия недоступна; ранний текст не подтверждён.',direction:'{source} → {target}',
   retryStateChanged:'Состояние сессии изменилось или исходная запись фрагмента недоступна.',archiveIncomplete:'В журнале есть неполная запись.',inputFile:'Файл',inputMicrophone:'Микрофон',
+  inputSource:'Слушать',inputPhone:'Телефон',phoneCheckAgain:'Проверить снова',phoneChecking:'Проверяю телефон…',
+  phoneReady:'Телефон подключён, жду звонка',phoneNoDevice:'Подключи телефон кабелем USB',phoneUnauthorized:'Разреши отладку по USB на телефоне',
+  phoneOffline:'Телефон не отвечает: отключи кабель и подключи снова',phoneSeveral:'Подключено несколько Android-устройств: оставь только телефон',
+  phoneNoScrcpy:'Установи scrcpy: brew install scrcpy',phoneNoAdb:'Установи adb: brew install --cask android-platform-tools',
+  phoneWrongMode:'Перезагрузи телефон в обычном режиме: сейчас он в режиме восстановления или загрузчика',phoneNoPermissions:'У этого Mac нет доступа к телефону по USB',
+  phoneAdbFailed:'adb не сработал: проверь кабель и попробуй снова',phoneTimeout:'adb не ответил за 3 секунды: попробуй снова',
+  phoneUnknown:'Состояние телефона неясно: переподключи кабель и проверь снова',phoneCaptureFailed:'Телефон перестал передавать звук: проверь кабель и попробуй снова',
+  phoneHint:'Распознаётся только собеседник по звонку, не твой голос и не комната.',
+  phoneSession:'Телефон · распознаётся только собеседник',phoneNotReadyAtStart:'Запись не началась: {reason}',
+  phoneStopped:'Звук с телефона прервался: {reason}',readyToStartPhoneHint:'Нажми «Начать запись», когда будешь готов. До этого звук с телефона не берётся.',
   renderFailed:'Экран не удалось отобразить',renderRecovery:'Последний ответ не изменил сохранённые данные. Обнови страницу, чтобы восстановить интерфейс.',reload:'Обновить страницу'
 };
 
@@ -114,6 +134,16 @@ const he:Dictionary={
   targetChangeError:'לא ניתן היה להכניס את שינוי שפת היעד לתור. יש לנסות שוב.',targetBusyError:'שפת היעד לא שונתה כי מצב ההקלטה השתנה. יש לנסות שוב כשהפקדים זמינים.',targetPreferenceError:'שפת היעד שונתה להפעלה הזאת, אך לא ניתן היה לשמור את הבחירה להפעלה הבאה.',repeatedGeneration:'יצירה חוזרת',translationIncomplete:'התרגום לא הסתיים',emptyTranslation:'תרגום ריק',translationError:'שגיאת תרגום',retryFailed:'העיבוד החוזר נכשל.',
   cancelledFragment:'בוטל',translationLimit:'הגענו למגבלת התרגום',nonHebrewSkipped:'זוהה טקסט שאינו בעברית; התרגום דולג.',finalUnavailable:'גרסה סופית אינה זמינה; הטקסט המוקדם לא אומת.',direction:'{source} ← {target}',
   retryStateChanged:'מצב ההפעלה השתנה או שהקלטת הקטע המקורית אינה זמינה.',archiveIncomplete:'ביומן הטכני יש רשומה חלקית.',inputFile:'קובץ',inputMicrophone:'מיקרופון',
+  inputSource:'האזנה אל',inputPhone:'טלפון',phoneCheckAgain:'בדיקה חוזרת',phoneChecking:'בודק את הטלפון…',
+  phoneReady:'הטלפון מחובר, ממתין לשיחה',phoneNoDevice:'יש לחבר את הטלפון בכבל USB',phoneUnauthorized:'יש לאשר ניפוי באגים ב-USB בטלפון',
+  phoneOffline:'הטלפון לא מגיב: יש לנתק את הכבל ולחבר שוב',phoneSeveral:'מחוברים כמה מכשירי Android: יש להשאיר רק את הטלפון',
+  phoneNoScrcpy:'יש להתקין scrcpy:‏ brew install scrcpy',phoneNoAdb:'יש להתקין adb:‏ brew install --cask android-platform-tools',
+  phoneWrongMode:'יש להפעיל מחדש את הטלפון במצב רגיל: הוא במצב שחזור או טוען אתחול',phoneNoPermissions:'ל-Mac הזה אין הרשאה להשתמש בטלפון דרך USB',
+  phoneAdbFailed:'adb לא עבד: יש לבדוק את הכבל ולנסות שוב',phoneTimeout:'adb לא ענה תוך 3 שניות: יש לנסות שוב',
+  phoneUnknown:'מצב הטלפון לא ברור: יש לחבר מחדש את הכבל ולבדוק שוב',phoneCaptureFailed:'הטלפון הפסיק לשלוח שמע: יש לבדוק את הכבל ולנסות שוב',
+  phoneHint:'מזוהה רק הצד השני של השיחה, לא הקול שלך ולא החדר.',
+  phoneSession:'טלפון · מזוהה רק הצד השני של השיחה',phoneNotReadyAtStart:'ההקלטה לא התחילה: {reason}',
+  phoneStopped:'השמע מהטלפון נעצר: {reason}',readyToStartPhoneHint:'יש לבחור „התחלת הקלטה” כשמוכנים. עד אז לא נלקח שמע מהטלפון.',
   renderFailed:'לא ניתן להציג את המסך',renderRecovery:'התשובה האחרונה לא שינתה נתונים שמורים. יש לטעון מחדש את הדף כדי לשחזר את הממשק.',reload:'טעינת הדף מחדש'
 };
 
