@@ -31,6 +31,21 @@ def phone_requested(args):
     """`listen --phone`, or HEBREW_LIVE_INPUT=phone for an app that starts the engine itself."""
     return bool(getattr(args,'phone',False)) or os.environ.get('HEBREW_LIVE_INPUT')=='phone'
 
+def chosen_input(args, browser_ui=None):
+    """'phone' or 'microphone' at the moment capture starts. A flag or the environment forces the
+    phone; otherwise the window's current choice wins, and without a window the microphone."""
+    if phone_requested(args):return 'phone'
+    if browser_ui is None:return 'microphone'
+    with getattr(browser_ui,'lock',None) or nullcontext():
+        return 'phone' if browser_ui.state.get('input_source')=='phone' else 'microphone'
+
+def refuse_start(control, capture_requested):
+    """Back to the ready state after Start, as if it was never pressed; the next Start asks again."""
+    with control.lock:
+        if not control.paused:
+            control.paused=True;control.pause_started=time.monotonic()
+        capture_requested.clear()
+
 def read_retry_audio(part, start_seconds, end_seconds):
     """Read an immutable time range from the original WAV and return 16 kHz mono."""
     import soundfile as sf
@@ -137,6 +152,11 @@ def run_session(args, session, browser_ui=None):
     translation_label=('HPLT Hebrew→English + tiny English→Russian · preview'
                        if bridge_models else 'Custom local MLX-LM · MiLMMT prompt contract'
                        if custom_models.get('translation') else TRANSLATION['milmmt'][0])
+    if browser_ui:
+        forced=phone_requested(args)
+        browser_ui.details(input_source='phone' if forced else preferences.get('input_source','microphone'),
+                           input_source_locked=forced,input_error=None)
+        if (forced or preferences.get('input_source')=='phone') and hasattr(browser_ui,'check_phone'):browser_ui.check_phone()
     if browser_ui:browser_ui.details(models={'Распознавание':asr_label,'Перевод':translation_label,'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},
         target_language=target_language,target_languages=target_options,
         target_capabilities_assumed=bool(custom_models.get('translation')),
@@ -199,38 +219,59 @@ def run_session(args, session, browser_ui=None):
 
     def source():
         writer=None
+        def start_writer(rate,channels):
+            nonlocal writer
+            control.capture_rate=rate
+            writer=threading.Thread(target=transfer,args=(control,raw,session,rate,channels,segmenter,errors,updates),name='recording',daemon=True)
+            writer.start();register(writer)
         try:
-            file=sf.SoundFile(args.file) if args.command=='benchmark' else None
-            phone=not file and phone_requested(args)
-            if phone:from . import phone_audio
-            with file if file else nullcontext():
-                rate=file.samplerate if file else phone_audio.RATE if phone else int(sd.query_devices(args.device,'input')['default_samplerate'])
-                control.capture_rate=rate
-                channels=file.channels if file else 1
-                if browser_ui:
-                    browser_ui.details(device=str(args.file.name) if file else 'Android · USB' if phone else sd.query_devices(args.device,'input')['name'],
-                                       rate=rate,channels=channels,input_kind='Файл' if file else 'Телефон' if phone else 'Микрофон')
-                writer=threading.Thread(target=transfer,args=(control,raw,session,rate,channels,segmenter,errors,updates),name='recording',daemon=True)
-                writer.start();register(writer)
-                if file:
+            if args.command=='benchmark':
+                with sf.SoundFile(args.file) as file:
+                    if browser_ui:browser_ui.details(device=str(args.file.name),rate=file.samplerate,channels=file.channels,input_kind='Файл')
+                    start_writer(file.samplerate,file.channels)
                     updates.put(('status',0,'Playing recording'))
                     replay(file,control)
-                else:
-                    while not stop.is_set() and not capture_requested.wait(.1):
-                        pass
-                    if stop.is_set():
-                        return
-                    def callback(data,frames,timing,status):
-                        accept_audio_callback(control,session,stop,errors,data,status)
-                    def phone_ended(reason):
-                        errors.put(phone_audio.PhoneAudioError(f'Phone audio stopped: {reason}'));stop.set()
-                    capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended) if phone else
-                             sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback))
-                    with capture:
-                        if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
-                        session.event('device',rate=rate,channels=1,input='phone' if phone else 'microphone')
-                        updates.put(('status',0,'Listening'))
-                        stop.wait()
+                return
+            # Microphone or phone is decided only when Start is pressed: a session waiting in
+            # `ready_to_start` follows the window's switch, and the writer gets the real rate.
+            while True:
+                while not stop.is_set() and not capture_requested.wait(.1):
+                    pass
+                if stop.is_set():
+                    return
+                phone=chosen_input(args,browser_ui)=='phone'
+                if not phone:break
+                from . import phone_audio
+                code=phone_audio.status()
+                if stop.is_set():return
+                if code=='ready':break
+                session.event('phone_not_ready',status=code)
+                refuse_start(control,capture_requested)
+                if browser_ui:browser_ui.details(phone_status=code,input_error='phone_not_ready')
+                else:raise phone_audio.PhoneAudioError(f'Phone is not ready: {code}')
+            rate=phone_audio.RATE if phone else int(sd.query_devices(args.device,'input')['default_samplerate'])
+            if browser_ui:
+                browser_ui.details(device='Android · USB' if phone else sd.query_devices(args.device,'input')['name'],
+                                   rate=rate,channels=1,input_kind='Телефон' if phone else 'Микрофон',input_error=None,
+                                   **({'phone_status':'ready'} if phone else {}))
+            start_writer(rate,1)
+            def callback(data,frames,timing,status):
+                accept_audio_callback(control,session,stop,errors,data,status)
+            def phone_ended(reason):
+                # Name the cause in the window: a pulled cable reads as `no_device`.
+                if browser_ui:
+                    try:code=phone_audio.status()
+                    except Exception:code='unknown'
+                    if code=='ready':code=phone_audio.CAPTURE_FAILED   # adb still sees it: scrcpy itself gave up
+                    browser_ui.details(phone_status=code,input_error='phone_stopped')
+                errors.put(phone_audio.PhoneAudioError(f'Phone audio stopped: {reason}'));stop.set()
+            capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended) if phone else
+                     sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback))
+            with capture:
+                if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
+                session.event('device',rate=rate,channels=1,input='phone' if phone else 'microphone')
+                updates.put(('status',0,'Listening'))
+                stop.wait()
         except Exception as exc:
             errors.put(exc);stop.set()
         finally:

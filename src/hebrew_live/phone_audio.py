@@ -33,6 +33,61 @@ def find_scrcpy():
                  if os.access(os.path.join(folder, 'scrcpy'), os.X_OK)), None)
 
 
+def find_adb():
+    """The adb the status check uses is the one scrcpy gets through ADB, so both see the same phone."""
+    found = os.environ.get('HEBREW_LIVE_ADB') or shutil.which('adb')
+    if found:
+        return found
+    return next((os.path.join(folder, 'adb') for folder in _SEARCH
+                 if os.access(os.path.join(folder, 'adb'), os.X_OK)), None)
+
+
+# `adb devices` states, as the window names them. Anything else is `unknown`.
+_STATES = {'device': 'ready', 'unauthorized': 'unauthorized', 'authorizing': 'unauthorized', 'offline': 'offline',
+           'no permissions': 'no_permissions', 'recovery': 'wrong_mode', 'rescue': 'wrong_mode',
+           'sideload': 'wrong_mode', 'bootloader': 'wrong_mode', 'host': 'wrong_mode'}
+STATUSES = ('ready', 'no_scrcpy', 'no_adb', 'no_device', 'unauthorized', 'offline', 'no_permissions',
+            'wrong_mode', 'several_devices', 'adb_failed', 'timeout', 'unknown')
+CAPTURE_FAILED = 'capture_failed'   # not a check result: scrcpy stopped while adb still saw the phone
+
+
+def parse_devices(output):
+    """[(serial, state)] from `adb devices`; daemon start-up chatter and blank lines are skipped."""
+    found = []
+    for line in output.splitlines():
+        words = line.split(None, 1)
+        if len(words) < 2 or line.startswith(('*', 'List of')):
+            continue
+        serial, rest = words
+        # `-l` and newer adb pad with spaces and append details; only "no permissions" has a space in it.
+        state = 'no permissions' if rest.startswith('no permissions') else rest.split()[0]
+        found.append((serial, state))
+    return found
+
+
+def status(run=subprocess.run, timeout=3.):
+    """Whether a call can be taken now, without starting capture: one of STATUSES."""
+    if not find_scrcpy():
+        return 'no_scrcpy'
+    adb = find_adb()
+    if not adb:
+        return 'no_adb'
+    try:
+        result = run([adb, 'devices'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return 'timeout'
+    except OSError:
+        return 'adb_failed'
+    if result.returncode:
+        return 'adb_failed'
+    devices = parse_devices(result.stdout or '')
+    if len(devices) > 1:
+        return 'several_devices'          # scrcpy refuses to pick one, whatever their states
+    if not devices:
+        return 'no_device'
+    return _STATES.get(devices[0][1], 'unknown')
+
+
 def command(fifo, source=SOURCE, executable=None):
     executable = executable or find_scrcpy()
     if not executable:
@@ -88,6 +143,8 @@ class PhoneAudio:
         try:
             arguments = command(self.fifo, self.source, self.executable)
             environment = dict(os.environ, PATH=os.pathsep.join((os.environ.get('PATH', ''), *_SEARCH)))  # scrcpy runs adb
+            adb = find_adb()
+            if adb: environment['ADB'] = adb
             with open(self.log, 'wb') as log:
                 self.process = self.popen(arguments, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                           env=environment)

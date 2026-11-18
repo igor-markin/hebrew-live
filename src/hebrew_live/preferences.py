@@ -39,6 +39,7 @@ def read(folder):
  result['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
  result['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
  result['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
+ result['input_source']=validate_input_source(data.get('input_source','microphone'))
  return result
 def save(folder,**values):
  with _LOCK:
@@ -55,6 +56,7 @@ def save(folder,**values):
   data['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
   data['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
   data['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
+  data['input_source']=validate_input_source(data.get('input_source','microphone'))
   fd,name=tempfile.mkstemp(prefix='.preferences-',dir=folder)
   try:
    with os.fdopen(fd,'w') as file:
@@ -75,4 +77,8 @@ def validate_catchup(value):
 
 def validate_save_audio(value):
  if type(value) is not bool:raise ValueError('save_raw_audio must be boolean')
+ return value
+
+def validate_input_source(value):
+ if value not in ('microphone','phone'):raise ValueError('input_source must be microphone or phone')
  return value

@@ -61,7 +61,8 @@ class BrowserUI:
                     'ui_locale':'en','paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
-                    'recording_started':False,'capture_active':False})
+                    'recording_started':False,'capture_active':False,
+                    'input_source':'microphone','input_source_locked':False,'phone_status':None,'input_error':None})
         self.state['desktop_mode']=self.desktop_mode
         # Live display experiments, off by default: HEBREW_LIVE_CALM_DRAFTS=1 keeps a shown
         # translation until a refresh is complete; sentence splits merge into one bubble.
@@ -90,6 +91,8 @@ class BrowserUI:
         self.quit_requested=False
         self.preview_seen=set()
         self.on_preview_seen=None
+        self.phone_check=0
+        self.phone_probe=None   # Injectable for tests; phone_audio.status otherwise.
 
     def __enter__(self):
         owner=self
@@ -305,6 +308,23 @@ class BrowserUI:
                         except (OSError,ValueError):return self.reply(500,b'{}')
                         with owner.lock:owner.state['save_raw_audio']=value
                         return self.reply(200,b'{"ok":true}')
+                    if action=='input_source':
+                        value=payload.get('value')
+                        if value not in ('microphone','phone'):return self.reply(400,b'{}')
+                        with owner.lock:
+                            state=owner.state
+                            if (state['finished'] or state.get('stopping') or state.get('recording_started') or
+                                    state.get('input_source_locked') or owner.preference_folder is None):
+                                return self.reply(409,b'{}')
+                        from .preferences import save
+                        try:save(owner.preference_folder,input_source=value)
+                        except (OSError,ValueError):return self.reply(500,b'{}')
+                        with owner.lock:owner.state.update(input_source=value,input_error=None)
+                        if value=='phone':owner.check_phone()
+                        return self.reply(200,b'{"ok":true}')
+                    if action=='check_phone':
+                        owner.check_phone()
+                        return self.reply(202,b'{"ok":true}')
                     if action=='target_language':
                         target=payload.get('value')
                         with owner.lock:
@@ -354,6 +374,8 @@ class BrowserUI:
                     if key is None:return self.reply(400,b'{}')
                     with owner.lock:
                         if owner.state['finished']:return self.reply(409,b'{}')
+                        if action=='pause' and owner.phone_blocks_start():
+                            return self.reply(409,b'{"error":"phone_not_ready"}')
                     owner.actions.put_nowait(key)
                     self.reply(200,b'{"ok":true}')
                 except (ValueError,AttributeError,queue.Full):self.reply(400,b'{}')
@@ -373,6 +395,28 @@ class BrowserUI:
         if self.open_browser:webbrowser.open(self.url+('live/' if self.live else ''))
         return self
 
+    def phone_blocks_start(self):
+        """The phone is chosen but not known to be ready: Start would only fail. Call under `lock`."""
+        state=self.state
+        return (not state.get('recording_started') and state.get('input_source')=='phone' and
+                state.get('phone_status')!='ready')
+
+    def check_phone(self):
+        """Ask adb about the phone off the request thread; only the latest check is published."""
+        with self.lock:
+            self.phone_check+=1;ticket=self.phone_check
+            self.state.update(phone_status='checking')
+        def run():
+            try:
+                if self.phone_probe is None:
+                    from .phone_audio import status
+                    self.phone_probe=status
+                code=self.phone_probe()
+            except Exception:code='unknown'
+            with self.lock:
+                if ticket==self.phone_check:self.state.update(phone_status=code)
+        threading.Thread(target=run,name='phone-check',daemon=True).start()
+
     def begin_session(self, session):
         save_audio=getattr(session,'save_audio',True)
         with self.lock:
@@ -389,7 +433,7 @@ class BrowserUI:
                               finished=False,paused=False,stopping=False,cancelling=False,model_switching=False,
                               can_start_new=False,exports=[],retrying_group=None,retry_error=None,
                               target_error=None,target_error_code=None,session=str(session.path),
-                              recording_started=False,capture_active=False,
+                              recording_started=False,capture_active=False,input_error=None,device=None,input_kind=None,rate=None,channels=None,
                               retry_supported=save_audio,save_raw_audio=save_audio,
                               audio_saved=save_audio,partial=False,partial_kind=None,
                               partial_ranges=[],partial_details=[],capture_discontinuity=False,
