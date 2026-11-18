@@ -44,6 +44,23 @@ def _bumping(name):
     return wrapper
 for _name in ('__delitem__','pop','popitem','clear','setdefault','__ior__'):setattr(_State,_name,_bumping(_name))
 
+VOCABULARY_LIMIT=500
+VOCABULARY_LENGTH={'he':60,'ru':120,'en':120}
+
+def vocabulary_entry(value):
+    """(Entry, None) for a valid window entry, else (None, error code). Hebrew must hold a Hebrew
+    letter, at least one translation is needed, and every field has a length limit."""
+    from . import vocabulary
+    if not isinstance(value,dict) or set(value)-set(VOCABULARY_LENGTH):return None,'invalid'
+    fields={key:value.get(key,'') for key in VOCABULARY_LENGTH}
+    if not all(isinstance(item,str) for item in fields.values()):return None,'invalid'
+    fields={key:vocabulary.clean(item) for key,item in fields.items()}
+    if not fields['he']:return None,'empty_hebrew'
+    if not any('\u05d0'<=letter<='\u05ea' for letter in fields['he']):return None,'not_hebrew'
+    if not fields['ru'] and not fields['en']:return None,'no_translation'
+    if any(len(fields[key])>limit for key,limit in VOCABULARY_LENGTH.items()):return None,'too_long'
+    return vocabulary.Entry(**fields),None
+
 class BrowserUI:
     def __init__(self,open_browser=True,live=False):
         self.live=live
@@ -92,6 +109,7 @@ class BrowserUI:
         self.preview_seen=set()
         self.on_preview_seen=None
         self.phone_check=0
+        self.vocabulary_lock=threading.Lock()
         self.phone_probe=None   # Injectable for tests; phone_audio.status otherwise.
 
     def __enter__(self):
@@ -168,6 +186,8 @@ class BrowserUI:
                         finished=owner.state['finished']
                     self.reply(200,data)
                     if finished and not owner.exports and owner.session_folder is None:owner.finished_seen.set()
+                elif route=='vocabulary':
+                    with owner.vocabulary_lock:self.reply(200,owner.vocabulary_json())
                 elif route=='sessions':
                     try:self.reply(200,json.dumps(owner.session_history.list(),ensure_ascii=False).encode())
                     except OSError:self.reply(500,b'{}')
@@ -322,6 +342,27 @@ class BrowserUI:
                         with owner.lock:owner.state.update(input_source=value,input_error=None)
                         if value=='phone':owner.check_phone()
                         return self.reply(200,b'{"ok":true}')
+                    if action in ('vocabulary_set','vocabulary_delete'):
+                        from . import vocabulary
+                        with owner.vocabulary_lock:
+                            if vocabulary.damaged():return self.reply(409,b'{"error":"damaged"}')
+                            entries=vocabulary.load()
+                            if action=='vocabulary_delete':
+                                he=payload.get('he')
+                                if not isinstance(he,str) or not vocabulary.clean(he):return self.reply(400,b'{}')
+                                entries=vocabulary.remove(entries,he)
+                            else:
+                                entry,error=vocabulary_entry(payload.get('value'))
+                                previous=payload.get('previous')
+                                if error or previous is not None and not isinstance(previous,str):
+                                    return self.reply(400,json.dumps({'error':error or 'invalid'}).encode())
+                                if previous:entries=vocabulary.remove(entries,previous)   # an edit may change the spelling
+                                if entry.he not in {item.he for item in entries} and len(entries)>=VOCABULARY_LIMIT:
+                                    return self.reply(409,b'{"error":"too_many"}')
+                                entries=vocabulary.add(entries,entry.he,entry.ru,entry.en)
+                            try:vocabulary.save(entries)
+                            except OSError:return self.reply(500,b'{}')
+                            return self.reply(200,owner.vocabulary_json())
                     if action=='check_phone':
                         owner.check_phone()
                         return self.reply(202,b'{"ok":true}')
@@ -394,6 +435,13 @@ class BrowserUI:
             print('Локальный экран: '+self.url,file=sys.stderr,flush=True)
         if self.open_browser:webbrowser.open(self.url+('live/' if self.live else ''))
         return self
+
+    def vocabulary_json(self):
+        from dataclasses import asdict
+        from . import vocabulary
+        return json.dumps({'entries':[asdict(entry) for entry in vocabulary.load()],'damaged':vocabulary.damaged(),
+                           'enabled':vocabulary.enabled(),'limit':VOCABULARY_LIMIT,
+                           'lengths':VOCABULARY_LENGTH},ensure_ascii=False).encode()
 
     def phone_blocks_start(self):
         """The phone is chosen but not known to be ready: Start would only fail. Call under `lock`."""

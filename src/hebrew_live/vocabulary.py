@@ -59,6 +59,18 @@ def load(source=None):
         return []
 
 
+def damaged(source=None):
+    """True when the file exists but is not a list `load` can read: an editor must not
+    replace a hand-edited list it could not read with an empty one."""
+    try:
+        with open(source or path(), encoding='utf8') as file:
+            return not isinstance(json.load(file)['entries'], list)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+
+
 def save(entries, target=None):
     target = target or path()
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -70,6 +82,26 @@ def save(entries, target=None):
     except BaseException:
         os.unlink(temporary)
         raise
+
+
+class Watched:
+    """The list as the file says now. The engine lives in a child process; re-reading the file
+    when its time, size or inode changes (a save replaces it) lets the window's edits reach the
+    next translation without a restart, for the price of one stat per translation."""
+
+    def __init__(self, source=None):
+        self.source, self.signature, self.entries = source, None, []
+
+    def current(self):
+        target = self.source or path()
+        try:
+            info = os.stat(target)
+            signature = (info.st_mtime_ns, info.st_size, info.st_ino)
+        except OSError:
+            signature = None
+        if signature != self.signature:
+            self.signature, self.entries = signature, load(target) if signature else []
+        return self.entries
 
 
 def add(entries, he, ru='', en=''):

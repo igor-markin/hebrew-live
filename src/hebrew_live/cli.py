@@ -416,8 +416,11 @@ class Engine:
         self.custom_models=asr_path is not None or translation_path is not None
         self.asr=None;self.model=None;self.tokenizer=None
         from . import vocabulary
-        # The owner's words: recognition gets their spelling, translation their meaning.
-        self.vocabulary=vocabulary.load() if vocabulary.enabled() else []
+        # The owner's words: recognition gets their spelling, translation their meaning. The file
+        # is watched, so words edited in the window reach the next translation.
+        self.vocabulary_file=vocabulary.Watched() if vocabulary.enabled() else None
+        self.vocabulary=self.vocabulary_file.current() if self.vocabulary_file else []
+        self.log.event('vocabulary_loaded',entries=len(self.vocabulary),reason='start')
         self.asr_path=str(asr_path or folder/'asr')
         from .model_selection import TRANSLATION, validate
         validate(dict(asr=backend,translation='milmmt'))
@@ -595,6 +598,10 @@ class Engine:
         from . import vocabulary
         from .languages import split_direction
         source_language,target_language=split_direction(self.direction)
+        watched=getattr(self,'vocabulary_file',None)
+        if watched is not None:
+            before=watched.signature;self.vocabulary=watched.current()
+            if watched.signature!=before:self.log.event('vocabulary_loaded',entries=len(self.vocabulary),reason='changed')
         terms=vocabulary.relevant(getattr(self,'vocabulary',()),text,target_language) if source_language=='he' else []
         ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]),pairs=context,terms=terms)
         max_tokens=mt_generate.max_tokens_for(len(self.tokenizer.encode(text,add_special_tokens=False)))
@@ -617,7 +624,7 @@ class Engine:
                 yield piece, reason
             finished=True
         finally:
-            self.log.event('mt_generation',mode=mt_generate.mode(),prompt_tokens=len(ids),
+            self.log.event('mt_generation',mode=mt_generate.mode(),prompt_tokens=len(ids),terms=len(terms),
                            max_tokens=max_tokens,tokens=stats.get('tokens',0),
                            hint_tokens=len(draft_ids) if step else 0,
                            speculative_rounds=stats.get('speculative_rounds',0),

@@ -80,7 +80,7 @@ class SessionHistory:
                     if not isinstance(current,dict) or not all(isinstance(current.get(k),str) for k in ('source','translation')): continue
                     key = str(event.get('segment'))
                     latest[key] = dict(id=path.name+':'+key, direction=direction, complete=True,
-                                       live={k:event[k] for k in ('current','history','stage','issue','reason') if k in event})
+                                       live={k:event[k] for k in ('current','history','stage','issue','reason','numbers') if k in event})
             if latest:
                 groups.extend(latest.values())
             else:

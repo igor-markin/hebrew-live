@@ -403,6 +403,9 @@ class RetranslationProcessor:
             history = deepcopy(previous['history'])
         value = dict(current=snapshot, history=history, stage=stage, issue=issue,
                      reason=reason, start=start/16000, end=end/16000)
+        if stage in ('closed', 'technical'):
+            # Only a closed phrase: the figures of a growing one change every second.
+            value['numbers'] = self.number_issues(snapshot['source'], snapshot['translation'])
         if value == previous: return
         self.visible = deepcopy(value)
         if job:self.published_job=(job.id,job.version)
@@ -412,6 +415,9 @@ class RetranslationProcessor:
                        audio_lag=max(0., time.monotonic()-captured+offset-end/16000),
                        from_start=time.monotonic()-captured+offset-start/16000)
         if job:self.mt_event('mt_published',job,new_content=not previous or previous['current']['translation']!=target)
+        if value.get('numbers'):
+            self.log.event('number_mismatch', part=self.settings.part, segment=self.sid, stage=stage,
+                           issues=value['numbers'])
         # Every visible version has its own durable paired record. Group links
         # preserve revisions; original WAV writing is entirely outside this worker.
         self.export_counter += 1
@@ -422,6 +428,18 @@ class RetranslationProcessor:
             self.part.text('source', record, label+source)
             self.part.text('target', record, label+(target or '[Перевод ещё не показан]')+
                            ('\n['+issue+']' if issue else ''))
+
+    def number_issues(self, source, target):
+        """Digit figures the whole shown group (frozen sentences and tail) has on one side and
+        not the other, as [{kind, number}]. A note for the reader, not a failed phrase: it never
+        sets `issue`. `HEBREW_LIVE_NUMBER_CHECK=0` turns it off."""
+        if os.environ.get('HEBREW_LIVE_NUMBER_CHECK', '1') == '0' or not source.strip() or not target.strip():
+            return []
+        from .languages import split_direction
+        from .number_guard import check
+        source_language, target_language = split_direction(self.settings.direction)
+        return [dict(kind=item.kind, number=item.number)
+                for item in check(source, target.replace(TRUNCATION_MARKER, ''), source_language, target_language)]
 
     def finish(self, reason, valid=False, job=None):
         if self.last is None or self.closed: return
