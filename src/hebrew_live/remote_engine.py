@@ -291,6 +291,14 @@ class RemoteEngine:
             if message[0]=="failed":raise RemoteEngineError(self._format_failure(message,"Recognition failed"))
             self._apply(message[3]);return message[2]
 
+    def can_continue(self, text):
+        """Whether the child's Whisper may start a decode with `text`; an engine without the
+        option (the bridge preview) answers no."""
+        with self._rpc_lock:
+            _,message=self._request_locked("can_continue",text)
+            if message[0]=="failed":return False
+            self._apply(message[3]);return bool(message[2])
+
     def translate(self, *args, **kwargs):
         self._rpc_lock.acquire()
         request_id=None;complete=False
@@ -422,6 +430,8 @@ class SplitRemoteEngine:
         self.mx=_SplitMemory(self)
         self.log.event('split_engine_ready',asr_pid=self.asr._process.pid,
                        mt_pid=self.mt._process.pid)
+
+    def can_continue(self,text):return self.asr.can_continue(text)
 
     def recognize(self,*args,**kwargs):
         self.asr.language=self.language;self.asr.direction=self.direction

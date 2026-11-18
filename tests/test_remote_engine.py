@@ -20,10 +20,11 @@ class FakeNativeEngine:
         self.direction='he-en';self.topic='none';self.translation_context=[]
         self.mx=type('Memory',(),{'get_peak_memory':lambda self:7})()
     def warmup(self):self.log.event('fake_warmup')
-    def recognize(self,audio,*args,**kwargs):
+    def recognize(self,audio,*args,continues='',**kwargs):
         self.recognition_status='accepted';self.recognition_issue=None
         self.recognition_words=[dict(word='שלום',start=0,end=len(audio)/16000)]
-        self.raw_recognition='שלום';self.log.event('fake_asr',samples=len(audio));return 'שלום'
+        self.raw_recognition='שלום';self.log.event('fake_asr',samples=len(audio),continues=continues);return 'שלום'
+    def can_continue(self,text):return len(text)<10
     def translate(self,text):
         yield 'hello','stop'
     def switch_models(self,selection):self.backend=selection['asr']
@@ -128,6 +129,10 @@ class RemoteEngineTests(unittest.TestCase):
             self.assertEqual(engine.recognition_status,'accepted')
             self.assertEqual(engine.recognition_words[0]['word'],'שלום')
             self.assertEqual(list(engine.translate('שלום')),[('hello','stop')])
+            # The live pipeline talks to this proxy, so tail-only recognition must cross it.
+            self.assertTrue(engine.can_continue('א.'));self.assertFalse(engine.can_continue('א'*20))
+            engine.recognize(np.ones(1600,dtype=np.float32),align_words=False,continues='א.')
+            self.assertEqual([values['continues'] for name,values in log.events if name=='fake_asr'],['','א.'])
             engine.switch_models(dict(asr='turbo',translation='milmmt'))
             self.assertEqual(engine.backend,'turbo')
             engine.close();self.assertFalse(engine.alive)
