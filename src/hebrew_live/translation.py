@@ -1,7 +1,8 @@
 """Model-specific prompt and stopping contracts for installed local translators."""
-def prompt(tokenizer, name, text, direction, topic='none', context=(), pairs=()):
+def prompt(tokenizer, name, text, direction, topic='none', context=(), pairs=(), terms=()):
     """`pairs`: (source, translation) of the sentences right before `text`. They open both
-    sides of the prompt, so the model continues its own translation of them with `text`."""
+    sides of the prompt, so the model continues its own translation of them with `text`.
+    `terms`: (source, translation) of the owner's words that occur in `text`."""
     if name != 'milmmt':raise ValueError('Only the MiLMMT translation contract is supported')
     from .languages import prompt_names
     source,target = prompt_names(direction)
@@ -11,6 +12,8 @@ def prompt(tokenizer, name, text, direction, topic='none', context=(), pairs=())
         content=f'Translate this from {source} to {target}:\n{source}: {before} {text}\n{target}: {done}'
     if context:
         content='Background from preceding speech (do not translate or repeat):\n'+'\n'.join(context)+'\nTranslate only the new continuation below.\n'+content
+    if terms:
+        content='Use these translations of names and terms:\n'+'\n'.join(f'{source} = {target}' for source,target in terms)+'\n'+content
     return tokenizer.encode(content,add_special_tokens=False)
 
 def configure(tokenizer,name):

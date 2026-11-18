@@ -16,14 +16,20 @@ WORKER_JOIN_GRACE = 5.0
 RECORDING_JOIN_GRACE = 5.0
 
 def accept_audio_callback(control, session, stop, errors, data, status, now=None):
-    """Keep device discontinuities distinct from PCM accepted by the app."""
+    """Keep device discontinuities distinct from PCM accepted by the app.
+
+    A status flag means the driver lost an unknown stretch before this block, usually
+    while the Mac was starved. The block itself is sound: note the gap, keep listening.
+    """
     try:
-        if status:
-            session.note_capture_discontinuity(status)
-            raise RuntimeError('Audio device overflow/underflow; lost extent is unknown')
+        if status:session.note_capture_discontinuity(status)
         control.accept(data[:,0],time.monotonic() if now is None else now)
     except Exception as exc:
         errors.put(exc);stop.set()
+
+def phone_requested(args):
+    """`listen --phone`, or HEBREW_LIVE_INPUT=phone for an app that starts the engine itself."""
+    return bool(getattr(args,'phone',False)) or os.environ.get('HEBREW_LIVE_INPUT')=='phone'
 
 def read_retry_audio(part, start_seconds, end_seconds):
     """Read an immutable time range from the original WAV and return 16 kHz mono."""
@@ -165,10 +171,11 @@ def run_session(args, session, browser_ui=None):
         if not control.paused:
             capture_requested.set()
         def note_backlog(fragment):
+            # Skipped so captions catch up; the main loop shows the range as unprocessed.
             session.note_unprocessed_fragment(fragment,'translation_backlog')
-            if browser_ui:browser_ui.details(phase='stopping',stopping=True,
-                status='Processing backlog limit reached; finishing accepted audio',
-                status_code='partial_processing',**session.integrity_view())
+            end=getattr(fragment,'offset',0.)
+            session.event('processing_overload',segment=fragment.id,revision=fragment.revision,
+                          start=max(0.,end-len(fragment.audio)/16000+getattr(fragment,'prefix',0.)),end=end)
         inbox=Inbox(note_backlog)
         updates=queue.Queue();errors=queue.Queue()
         threads=[];threads_lock=threading.Lock()
@@ -194,13 +201,15 @@ def run_session(args, session, browser_ui=None):
         writer=None
         try:
             file=sf.SoundFile(args.file) if args.command=='benchmark' else None
+            phone=not file and phone_requested(args)
+            if phone:from . import phone_audio
             with file if file else nullcontext():
-                rate=file.samplerate if file else int(sd.query_devices(args.device,'input')['default_samplerate'])
+                rate=file.samplerate if file else phone_audio.RATE if phone else int(sd.query_devices(args.device,'input')['default_samplerate'])
                 control.capture_rate=rate
                 channels=file.channels if file else 1
                 if browser_ui:
-                    browser_ui.details(device=str(args.file.name) if file else sd.query_devices(args.device,'input')['name'],
-                                       rate=rate,channels=channels,input_kind='Файл' if file else 'Микрофон')
+                    browser_ui.details(device=str(args.file.name) if file else 'Android · USB' if phone else sd.query_devices(args.device,'input')['name'],
+                                       rate=rate,channels=channels,input_kind='Файл' if file else 'Телефон' if phone else 'Микрофон')
                 writer=threading.Thread(target=transfer,args=(control,raw,session,rate,channels,segmenter,errors,updates),name='recording',daemon=True)
                 writer.start();register(writer)
                 if file:
@@ -213,9 +222,13 @@ def run_session(args, session, browser_ui=None):
                         return
                     def callback(data,frames,timing,status):
                         accept_audio_callback(control,session,stop,errors,data,status)
-                    with sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback):
+                    def phone_ended(reason):
+                        errors.put(phone_audio.PhoneAudioError(f'Phone audio stopped: {reason}'));stop.set()
+                    capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended) if phone else
+                             sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback))
+                    with capture:
                         if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
-                        session.event('device',rate=rate,channels=1)
+                        session.event('device',rate=rate,channels=1,input='phone' if phone else 'microphone')
                         updates.put(('status',0,'Listening'))
                         stop.wait()
         except Exception as exc:
@@ -398,10 +411,15 @@ def run_session(args, session, browser_ui=None):
                                 if not control.paused:capture_requested.set()
                     if not errors.empty():
                         stop.set();stopping='Error; finishing accepted audio…'
-                    if browser_ui and session.is_partial() and not partial_published:
-                        browser_ui.details(phase='stopping',stopping=True,status=stopping or 'Finishing accepted audio…',
-                                           status_code='partial_processing',**session.integrity_view())
-                        partial_published=True
+                    # A skipped phrase or a device glitch leaves the session partial but running:
+                    # refresh the notice on every new gap, switch to "stopping" only on a stop.
+                    partial_state=(session.integrity_marks(),stop.is_set()) if browser_ui and session.is_partial() else None
+                    if partial_state and partial_state!=partial_published:
+                        if stop.is_set():
+                            browser_ui.details(phase='stopping',stopping=True,status=stopping or 'Finishing accepted audio…',
+                                               status_code='partial_processing',**session.integrity_view())
+                        else:browser_ui.details(**session.integrity_view())
+                        partial_published=partial_state
                     for _ in range(100):
                         try:kind,sid,value=updates.get_nowait()
                         except queue.Empty:break
@@ -465,7 +483,7 @@ def run_session(args, session, browser_ui=None):
             for fragment in inbox.pending_fragments():session.note_unprocessed_fragment(fragment,'cancelled_pending')
         if hasattr(engine,'close'):engine.close()
     error=errors.get() if not errors.empty() else None
-    if error is not None and not session.is_partial():
+    if error is not None and not session.stop_is_explained():
         from .session import LowStorageError
         session.note_unprocessed(session.current,None,None,
                                  'low_storage' if isinstance(error,LowStorageError) else 'runtime_error','unknown')

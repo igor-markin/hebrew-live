@@ -333,6 +333,7 @@ class LoopStopTests(unittest.TestCase):
                 task.script = script
                 task.decoder = test.decoding.GreedyDecoder(temperature, test.EOT)
                 task.tokenizer = Tokenizer()
+                task.sample_begin = 2
 
             def _main_loop(task, audio_features, tokens):
                 logprobs = mx.zeros(1)
@@ -366,6 +367,19 @@ class LoopStopTests(unittest.TestCase):
         self.assertLess(self.steps, 24)
         self.assertEqual(caught.exception.text, chr(0x5d0 + 105 % 27) * len(caught.exception.tokens))
         self.assertIs(self.Task.__dict__['_main_loop'], self.original_main_loop)
+
+    def test_vocabulary_prompt_is_not_recognized_text(self):
+        # The prompt repeats one token 30 times; alone it would look like a loop.
+        task = self.Task(lambda i: 100 + i % 40 if i < 60 else self.EOT)
+        self.prompt = self.mx.array([[1003] + [105] * 30 + [1001, 1002]])
+        task.sample_begin = 33
+        _, (tokens, _) = self.run_loop(None, task=task)
+        self.assertEqual(tokens.shape[-1], 33 + 61)
+        looping = self.Task(lambda i: 110)
+        looping.sample_begin = 33
+        with self.assertRaises(RepeatedDecode) as caught:
+            self.run_loop(None, task=looping)
+        self.assertEqual(set(caught.exception.tokens), {110})        # the prompt never reaches the screen
 
     def test_other_tokens_decode_exactly_as_without_the_guard(self):
         script = lambda i: 100 + i % 40 if i < 60 else self.EOT

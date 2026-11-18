@@ -124,3 +124,83 @@ class FreezeTests(unittest.TestCase):
    self.p.process(Fragment(1,2,self.audio[:32000],0,time.monotonic(),False,self.settings,2.,0,''))
   streams=[v['translation'] for k,_,v in self.q.queue if k=='live_stream']
   self.assertTrue(streams and all(len(text)>=len('Длинный видимый перевод') for text in streams),streams)
+
+
+class TailOnlyTests(unittest.TestCase):
+ """Recognition starts from the frozen sentences and writes only what follows them."""
+ def setUp(self):
+  self.mt=[];self.results=[];self.continued=[]
+  self.e=SimpleNamespace(recognize=self.recognize,translate=self.translate,accepts_context=True,backend='turbo',can_continue=lambda text:True)
+  self.q=queue.Queue()
+  self.p=RetranslationProcessor(self.e,self.q,SimpleNamespace(event=lambda name,**v:None),threading.Event())
+  self.settings=Settings(publication='draft');self.audio=np.zeros(2000000,dtype=np.float32)
+ def recognize(self,a,*args,**kw):
+  self.continued.append(kw.get('continues',''))
+  self.text,self.target,status=self.results.pop(0);self.e.recognition_status=status;return self.text
+ def translate(self,text,context=()):
+  self.mt.append(text);yield self.target,'stop'
+ def step(self,end,text,target,final=False,status='accepted'):
+  self.results.append((text,target,status))
+  self.p.process(Fragment(1,1,self.audio[:end],0,time.monotonic(),final,self.settings,end/16000,0,'silence' if final else ''))
+ def shown(self):return [(v['current']['source'],v['current']['translation']) for k,_,v in self.q.queue if k=='live_publication']
+ def freeze_first(self):
+  self.step(8000,'א.','A.')
+  self.step(16000,'א. ב','A. B')
+ def test_decode_starts_with_frozen_sentences_and_returns_the_tail(self):
+  self.freeze_first()
+  self.step(32000,'ב ג','B C')
+  self.step(48000,'ב ג. ד','B C. D')
+  self.step(64000,'ד ה','D E')
+  self.assertEqual(self.continued,['','','א.','א.','א. ב ג.'])
+  self.assertEqual(self.mt,['א.','א. ב','ב ג','ב ג. ד','ד ה'])
+  self.assertEqual(self.shown()[-1],('א. ב ג. ד ה','A. B C. D E'))
+ def test_silence_after_frozen_sentences_closes_the_group_as_shown(self):
+  self.freeze_first()
+  self.step(32000,'ב','B')
+  self.step(48000,'','unused',final=True,status='empty')
+  kind,_,last=[item for item in self.q.queue if item[0]=='live_publication'][-1]
+  self.assertEqual((last['current']['source'],last['current']['translation']),('א. ב','A. B'))
+  self.assertEqual(last['stage'],'closed');self.assertEqual(len(self.mt),2)  # the unchanged tail is not translated again
+ def test_rejected_tail_changes_nothing_on_screen(self):
+  self.freeze_first()
+  before=self.shown()
+  self.step(32000,'','unused',status='rejected')
+  self.assertEqual(self.shown(),before);self.assertEqual(len(self.mt),2)
+ def test_long_frozen_text_or_an_engine_without_the_option_decodes_the_whole_group(self):
+  self.e.can_continue=lambda text:False
+  self.freeze_first()
+  self.step(32000,'א. ב ג','B C')
+  del self.e.can_continue
+  self.step(48000,'א. ב ג. ד','B C. D')
+  self.assertEqual(self.continued,['','','',''])
+  self.assertEqual(self.shown()[-1],('א. ב ג. ד','A. B C. D'))
+ def test_switch_restores_whole_group_decodes(self):
+  with patch.dict(os.environ,{'HEBREW_LIVE_TAIL_ONLY':'0'}):
+   self.p=RetranslationProcessor(self.e,self.q,SimpleNamespace(event=lambda name,**v:None),threading.Event())
+  self.freeze_first()
+  self.step(32000,'א. ב ג','B C')
+  self.assertEqual(self.continued,['','',''])
+  self.assertEqual(self.shown()[-1],('א. ב ג','A. B C'))
+
+
+class ContinuedDecodeTests(unittest.TestCase):
+ def engine(self,calls):
+  from hebrew_live.cli import Engine
+  e=Engine.__new__(Engine);e.language='he';e.direction='he-ru';e.early_reject=False;e.encoder_reuse=False;e.asr_path='fake'
+  e.log=SimpleNamespace(event=lambda *a,**kw:None)
+  e.asr=SimpleNamespace(transcribe=lambda *a,**kw:(calls.append(kw),dict(language='he',segments=[dict(text=' ב ג')]))[1])
+  return e
+ def test_forced_start_reaches_whisper_and_only_new_words_come_back(self):
+  calls=[];e=self.engine(calls)
+  self.assertEqual(e.recognize([],align_words=False,continues='א.'),'ב ג')
+  self.assertEqual(calls[0]['prefix'],'א.');self.assertFalse(calls[0]['word_timestamps']);self.assertTrue(calls[0]['without_timestamps'])
+  e.recognize([],align_words=False)
+  self.assertNotIn('prefix',calls[1]);self.assertNotIn('without_timestamps',calls[1])
+  with self.assertRaises(ValueError):e.recognize([],continues='א.')
+ def test_only_text_that_leaves_room_for_new_words_may_be_continued(self):
+  e=self.engine([])
+  with patch('hebrew_live.whisper_reuse.compatible',return_value=True):
+   self.assertTrue(e.can_continue('שלום לכם. מה שלומכם?'))
+   self.assertFalse(e.can_continue(''));self.assertFalse(e.can_continue('שלום '*400))
+  with patch('hebrew_live.whisper_reuse.compatible',return_value=False):
+   self.assertFalse(e.can_continue('שלום לכם.'))

@@ -57,13 +57,14 @@ def reject_repeated_decode(enabled, event, stop_in_loop=False):
                 if threading.get_ident() != owner or not isinstance(decoder, GreedyDecoder):
                     return main_loop(task, *args, **kwargs)
                 update, eot, tokenizer, steps = decoder.update, decoder.eot, task.tokenizer, [0]
+                begin = task.sample_begin   # a vocabulary prompt sits before it and is not recognized text
 
                 def checked(tokens, logits, sum_logprobs):
                     # `tokens` is the previous step, already queued on the GPU: reading
                     # it does not stall the step being built.
                     steps[0] += 1
                     if steps[0] % CHECK_EVERY == 0:
-                        ids = [t for t in tokens[0].tolist() if t < eot]
+                        ids = [t for t in tokens[0].tolist()[begin:] if t < eot]
                         text = tokenizer.decode(ids)
                         if repetition_loop(text, partial=True):
                             raise RepeatedDecode(text.strip(), ids)

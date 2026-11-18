@@ -13,6 +13,7 @@ import traceback
 import uuid
 
 DEFAULT_FREE_RESERVE = 64 * 1024 * 1024
+CAPTURE_DISCONTINUITY_DETAILS = 50
 
 
 class LowStorageError(OSError):
@@ -173,7 +174,7 @@ class Session:
         self.restart_safe=True
         self.integrity=dict(schema_version=1,audio_saved=self.save_audio,partial=False,
                             accepted={},asr_attempted={},terminal=[],known_unprocessed=[],
-                            capture_discontinuities=[])
+                            capture_discontinuities=[],capture_discontinuity_count=0)
         self._accepted_samples={}
         self._part_directions={}
         self.parts = {}
@@ -257,8 +258,25 @@ class Session:
 
     def note_capture_discontinuity(self, detail):
         with self._integrity_lock:
-            self.integrity['capture_discontinuities'].append(dict(extent='unknown',detail=str(detail)))
+            # A starved Mac can flag every 100 ms block; keep the first ones and the total.
+            items=self.integrity['capture_discontinuities']
+            if len(items)<CAPTURE_DISCONTINUITY_DETAILS:items.append(dict(extent='unknown',detail=str(detail)))
+            self.integrity['capture_discontinuity_count']+=1
             self.integrity['partial']=True
+
+    def stop_is_explained(self):
+        """Whether a recorded gap already accounts for a session that ended in an error.
+
+        Skipped backlog phrases and device glitches leave the session running, so they
+        do not explain why it stopped.
+        """
+        with self._integrity_lock:
+            return any(item.get('reason')!='translation_backlog' for item in self.integrity['known_unprocessed'])
+
+    def integrity_marks(self):
+        """Counts that change whenever the UI's integrity notice is out of date."""
+        with self._integrity_lock:
+            return len(self.integrity['known_unprocessed']),self.integrity['capture_discontinuity_count']
 
     def write_integrity(self, include_parts=True):
         with self._integrity_lock:

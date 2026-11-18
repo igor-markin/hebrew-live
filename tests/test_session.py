@@ -19,16 +19,30 @@ from hebrew_live.stream import Settings, Control, Boundary, AudioBlock, transfer
 
 
 class SessionTests(unittest.TestCase):
-    def test_device_status_is_unknown_capture_loss_not_accepted_audio(self):
+    def test_device_status_is_unknown_capture_loss_and_recording_continues(self):
         from hebrew_live.runtime import accept_audio_callback
         with tempfile.TemporaryDirectory() as tmp:
             session=Session(Path(tmp),'he-ru',{},save_audio=False)
             stop=threading.Event();errors=queue.Queue();control=Control(Settings(),stop,session.note_accepted);control.capture_rate=16000
             accept_audio_callback(control,session,stop,errors,np.ones((1600,1),dtype=np.float32),'overflow',now=1)
-            self.assertTrue(stop.is_set());self.assertFalse(errors.empty());self.assertTrue(control.queue.empty())
+            # The lost stretch is unknown, but the delivered block is sound audio.
+            self.assertFalse(stop.is_set());self.assertTrue(errors.empty());self.assertEqual(control.queue.qsize(),1)
+            self.assertFalse(session.stop_is_explained())
             folder=session.path;session.close();manifest=json.loads((folder/'session.json').read_text())
-            self.assertNotIn('1',manifest['accepted']);self.assertTrue(manifest['partial'])
+            self.assertEqual(manifest['accepted']['1']['samples'],1600);self.assertTrue(manifest['partial'])
             self.assertEqual(manifest['capture_discontinuities'][0]['extent'],'unknown')
+            self.assertEqual(session.integrity_view()['partial_kind'],'capture_unknown')
+
+    def test_repeated_device_status_keeps_a_bounded_record_and_the_total(self):
+        from hebrew_live.session import CAPTURE_DISCONTINUITY_DETAILS
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(Path(tmp),'he-ru',{},save_audio=False)
+            before=session.integrity_marks()
+            for _ in range(CAPTURE_DISCONTINUITY_DETAILS+25):session.note_capture_discontinuity('input overflow')
+            self.assertNotEqual(session.integrity_marks(),before)
+            folder=session.path;session.close();manifest=json.loads((folder/'session.json').read_text())
+            self.assertEqual(len(manifest['capture_discontinuities']),CAPTURE_DISCONTINUITY_DETAILS)
+            self.assertEqual(manifest['capture_discontinuity_count'],CAPTURE_DISCONTINUITY_DETAILS+25)
 
     def test_no_audio_keeps_duration_text_and_truthful_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

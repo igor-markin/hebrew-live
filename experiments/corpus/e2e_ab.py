@@ -47,6 +47,7 @@ CATALOG = {
     'mt_draft': {'HEBREW_LIVE_MT_SPECULATE': '1'},
     'mt_draft_stable': {'HEBREW_LIVE_MT_SPECULATE': '1', 'HEBREW_LIVE_MT_SPECULATE_TOLERANCE': '0.3'},
     'fast_draft': {'HEBREW_LIVE_FUSED_ENCODER': '1', 'HEBREW_LIVE_TIMING': '1.0,1.0,0,4,0.6'},
+    'whole_group': {'HEBREW_LIVE_TAIL_ONLY': '0'},  # every decode re-reads the frozen sentences (before 2026-11-18)
 }
 # E2E_VARIANTS="stock phase1 hold_last_word" picks what to run (default: stock phase1)
 # E2E_MODELS=DIR runs against another models folder. Saved preferences live in DIR/../.local-settings and

@@ -364,6 +364,9 @@ def translation_loop(text,source):
 
 
 LOOP_RETRY_TEMPERATURE=.3
+# Longest text a decode may be forced to start with; the rest of the 448-token context is
+# the vocabulary prompt (up to 200) and the new words.
+CONTINUED_TOKENS=180
 def loop_trim_enabled():
     # Off by default until measured against main on saved recordings.
     return os.environ.get('HEBREW_LIVE_LOOP_TRIM','0')=='1'
@@ -412,6 +415,9 @@ class Engine:
         self.log.event('mlx_runtime',**describe(mx))
         self.custom_models=asr_path is not None or translation_path is not None
         self.asr=None;self.model=None;self.tokenizer=None
+        from . import vocabulary
+        # The owner's words: recognition gets their spelling, translation their meaning.
+        self.vocabulary=vocabulary.load() if vocabulary.enabled() else []
         self.asr_path=str(asr_path or folder/'asr')
         from .model_selection import TRANSLATION, validate
         validate(dict(asr=backend,translation='milmmt'))
@@ -422,6 +428,7 @@ class Engine:
                 raise ValueError('Model not installed')
             self.log.event('asr_early_reject_config',enabled=self.early_reject,loop_stop=self.loop_stop,
                            scope='phrases/he-source/he/turbo')
+            self.prepare_asr_prompt()
         if role!='asr':
             if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
                 raise ValueError('Model not installed')
@@ -464,9 +471,33 @@ class Engine:
         self.warmup()
         self.log.event('model_load_complete',**values)
 
-    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True, until=None):
+    def prepare_asr_prompt(self):
+        """The owner's words become the text Whisper believes preceded the audio."""
+        from . import vocabulary
+        self.asr_prompt=None
+        entries=self.vocabulary if vocabulary.asr_enabled() else []
+        if not entries:return
+        text,used=vocabulary.asr_prompt(entries,self.asr_tokens)
+        self.asr_prompt=text or None
+        self.log.event('vocabulary',entries=len(entries),used=len(used),prompt_tokens=self.asr_tokens(text) if text else 0)
+
+    def asr_tokens(self, text):
+        """How many tokens Whisper spends on `text`."""
+        if getattr(self,'_asr_encode',None) is None:
+            from mlx_whisper.tokenizer import get_tokenizer
+            self._asr_encode=get_tokenizer(True,num_languages=100,language='he',task='transcribe').encode
+        return len(self._asr_encode(' '+text.strip()))
+
+    def can_continue(self, text):
+        """Whether a decode may be forced to start with `text` (see `recognize(continues=)`).
+        Whisper's context holds 448 tokens: the vocabulary prompt, this text and the new words."""
+        from .whisper_reuse import compatible
+        return bool(text.strip()) and compatible() and self.asr_tokens(text)<=CONTINUED_TOKENS
+
+    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True, until=None, continues=''):
         """`prefix` and `until` (seconds) bound the words kept from a window that also holds
-        neighbouring audio for context."""
+        neighbouring audio for context. `continues` is text already accepted for the start of
+        this audio: the decoder begins with it and only what follows is recognized and returned."""
         if getattr(self,'role','both')=='mt':raise RuntimeError('MT worker cannot recognize audio')
         self.recognition_status='empty'
         self.recognition_issue=None
@@ -479,13 +510,23 @@ class Engine:
                and getattr(self,'backend',None)=='turbo' and self.language=='he'
                and source_language=='he')
         word_timestamps = align_words or prefix > 0 or until is not None
+        if continues and word_timestamps:
+            # Alignment would spread the new words over the whole window, the forced start included.
+            raise ValueError('A continued decode has no word times')
         from .whisper_reuse import reuse_alignment
         from .whisper_repetition import reject_repeated_decode, RepeatedDecode
+        prompt=getattr(self,'asr_prompt',None) if self.language=='he' and source_language=='he' else None
+        extra={}   # no vocabulary and no forced start: the call is unchanged
+        if prompt:extra['initial_prompt']=prompt
+        # A continued decode runs without timestamp tokens: with them it added errors
+        # (experiments/tail-only). A whole decode keeps them: without them Whisper invents
+        # words on silence and noise (41 words against 4 on eleven synthetic signals).
+        if continues:extra.update(prefix=continues,without_timestamps=True)
         def decode(temperature):
             with reject_repeated_decode(early,self.log.event,loop_stop):
                 with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
                     return self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
-                        temperature=temperature,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None)
+                        temperature=temperature,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None,**extra)
         trimmed=None
         try:
             result=decode(0.0)
@@ -551,7 +592,11 @@ class Engine:
         from mlx_lm.sample_utils import make_sampler
         from . import mt_generate
         from .translation import prompt
-        ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]),pairs=context)
+        from . import vocabulary
+        from .languages import split_direction
+        source_language,target_language=split_direction(self.direction)
+        terms=vocabulary.relevant(getattr(self,'vocabulary',()),text,target_language) if source_language=='he' else []
+        ids=prompt(self.tokenizer,'milmmt',text,self.direction,self.topic,getattr(self,'translation_context',[]),pairs=context,terms=terms)
         max_tokens=mt_generate.max_tokens_for(len(self.tokenizer.encode(text,add_special_tokens=False)))
         stats={};reason=None;generated='';began=time.monotonic();finished=False
         step=None
@@ -608,28 +653,33 @@ class Fragment:
 
 class Inbox:
     TIMEOUT=object()
-    """Bounded final FIFO; only the newest provisional snapshot is retained."""
+    LIMIT=4
+    """Bounded final FIFO; only the newest provisional snapshot is retained.
+
+    When inference falls LIMIT finished phrases behind, the oldest waiting one gives way
+    to the newest: captions catch up instead of the session stopping. The skipped phrase
+    goes to `on_overload`; its audio stays in the recording.
+    """
     def __init__(self,on_overload=None):
         self.condition=threading.Condition();self.finals=deque();self.preview=None;self.done=False;self.latest={}
         self.overloaded=False;self.on_overload=on_overload
     def put(self, f):
+        skipped=None
         with self.condition:
             f.queued_at=time.monotonic()
             self.latest[f.id]=f.revision
-            if self.overloaded:
-                if self.on_overload:self.on_overload(f)
-                return False
             if f.final:
-                if len(self.finals)>=4:
+                # Fragments hold audio arrays, so pick the oldest by position, not by equality.
+                waiting=[index for index,item in enumerate(self.finals) if isinstance(item,Fragment)]
+                if len(waiting)>=self.LIMIT:
+                    skipped=self.finals[waiting[0]];del self.finals[waiting[0]]
                     self.overloaded=True
-                    self.preview=None
-                    if self.on_overload:self.on_overload(f)
-                    return False
                 self.finals.append(f)
                 if self.preview and self.preview.id<=f.id:self.preview=None
             else:self.preview=f
             self.condition.notify()
-            return True
+        if skipped is not None and self.on_overload:self.on_overload(skipped)
+        return True
     def put_boundary(self, boundary):
         with self.condition:
             self.finals.append(boundary);self.condition.notify()
@@ -718,11 +768,7 @@ def segment(raw, inbox, vad, stop, log, errors):
         audio = np.concatenate(frames)
         from dataclasses import replace
         frozen=replace(settings,timing=group_timing,mode=group_mode) if settings is not None else None
-        accepted=inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason))
-        if accepted is False:
-            stop.set()
-            log.event('processing_overload',segment=sid,revision=rev,
-                      start=max(0.,offset-len(audio)/16000+prefix),end=offset)
+        inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason))
         last = len(frames)*.032
         log.event('fragment',segment=sid,revision=rev,seconds=len(audio)/16000,new_seconds=len(audio)/16000-prefix,context_seconds=prefix,final=final)
 
@@ -861,6 +907,7 @@ def main():
     report_command=sub.add_parser('report',help='Print a privacy-filtered bug-report metadata bundle')
     report_command.add_argument('--output',type=Path,help='Write JSON locally instead of printing it')
     listen=sub.add_parser('listen');listen.add_argument('--device',type=int)
+    listen.add_argument('--phone',action='store_true',help="Take the other side of a phone call from an Android phone over USB (needs scrcpy and USB debugging) instead of the microphone")
     bench=sub.add_parser('benchmark');bench.add_argument('file',type=Path)
     for command in (doctor,listen,bench):
         command.add_argument('--asr-model',type=Path,help='Compatible local Whisper Turbo MLX directory outside the managed models folder')

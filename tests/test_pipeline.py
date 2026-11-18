@@ -13,7 +13,7 @@ class NullLog:
     def error(self,*a,**k):pass
 
 class PipelineTests(unittest.TestCase):
-    def test_slow_inference_overload_preserves_queued_work_and_records_gap(self):
+    def test_slow_inference_overload_skips_the_oldest_phrases_and_records_the_gap(self):
         from hebrew_live.feed import inference
         from hebrew_live.session import Session
         from hebrew_live.session_history import SessionHistory
@@ -22,7 +22,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session=Session(Path(tmp),'he-ru',{},save_audio=False)
             stop=threading.Event();errors=queue.Queue();updates=queue.Queue()
-            box=Inbox(lambda f:(session.note_unprocessed_fragment(f,'translation_backlog'),stop.set()))
+            box=Inbox(lambda f:session.note_unprocessed_fragment(f,'translation_backlog'))
             class Engine:
                 mx=type('MX',(),{'get_peak_memory':lambda _:0})()
                 def recognize(self,audio,*args,**kwargs):
@@ -33,7 +33,8 @@ class PipelineTests(unittest.TestCase):
             consumer=threading.Thread(target=segment,args=(raw,box,lambda _:1,stop,session,errors));consumer.start()
             for _ in range(6):self.assertTrue(control.accept(np.ones(160000,dtype=np.float32),time.monotonic()))
             control.queue.put(None);transfer(control,raw,session,16000,1,consumer,errors,updates);consumer.join(3)
-            self.assertTrue(box.overloaded)
+            self.assertTrue(box.overloaded);self.assertFalse(stop.is_set())
+            self.assertFalse(session.stop_is_explained())
             worker=threading.Thread(target=inference,args=(box,Engine(),updates,stop,errors,session));worker.start();worker.join(5)
             self.assertFalse(worker.is_alive());self.assertTrue(errors.empty(),list(errors.queue))
             folder=session.path;ui=BrowserUI(open_browser=False);ui.prepare_exports(session)
@@ -52,11 +53,28 @@ class PipelineTests(unittest.TestCase):
         a=lambda rev,final:Fragment(1,rev,None,0,0,final)
         box.put(a(1,False));box.put(a(2,False));box.put(a(3,True));box.finish()
         self.assertEqual(box.get().revision,3);self.assertIsNone(box.get())
-    def test_bounded_final_queue(self):
-        rejected=[];box=Inbox(rejected.append)
-        for i in range(4):box.put(Fragment(i,1,None,0,0,True))
-        self.assertFalse(box.put(Fragment(4,1,None,0,0,True)))
-        self.assertTrue(box.overloaded);self.assertEqual(rejected[0].id,4)
+    def test_full_final_queue_skips_the_oldest_phrase_and_keeps_accepting(self):
+        skipped=[];box=Inbox(skipped.append)
+        for i in range(4):box.put(Fragment(i,1,np.zeros(16),0,0,True))
+        self.assertFalse(box.overloaded)
+        for i in (4,5):self.assertTrue(box.put(Fragment(i,1,np.zeros(16),0,0,True)))
+        self.assertTrue(box.overloaded);self.assertEqual([f.id for f in skipped],[0,1])
+        self.assertEqual([box.get().id for _ in range(4)],[2,3,4,5])
+    def test_full_final_queue_never_skips_a_boundary(self):
+        from hebrew_live.stream import Boundary,Settings
+        skipped=[];box=Inbox(skipped.append);boundary=Boundary(Settings(),'pause')
+        box.put_boundary(boundary)
+        for i in range(5):box.put(Fragment(i,1,np.zeros(16),0,0,True))
+        self.assertEqual([f.id for f in skipped],[0])
+        self.assertIs(box.get(),boundary);self.assertEqual([box.get().id for _ in range(4)],[1,2,3,4])
+    def test_overload_does_not_stop_the_segmenter(self):
+        raw=queue.Queue();skipped=[];box=Inbox(skipped.append);errors=queue.Queue();stop=threading.Event()
+        # 60 s of unbroken speech with nobody consuming: a final every 10 s window.
+        for _ in range(6):raw.put((np.ones(160000,dtype=np.float32),1))
+        raw.put(None);segment(raw,box,lambda f:1,stop,NullLog(),errors)
+        self.assertFalse(stop.is_set());self.assertTrue(errors.empty())
+        self.assertTrue(box.overloaded);self.assertTrue(skipped)
+        self.assertEqual(len(box.pending_fragments()),4)
     def test_silence_produces_no_fragments(self):
         raw=queue.Queue();box=Inbox();errors=queue.Queue()
         raw.put((np.zeros(16000,dtype=np.float32),1));raw.put(None)

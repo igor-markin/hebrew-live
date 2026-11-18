@@ -230,6 +230,10 @@ class RetranslationProcessor:
         # Finished sentences stay as shown; only the rest of the group is translated again.
         # The independent MT worker and the sentence-split modes keep their own behaviour.
         self.freeze_enabled=os.environ.get('HEBREW_LIVE_FREEZE_SENTENCES','1')!='0' and not self.async_mt
+        # Recognition writes only what follows the frozen sentences instead of the whole group
+        # again (experiments/tail-only: same WER on two corpora, 0.2 s less per decode).
+        self.tail_only=os.environ.get('HEBREW_LIVE_TAIL_ONLY','1')!='0'
+        self.continued_words=0
         self.carry=();self.carry_end=None
         # Closed groups of the current speaker turn: audio and text for the context of
         # the next sentence. A pause or a settings change starts a new turn.
@@ -654,6 +658,15 @@ class RetranslationProcessor:
             pairs.append((item['source'], item['translation']));edge = item['start']
         return tuple(pairs[::-1])
 
+    def frozen_start(self, align_words):
+        """The frozen sentences of this group when a decode may start with them, else ''.
+        Word times cannot be aligned for such a decode."""
+        if not (self.tail_only and self.freeze and self.frozen_source and not align_words):
+            return ''
+        frozen = ' '.join(self.frozen_source)
+        fits = getattr(self.engine, 'can_continue', None)
+        return frozen if fits is not None and fits(frozen) else ''
+
     def _decode(self, final, align_words):
         """Recognise the group; with sentence context, inside a window that also holds the
         turn's preceding audio and, for a closing decode, the audio right after the group."""
@@ -662,8 +675,21 @@ class RetranslationProcessor:
                                        CONTEXT_WINDOW_SECONDS-len(self.audio)/16000-CONTEXT_RIGHT_SECONDS))
                 if self.sentence_context else ())
         right = self.right_context if self.sentence_context and self.right_context is not None else ()
+        self.continued_words = 0
         if not len(left) and not len(right):
-            return e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words), 0
+            frozen = self.frozen_start(align_words)
+            if not frozen:
+                return e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=align_words), 0
+            # The frozen sentences open the decode, so Whisper writes only the words after
+            # them. The group text is put back together: everything downstream sees what a
+            # decode of the whole group would have returned.
+            tail = e.recognize(self.audio, 0., preliminary=not final, mode='phrases', align_words=False, continues=frozen)
+            self.continued_words = len(frozen.split())
+            if not tail and getattr(e, 'recognition_status', 'empty') == 'empty':
+                # Nothing new was heard: the tail already on screen stays as it is.
+                e.recognition_status = 'accepted'
+                return ' '.join(part for part in (frozen, self.source) if part), 0
+            return (frozen+' '+tail if tail else ''), 0
         prefix = len(left)/16000
         options = dict(until=prefix+len(self.audio)/16000) if len(right) else {}
         window = np.concatenate((left, self.audio, right)).astype(np.float32)
@@ -695,7 +721,8 @@ class RetranslationProcessor:
                        context_seconds=context_samples/16000,
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
                        final=final, closing=closing, source=text,word_alignment=align_words,
-                       **(dict(reused=True) if reused else {}))
+                       **(dict(reused=True) if reused else {}),
+                       **(dict(continued_words=self.continued_words) if self.continued_words else {}))
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'
             if closing and self.catchup_parent:

@@ -4,6 +4,8 @@
 
 ### Changed
 
+- recognition of a growing group continues from its frozen sentences instead of writing the whole group again: the frozen text is forced as the start of the Whisper decode, which then runs without timestamp tokens (ivrit.ai eval-d1 and eval-whatsapp in 20 s windows: 941 instead of 949 and 1586 instead of 1598 word errors, 0.20-0.24 s less per decode; `HEBREW_LIVE_TAIL_ONLY=0` restores whole-group decodes; `experiments/tail-only`);
+- a failing microphone block or a full queue of finished phrases no longer stops the session: the gap is recorded, the oldest waiting phrase is skipped and listening continues;
 - finished sentences of a growing draft group stay on screen as shown: once two recognitions in a row agree on a sentence that is followed by more speech, its translation is frozen and only the rest of the group is translated again, continuing from the shown translation; a streaming preview no longer replaces a longer visible version; translation text is 17 px instead of 20 px (2026-10-29 call replay: finished sentences rewritten 296 -> 66, bubble collapses 424 -> 12; `HEBREW_LIVE_FREEZE_SENTENCES=0` restores whole-group re-translation, the split-worker pipeline keeps it);
 - translation drives `mlx_lm.generate_step` directly instead of `stream_generate`: the same text and finish reasons (84 of 84 compared sequences identical), without the per-call wired-memory toggling that cost 0.33-0.46 s per translation (`HEBREW_LIVE_MT_GENERATE=stock` restores it);
 - the translation token budget grows with the source (96-512 tokens instead of a fixed 256) and a translation that still reaches it is shown with an explicit `[…]` instead of being dropped (`HEBREW_LIVE_MT_MAX_TOKENS=256` restores the old limit);
@@ -21,6 +23,9 @@
 
 ### Added
 
+- `he-ru listen --phone` (or `HEBREW_LIVE_INPUT=phone`): the other side of a phone call taken digitally from an Android phone over USB through `scrcpy --audio-source=voice-call-downlink`, instead of the microphone;
+- the owner's vocabulary (`vocabulary.json` in the data folder; `HEBREW_LIVE_VOCABULARY=0` ignores it): translation gets the entries that occur in the phrase together with their translations; handing the words to recognition as a prompt is off (`HEBREW_LIVE_VOCABULARY_ASR=1`) because a 29-term list raised word errors on speech without those words by 19-25 %; an empty vocabulary changes nothing;
+- `number_guard`: compares the numbers of a phrase and of its translation (not connected to the screen yet);
 - diagnostics: `mlx_runtime` (wheel tags, device), `mt_generation`, `mt_cancel`, `mt_interrupted`, `mt_prioritized`; `scripts/diagnose_latency.py` now reports time to the first visible draft, normalized erasure, time to stable words, lost-speech rate, slow-down over time and the new events;
 - opt-in experiments, all off by default: `HEBREW_LIVE_LOOP_TRIM=1` (a Whisper decode that ends in a loop keeps the words before it, and a closing decode that loops gets one retry at temperature 0.3), `HEBREW_LIVE_SENTENCE_SPLIT=1` (a growing group closes at a sentence end two snapshots agree on, with that text, and the live UI keeps such sentences in one bubble with the still open text grey), `HEBREW_LIVE_CALM_DRAFTS=1` (the live UI keeps a shown translation until a refresh is complete and fades in only changed words), `HEBREW_LIVE_MT_SPECULATE=1` (drafting from the previous translation, 0.81x time but not output-identical), `HEBREW_LIVE_HOLD_LAST_WORD=1`, `HEBREW_LIVE_TIMING=first,interval,0,fragment,silence`;
 - local measurement tooling in `experiments/corpus` (manifest, real-window replay, end-to-end A/B, metrics) and `experiments/nn-audit-2026-10`.
