@@ -90,5 +90,25 @@ list (429 of 735 words lost on 20 windows, 3 with the period). The recognition p
 therefore off by default (`HEBREW_LIVE_VOCABULARY_ASR=1`); translation still gets the
 entries that occur in the phrase.
 
-Not measured: the live app end to end (screen stability, translation load), a real call,
-heat, whether a prompt helps recognition of the terms themselves.
+## The live pipeline, 2026-11-18
+
+The first phone call through the app (an automated menu, 107 s, taken over USB) continued no
+decode at all: the pipeline talks to the engine through `RemoteEngine`, which had no
+`can_continue`. Fixed; the recording replayed through `he-ru benchmark` both ways:
+
+| | whole-group decodes | tail-only |
+| --- | --- | --- |
+| recognitions (continued) | 65 (0) | 64 (16) |
+| rejected as a loop | 6 | 0 |
+| recognition time, fitted | 0.62 s + 37 ms per second of audio | 0.74 s + 21 ms per second |
+| recognition time in total | 62.0 s | 59.4 s |
+| translation, p50 / p90 | 1.11 / 3.20 s | 1.29 / 3.29 s |
+| text behind the audio, p50 / p90 / max | 2.6 / 8.3 / 11.2 s | 3.1 / 7.3 / 11.0 s |
+
+The gain here is 4 %, not the 27 % of the window probe: a menu voice rarely ends a sentence, so
+only four freezes happened, and a recognition costs about 0.65 s whatever the audio length.
+The final text differs in 17 of 195 words, mostly in favour of tail-only (fewer misheard
+words, no stray fragment).
+One recording, one run each: the lag columns are within run-to-run noise.
+
+Not measured: heat, whether a prompt helps recognition of the terms themselves.
