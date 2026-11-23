@@ -7,7 +7,7 @@ import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
 import {UiLog,clickTarget,renderRecords} from './uiLog';
 import type {Drawn} from './uiLog';
-import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -124,6 +124,16 @@ function NumberNote({groups}:{groups:Group[]}) {
   return notes.length?<span className="bubble-status number-note">{tx('checkNumber',{numbers:notes.join(', ')})}</span>:null;
 }
 
+/** A calm note under a closed bubble whose weekday was corrected from the Hebrew, or is doubtful. */
+function DayNote({groups}:{groups:Group[]}) {
+  const {tx}=useI18n();
+  const {fixed,check}=dayNotes(groups);
+  return <>
+    {fixed.length?<span className="bubble-status number-note">{tx('dayFixed',{days:fixed.join(', ')})}</span>:null}
+    {check.length?<span className="bubble-status number-note">{tx('checkDay',{days:check.join(', ')})}</span>:null}
+  </>;
+}
+
 type SpeechProps={turn:SpeechTurn;onRetry?:(id:string)=>void;retrying:boolean;retryEnabled:boolean;originalOpen:boolean;onOriginalToggle:(id:string,open:boolean)=>void};
 const sameSpeech=(a:SpeechProps,b:SpeechProps)=>a.turn.id===b.turn.id&&a.turn.position===b.turn.position&&
   a.turn.groups.length===b.turn.groups.length&&a.turn.groups.every((group,index)=>group===b.turn.groups[index])&&
@@ -140,7 +150,7 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
     return <article ref={holdRef} className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${frozen?'speech-card--frozen':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
       <BubbleText segments={segments} direction={group.direction}/>
       {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
-      <NumberNote groups={turn.groups}/>
+      <NumberNote groups={turn.groups}/><DayNote groups={turn.groups}/>
     </article>;
   }
   const live=group.live;
@@ -164,7 +174,7 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}
-    <NumberNote groups={[group]}/>
+    <NumberNote groups={[group]}/><DayNote groups={[group]}/>
     {issue&&!shortMiss&&(unconfirmedDraft?<span className="bubble-status bubble-unconfirmed">{issueText(locale,issue)}</span>:<p className="unavailable bubble-issue">{issueText(locale,issue)}</p>)}
     {issue&&onRetry&&<div className="fragment-retry"><Button variant="tertiary" isDisabled={!retryEnabled||retrying} onPress={()=>onRetry(group.id)}>{retrying?tx('retrying'):tx('retry')}</Button>{!retryEnabled&&!retrying&&<small>{tx('pauseFirst')}</small>}</div>}
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}

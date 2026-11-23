@@ -399,6 +399,9 @@ class RetranslationProcessor:
         previous = self.visible
         if self.freeze and stage != 'unavailable':
             source, target = self.with_frozen(source, target)
+        days = []
+        if stage != 'unavailable':
+            target, days = self.weekday_fix(source, target)
         snapshot = dict(source=source, translation=target, fragment=job.fragment if job else self.last.id,
                         revision=job.revision if job else self.last.revision,
                         source_status='accepted' if job else self.last_status)
@@ -412,6 +415,8 @@ class RetranslationProcessor:
         if stage in ('closed', 'technical'):
             # Only a closed phrase: the figures of a growing one change every second.
             value['numbers'] = self.number_issues(snapshot['source'], snapshot['translation'])
+        if days:
+            value['days'] = days
         if value == previous: return
         self.visible = deepcopy(value)
         if job:self.published_job=(job.id,job.version)
@@ -423,6 +428,8 @@ class RetranslationProcessor:
         self.log.event('live_publication', part=self.settings.part,segment=self.sid, **value,
                        audio_lag=audio_lag, from_start=now-captured+offset-start/16000)
         if job:self.mt_event('mt_published',job,new_content=not previous or previous['current']['translation']!=target)
+        if days and stage in ('closed', 'technical'):
+            self.log.event('weekday_check', part=self.settings.part, segment=self.sid, stage=stage, issues=days)
         if value.get('numbers'):
             self.log.event('number_mismatch', part=self.settings.part, segment=self.sid, stage=stage,
                            issues=value['numbers'])
@@ -451,6 +458,19 @@ class RetranslationProcessor:
         self.log.event('live_source', part=self.settings.part, segment=self.sid, source=source,
                        audio_lag=audio_lag, start=self.start/16000, end=self.end/16000,
                        **(dict(heard_until=self.streaming.heard_until) if self.streamed else {}))
+
+    def weekday_fix(self, source, target):
+        """The translation with a weekday the Hebrew does not name replaced by the one it does,
+        and [{kind, he, ru, expected}] for every fixed or doubtful day (weekday_guard).
+        `HEBREW_LIVE_WEEKDAY_CHECK=0` turns it off."""
+        if os.environ.get('HEBREW_LIVE_WEEKDAY_CHECK', '1') == '0' or not source.strip() or not target.strip():
+            return target, []
+        from .languages import split_direction
+        if split_direction(self.settings.direction) != ('he', 'ru'):
+            return target, []
+        from .weekday_guard import fix
+        fixed, issues = fix(source, target)
+        return fixed, [item._asdict() for item in issues]
 
     def number_issues(self, source, target):
         """Digit figures the whole shown group (frozen sentences and tail) has on one side and

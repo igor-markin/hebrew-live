@@ -109,6 +109,19 @@ class Append(unittest.TestCase):
         self.assertEqual(summary['append']['capped'], 2)
         self.assertEqual(summary['append']['translation_word_lag']['count'], 2)
 
+    def test_wrong_weekday_in_a_chunk_is_replaced_with_the_cards_hebrew(self):
+        def translate(text, context=()):
+            self.calls.append((text, context))
+            yield ('Запись' if 'תור' in text else 'в четверг.'), 'stop'
+        script = [(' תור', .2), (' ביום', .5), (',', .6), (' שלישי', .9), ('.', 1.)]
+        processor = self.make(script, translate=translate)
+        self.feed(processor, 1.6, final=True, reason='pause')
+        processor.drain_mt()
+        processor.shutdown_mt()
+        self.assertEqual(self.publications()[-1]['current']['translation'], 'Запись во вторник.')
+        checks = [v for n, v in self.events if n == 'weekday_check']
+        self.assertEqual([i['kind'] for c in checks for i in c['issues']], ['fixed'])
+
 
 if __name__ == '__main__':
     unittest.main()

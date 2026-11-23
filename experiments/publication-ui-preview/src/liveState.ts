@@ -1,6 +1,8 @@
 export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number;audio_lag?:number};
 export type NumberIssue = {kind:'missing'|'extra';number:string};
-export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[];emitted_at?:number;audio_lag?:number};
+/** A weekday the Hebrew names and the translation got wrong (weekday_guard.py). */
+export type DayIssue = {kind:'fixed'|'wrong'|'missing'|'extra';he:string;ru:string;expected:string};
+export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[];days?:DayIssue[];emitted_at?:number;audio_lag?:number};
 /** The newest recognised Hebrew of an open group, published before its translation is ready. */
 export type SourceLive = {source:string;emitted_at?:number;audio_lag?:number};
 export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair;source_live?:SourceLive};
@@ -39,6 +41,7 @@ function group(value:unknown): value is Group {
   if(value.live!==undefined){
     if(!record(value.live)||!pair(value.live.current)||!Array.isArray(value.live.history)||!value.live.history.every(pair)||typeof value.live.stage!=='string'||!optionalString(value.live.issue)||!optionalString(value.live.reason)||!optionalNumber(value.live.start)||!optionalNumber(value.live.end))return false;
     if(value.live.numbers!==undefined&&(!Array.isArray(value.live.numbers)||!value.live.numbers.every(item=>record(item)&&(item.kind==='missing'||item.kind==='extra')&&typeof item.number==='string'&&/^\d{1,40}$/.test(item.number))))return false;
+    if(value.live.days!==undefined&&(!Array.isArray(value.live.days)||!value.live.days.every(item=>record(item)&&['fixed','wrong','missing','extra'].includes(item.kind as string)&&['he','ru','expected'].every(key=>typeof item[key]==='string'&&(item[key] as string).length<=40))))return false;
   }
   return true;
 }
@@ -274,6 +277,23 @@ export function numberNotes(groups:Group[]):string[] {
     for(const item of group.live.numbers||[])if(!seen.includes(item.number))seen.push(item.number);
   }
   return seen;
+}
+
+/**
+ * Weekdays of the closed phrases: `fixed` were replaced by the day the Hebrew names, `check` are
+ * days the Hebrew and the translation do not agree on (a day the Hebrew lacks, or one the
+ * translation lost). Once each; an open phrase never has a note.
+ */
+export function dayNotes(groups:Group[]):{fixed:string[];check:string[]} {
+  const fixed:string[]=[],check:string[]=[];
+  for(const group of groups){
+    if(!group.complete||!group.live||!['closed','technical'].includes(group.live.stage))continue;
+    for(const item of group.live.days||[]){
+      const [list,word]=item.kind==='fixed'?[fixed,item.expected]:[check,item.kind==='extra'?item.ru:item.expected];
+      if(word&&!list.includes(word))list.push(word);
+    }
+  }
+  return {fixed,check};
 }
 
 export type VocabularyEntry={he:string;ru:string;en:string};

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {agreedSplit,figureParts,shownSource} from '../src/liveState.ts';
-import type {Group} from '../src/liveState.ts';
+import {agreedSplit,dayNotes,figureParts,shownSource} from '../src/liveState.ts';
+import type {DayIssue,Group} from '../src/liveState.ts';
 
 const figures=(text:string)=>figureParts(text).filter(part=>part.figure).map(part=>part.text);
 
@@ -23,4 +23,13 @@ test('an open group shows the newest Hebrew before its translation arrives',()=>
 test('splits an open translation into agreed words and the rest',()=>{
   assert.deepEqual(agreedSplit('Я хочу записаться на прием',2),['Я хочу','записаться на прием']);
   assert.deepEqual(agreedSplit('Я хочу',0),['','Я хочу']);
+});
+
+test('weekday notes come from closed phrases only, once each',()=>{
+  const live=(stage:string,days:DayIssue[])=>({current:{source:'',translation:''},history:[],stage,days});
+  const groups:Group[]=[
+    {id:'1',direction:'he-ru',complete:true,live:live('closed',[{kind:'fixed',he:'שלישי',ru:'четверг',expected:'вторник'},{kind:'extra',he:'',ru:'среду',expected:''}])},
+    {id:'2',direction:'he-ru',complete:true,live:live('closed',[{kind:'fixed',he:'שלישי',ru:'понедельник',expected:'вторник'}])},
+    {id:'3',direction:'he-ru',complete:false,live:live('open',[{kind:'missing',he:'שישי',ru:'',expected:'пятница'}])}];
+  assert.deepEqual(dayNotes(groups),{fixed:['вторник'],check:['среду']});
 });

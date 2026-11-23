@@ -268,6 +268,9 @@ class AppendProcessor:
                     capped = True
                     break
         out = out.strip()
+        days = []
+        with self.lock:
+            out, days = self._weekdays(card, words, out, settings)
         now = self.audio_now()
         with self.lock:
             # A runaway that had to be cut stays on screen but is not context for the next chunks.
@@ -281,6 +284,30 @@ class AppendProcessor:
                 self.close(card)
         self.log.event('append_chunk', part=settings.part, segment=card.sid, words=len(words),
                        seconds=round(time.monotonic() - began, 3), capped=capped, lags=lags)
+        if days:
+            self.log.event('weekday_check', part=settings.part, segment=card.sid, stage='append', issues=days)
+
+    def _weekdays(self, card, words, out, settings):
+        """The chunk's translation with a weekday the Hebrew does not name replaced (weekday_guard).
+        The card's Hebrew up to this chunk is the context («ביום» may end the chunk before); only
+        the new chunk can change, the shown translation stays."""
+        if os.environ.get('HEBREW_LIVE_WEEKDAY_CHECK', '1') == '0' or not out:
+            return out, []
+        from .languages import split_direction
+        if split_direction(settings.direction) != ('he', 'ru'):
+            return out, []
+        from .weekday_guard import fix
+        end = card.words.index(words[-1]) + 1 if words[-1] in card.words else len(card.words)
+        source = ' '.join(w['text'] for w in card.words[:end])
+        shown = ' '.join(t for t in card.translations if t)
+        frozen = len(shown) + 1 if shown else 0
+        fixed, issues = fix(source, (shown + ' ' + out) if shown else out, frozen)
+        new = fixed[frozen:] if shown else fixed
+        chunk = ' '.join(w['text'] for w in words)
+        # Only what this chunk brought: earlier chunks were checked when they came.
+        issues = [item._asdict() for item in issues if item.kind == 'fixed'
+                  or item.kind == 'extra' and item.ru in new or item.kind == 'missing' and item.he in chunk]
+        return new, issues
 
     # ---- the feed interface ----------------------------------------------------------
     def poll_mt(self, wait=False):
