@@ -29,16 +29,20 @@ def model_folder(path):
     return None
 
 
+def recognizer(folder, threads=1):
+    import sherpa_onnx
+    folder = Path(folder)
+    return sherpa_onnx.OnlineRecognizer.from_transducer(
+        tokens=str(folder / 'tokens.txt'), encoder=str(folder / 'encoder.int8.onnx'),
+        decoder=str(folder / 'decoder.int8.onnx'), joiner=str(folder / 'joiner.int8.onnx'),
+        model_type='zipformer2', num_threads=threads, decoding_method='greedy_search')
+
+
 class StreamingDraft:
     """One stream per open group, fed only the samples it has not seen yet."""
 
     def __init__(self, folder, threads=1):
-        import sherpa_onnx
-        folder = Path(folder)
-        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-            tokens=str(folder / 'tokens.txt'), encoder=str(folder / 'encoder.int8.onnx'),
-            decoder=str(folder / 'decoder.int8.onnx'), joiner=str(folder / 'joiner.int8.onnx'),
-            model_type='zipformer2', num_threads=threads, decoding_method='greedy_search')
+        self.recognizer = recognizer(folder, threads)
         self.key = None
         self.stream = None
         self.fed = 0
@@ -63,9 +67,9 @@ class StreamingDraft:
         return result.text.strip()
 
 
-def load(log=None):
-    """The streaming draft when hybrid mode is on and its model is available, else None."""
-    if os.environ.get('HEBREW_LIVE_HYBRID', '0') != '1':
+def load(log=None, flag='HEBREW_LIVE_HYBRID'):
+    """The streaming draft when `flag` is on and its model is available, else None."""
+    if os.environ.get(flag, '0') != '1':
         return None
     path = os.environ.get('HEBREW_LIVE_HYBRID_MODEL', '')
     folder = model_folder(path) if path else None

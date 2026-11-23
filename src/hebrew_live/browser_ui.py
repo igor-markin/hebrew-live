@@ -142,6 +142,8 @@ class BrowserUI:
         self.state['merge_sentences']=frozen or os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
         self.state['frozen_sentences']=frozen
         self.state['ticker_view']=ticker
+        # HEBREW_LIVE_APPEND=1: shown text is final, so an open translation is not greyed.
+        self.state['append_view']=os.environ.get('HEBREW_LIVE_APPEND','0')=='1'
         # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
         self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
         self.closing=False

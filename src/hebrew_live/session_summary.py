@@ -205,6 +205,12 @@ def summarize(events):
                     hidden=sum(1 for e in get('ui_visibility') if e.get('visible') is False)),
         memory=dict(peak_mlx_bytes=max((e.get('peak_mlx') or 0 for e in memory), default=None) if memory else None,
                     peak_rss_bytes=max((e.get('peak_rss') or 0 for e in memory), default=None) if memory else None),
+        # Append-only screen (append_live.py): lag of every shown word from its end in the audio.
+        append=dict(
+            hebrew_word_lag=stats(lag for e in get('append_words') for lag in e.get('lags') or ()),
+            translation_word_lag=stats(lag for e in get('append_chunk') for lag in e.get('lags') or ()),
+            chunks=count('append_chunk'), capped=sum(1 for e in get('append_chunk') if e.get('capped')),
+            failed=count('append_failed')) if get('append_words') else None,
         errors=count('error'), number_mismatches=count('number_mismatch'),
     )
 

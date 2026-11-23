@@ -21,7 +21,7 @@ const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:
 const useI18n=()=>useContext(I18nContext);
 // Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT,
 // HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences, HEBREW_LIVE_TICKER for the ticker view).
-const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false});
+const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false,append:false});
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -64,7 +64,9 @@ const agreements=new Map<string,Agreement>();
 /** An open translation: the words two versions agreed on in the normal colour, the rest grey until
  * a later version confirms it. A closed one is all normal. */
 function TranslationText({id,text,pending}:{id:string;text:string;pending?:boolean}) {
-  if(!pending){agreements.delete(id);return <Figures text={text}/>;}
+  // In the append-only view every shown word is final.
+  const {append}=useContext(DisplayContext);
+  if(!pending||append){agreements.delete(id);return <Figures text={text}/>;}
   const next=agreeWords(agreements.get(id),text);agreements.set(id,next);
   const [agreed,rest]=agreedSplit(text,next.agreed);
   return <>{agreed&&<Figures text={agreed}/>}{agreed&&rest?' ':''}{rest&&<span className="text-pending"><Figures text={rest}/></span>}</>;
@@ -427,7 +429,7 @@ export default function Live(){
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
   const lastPair=lastGroup&&shownPair(lastGroup,!!state.calm_drafts);
-  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences,ticker:!!state.ticker_view}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences,state.ticker_view]);
+  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences,ticker:!!state.ticker_view,append:!!state.append_view}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences,state.ticker_view,state.append_view]);
   const followKey=selected?'archive':`${lastGroup?.id||''}:${lastGroup?.revision??''}:${lastPair?.source||''}:${lastPair?.translation||''}`;
   const follow=useFollowLatest(followKey,!selected);
 

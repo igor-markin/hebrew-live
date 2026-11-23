@@ -49,6 +49,9 @@ VARIANTS = {
     'frozen_view': {'HEBREW_LIVE_SENTENCE_CONTEXT': '1'},
     # Needs sherpa-onnx in the venv (uv sync --group hybrid) and HEBREW_LIVE_HYBRID_MODEL set.
     'hybrid': {'HEBREW_LIVE_HYBRID': '1'},
+    # Append-only screen (append_live.py); needs the same model. Snapshots every 0.3 s or 0.7 s.
+    'append': {'HEBREW_LIVE_APPEND': '1', 'HEBREW_LIVE_TIMING': '0.3,0.3,0,4,0.6'},
+    'append_07': {'HEBREW_LIVE_APPEND': '1'},
 }
 # (label, path in summary.json); lower is better for all of them.
 METRICS = [
@@ -66,6 +69,9 @@ METRICS = [
     ('whisper_s', 'backend.whisper_total_seconds'),
     ('he_word_p50', 'backend.hebrew_word_lag.p50'),
     ('close_erased', 'backend.closing_vs_last_draft.erased_words'),
+    ('ap_he_p50', 'append.hebrew_word_lag.p50'), ('ap_he_max', 'append.hebrew_word_lag.max'),
+    ('ap_tr_p50', 'append.translation_word_lag.p50'), ('ap_tr_p95', 'append.translation_word_lag.p95'),
+    ('ap_tr_max', 'append.translation_word_lag.max'), ('ap_capped', 'append.capped'),
 ]
 
 
@@ -84,9 +90,9 @@ def models_folder(target):
     return target
 
 
-def closed_text(session):
-    """The Hebrew of every closed version, in order: the session's final transcript."""
-    return ' '.join((event.get('current') or {}).get('source', '') for event in read_events(session)
+def closed_text(session, field='source'):
+    """The Hebrew (or translation) of every closed version, in order: the session's final transcript."""
+    return ' '.join((event.get('current') or {}).get(field, '') for event in read_events(session)
                     if event.get('event') == 'live_publication'
                     and event.get('stage') in ('closed', 'technical')).strip()
 
@@ -119,6 +125,8 @@ def run(wav, variant, workdir, watcher, hyp_dir=None):
     summary = write_summary(session)
     if hyp_dir is not None:
         (hyp_dir / f'{Path(wav).stem}.{variant}.{workdir.name}.txt').write_text(closed_text(session) + '\n')
+        (hyp_dir / f'{Path(wav).stem}.{variant}.{workdir.name}.ru').write_text(
+            closed_text(session, 'translation') + '\n')
     return dict(wav=Path(wav).name, variant=variant, seconds=round(time.monotonic() - started, 1),
                 exit=engine.returncode, window=window is not None, errors=errors[:3],
                 **{label: value(summary, path) for label, path in METRICS})
