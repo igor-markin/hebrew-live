@@ -5,6 +5,8 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
+import {UiLog,clickTarget,renderRecords} from './uiLog';
+import type {Drawn} from './uiLog';
 import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
@@ -441,6 +443,51 @@ export default function Live(){
     });});
     return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
   },[state.groups,state.session,selected]);
+
+  // Everything the reader saw and did goes to the session log (see uiLog.ts).
+  const uiLog=useMemo(()=>new UiLog(),[]);
+  const drawn=useRef(new Map<string,Drawn>());
+  const viewName=display.ticker?'ticker':display.frozen?'frozen':'cards';
+  useEffect(()=>{drawn.current.clear();},[state.session,state.generation]);
+  useEffect(()=>{
+    if(selected)return;
+    let first=0,second=0;
+    first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{
+      for(const record of renderRecords(state.groups.filter(isVisibleGroup),drawn.current,display.calm,viewName))uiLog.push(record);
+    });});
+    return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  },[state.groups,selected,display.calm,viewName,uiLog]);
+  useEffect(()=>{
+    const view=()=>viewName;
+    const click=(event:PointerEvent)=>uiLog.push({type:'click',...clickTarget(event.target as Element|null),view:view()});
+    const key=(event:KeyboardEvent)=>{
+      // Only the name of a control key; what is typed into a field is never logged.
+      const typing=event.key.length===1&&(event.target as HTMLElement|null)?.closest('input,textarea');
+      uiLog.push({type:'key',key:typing?'char':event.key.slice(0,24),...clickTarget(event.target as Element|null)});
+    };
+    const visibility=()=>{uiLog.push({type:'visibility',visible:document.visibilityState==='visible'});if(document.visibilityState!=='visible')uiLog.flush(true);};
+    let resizeTimer:ReturnType<typeof setTimeout>|undefined;
+    const resize=()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>uiLog.push({type:'resize',width:window.innerWidth,height:window.innerHeight}),300);};
+    const toggle=(event:Event)=>{const node=event.target as HTMLElement;if(node instanceof HTMLDetailsElement)uiLog.push({type:'settings',target:node.className.split(/\s+/)[0]||'details',state:node.open?'open':'closed'});};
+    const leave=()=>uiLog.flush(true);
+    document.addEventListener('pointerdown',click,true);document.addEventListener('keydown',key,true);
+    document.addEventListener('visibilitychange',visibility);window.addEventListener('resize',resize);
+    document.addEventListener('toggle',toggle,true);window.addEventListener('pagehide',leave);
+    uiLog.push({type:'resize',width:window.innerWidth,height:window.innerHeight});
+    return()=>{document.removeEventListener('pointerdown',click,true);document.removeEventListener('keydown',key,true);
+      document.removeEventListener('visibilitychange',visibility);window.removeEventListener('resize',resize);
+      document.removeEventListener('toggle',toggle,true);window.removeEventListener('pagehide',leave);clearTimeout(resizeTimer);uiLog.flush(true);};
+  },[uiLog,viewName]);
+
+  useEffect(()=>{uiLog.push({type:'follow',following:follow.following});},[follow.following,uiLog]);
+  useEffect(()=>{
+    const node=follow.containerRef.current;if(!node)return;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const scrolled=()=>{if(timer!==undefined)return;timer=setTimeout(()=>{timer=undefined;
+      uiLog.push({type:'scroll',top:Math.round(node.scrollTop),height:node.scrollHeight,client_height:node.clientHeight});},300);};
+    node.addEventListener('scroll',scrolled,{passive:true});
+    return()=>{node.removeEventListener('scroll',scrolled);clearTimeout(timer);};
+  },[follow.containerRef,uiLog]);
 
   const closeSidebar=useCallback(()=>{setSidebar(false);requestAnimationFrame(()=>openSidebarRef.current?.focus());},[]);
   useEffect(()=>{
