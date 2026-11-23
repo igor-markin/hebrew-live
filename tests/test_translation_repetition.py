@@ -79,8 +79,10 @@ class TranslationRepetitionTests(unittest.TestCase):
              patch('hebrew_live.mt_generate.generate', generate), \
              patch('hebrew_live.translation.prompt', return_value=[1]):
             list(engine.translate('שלום'))
-            list(engine.translate('שלום', hint='раз два'))                       # off by default
-            with patch.dict(os.environ, {'HEBREW_LIVE_MT_SPECULATE': '1'}):
+            with patch.dict(os.environ, {'HEBREW_LIVE_MT_SPECULATE': '0'}):
+                list(engine.translate('שלום', hint='раз два'))                   # turned off
+            with patch.dict(os.environ):
+                os.environ.pop('HEBREW_LIVE_MT_SPECULATE', None)                 # on by default
                 list(engine.translate('שלום', hint='раз два'))
                 list(engine.translate('שלום'))
         self.assertEqual([step is not None for step in seen], [False, False, True, False])

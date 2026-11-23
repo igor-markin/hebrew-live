@@ -9,10 +9,15 @@ decoding except where fp16/bf16 batch kernels flip a near-tie (measured, see the
 
 Measured on the reference Mac: 0.81x time on live-sized he-ru phrases, but only 32 of 43
 translations were text-identical to plain greedy (bf16 batch kernels flip near-ties, mostly a
-trailing full stop or a synonym), so it is OFF by default and not an "identical output"
-change: enable it with `HEBREW_LIVE_MT_SPECULATE=1`. `HEBREW_LIVE_MT_SPECULATE_TOLERANCE=<nats>`
-additionally accepts a drafted token whose log-probability is within that margin of the best
-one (prefix-stable translations, more accepted tokens). Drop-in `step` for `mt_generate.generate`.
+trailing full stop or a synonym), so it is not an "identical output" change.
+`HEBREW_LIVE_MT_SPECULATE_TOLERANCE=<nats>` additionally accepts a drafted token whose
+log-probability is within that margin of the best one (prefix-stable translations, more accepted
+tokens). Drop-in `step` for `mt_generate.generate`.
+
+On by default with tolerance 0.3 since 23.11.2026: with the live window open, on 4 + 7 replayed
+recordings it erased fewer translation words on screen and brought the translation's p95 down
+(experiments/corpus/replay_variants.py, variant `all` against `default`). Translation quality
+against references was not measured. `HEBREW_LIVE_MT_SPECULATE=0` turns it off.
 """
 import os
 
@@ -23,12 +28,12 @@ PREFILL_STEP = 2048
 
 
 def enabled():
-    return os.environ.get('HEBREW_LIVE_MT_SPECULATE', '0') == '1'
+    return os.environ.get('HEBREW_LIVE_MT_SPECULATE', '1') != '0'
 
 
 def tolerance():
     try:
-        return max(0., float(os.environ.get('HEBREW_LIVE_MT_SPECULATE_TOLERANCE', '0')))
+        return max(0., float(os.environ.get('HEBREW_LIVE_MT_SPECULATE_TOLERANCE', '0.3')))
     except ValueError:
         return 0.
 
