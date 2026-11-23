@@ -144,7 +144,7 @@ class SessionTests(unittest.TestCase):
             for t in (writer,consumer,infer):t.join(5);self.assertFalse(t.is_alive())
             self.assertTrue(errors.empty(), list(errors.queue))
             folder=session.path;session.close()
-            self.assertEqual(len(list(folder.iterdir())),13)
+            self.assertEqual(len(list(folder.iterdir())),14)  # + summary.json
             for number,expected in ((1,[.1]),(2,[.2,.3]),(3,[.4])):
                 wav=next(folder.glob(f'{number:03d}-*.wav'))
                 data,rate=sf.read(wav)
@@ -286,7 +286,7 @@ class ScriptAndDisplayTests(unittest.TestCase):
             session=Session(Path(tmp),'he-ru',{});handler=LibraryHandler(session)
             handler.emit(logging.LogRecord('test',logging.WARNING,'module.py',4,'Secret input: %s',('private utterance',),None))
             folder=session.path;session.close()
-            self.assertEqual(len(list(folder.iterdir())),5)
+            self.assertEqual(len(list(folder.iterdir())),6)  # + summary.json
             text=(folder/'001-he-ru.diagnostics.jsonl').read_text()
             self.assertIn('"event": "library"',text)
             self.assertNotIn('private utterance',text)

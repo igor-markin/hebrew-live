@@ -96,7 +96,7 @@ class TerminalTests(unittest.TestCase):
                 self.assertEqual(events.count('resume'),1)
                 self.assertEqual(events.count('direction'),1)
                 self.assertEqual(events.count('clear'),1)
-                self.assertEqual(len(list(folder.iterdir())),9)
+                self.assertEqual(len(list(folder.iterdir())),10)  # + summary.json
                 self.assertIn('Paused',output.decode(errors='replace'))
                 self.assertIn('Session saved:',output.decode(errors='replace'))
                 self.assertIn('שלום',output.decode(errors='replace'))
@@ -152,7 +152,7 @@ class TerminalTests(unittest.TestCase):
                         except OSError:break
                 process.wait(timeout=2);self.assertEqual(process.returncode,0)
                 folder=next(sessions.iterdir())
-                self.assertEqual(len(list(folder.iterdir())),5)
+                self.assertEqual(len(list(folder.iterdir())),6)  # + summary.json
                 events=[json.loads(line)['event'] for file in folder.glob('*.jsonl') for line in file.read_text().splitlines()]
                 self.assertNotIn('direction',events)
             finally:
