@@ -41,3 +41,13 @@ test('sends batches with the time each record waited',()=>{
   assert.deepEqual(body.items.map((item:{age_ms:number})=>item.age_ms),[50,20]);
   log.flush();assert.equal(sent.length,1);
 });
+
+test('newer Hebrew drawn ahead of its translation carries its own time',()=>{
+  const last=new Map();
+  const group={id:'0:1',direction:'he-ru',complete:false,live:{current:{source:'שלום',translation:'Привет'},history:[],stage:'open',emitted_at:10,audio_lag:.5}};
+  renderRecords([group as never],last,false,'cards');
+  const [record]=renderRecords([{...group,source_live:{source:'שלום אני',emitted_at:11,audio_lag:.2}} as never],last,false,'cards');
+  assert.equal(record.source,'שלום אני');
+  assert.equal(record.translation_changed,false);
+  assert.equal(record.emitted_at,11);
+});

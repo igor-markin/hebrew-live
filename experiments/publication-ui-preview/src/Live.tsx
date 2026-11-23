@@ -7,7 +7,7 @@ import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
 import {UiLog,clickTarget,renderRecords} from './uiLog';
 import type {Drawn} from './uiLog';
-import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -51,20 +51,40 @@ function ChangingText({text:incoming,hold=false}:{text:string;hold?:boolean}) {
   return <>{text.slice(0,kept)}<span className="text-fresh" key={text}>{text.slice(kept)}</span></>;
 }
 
-type Segment={id:string;pair:Pair;pending?:boolean};
+type Segment={id:string;pair:Pair;pending?:boolean;hebrew?:string};
+
+/** Text with its figures (times, dates, sums, numbers) marked, so the eye finds them first. */
+function Figures({text}:{text:string}) {
+  return <>{figureParts(text).map((part,index)=>part.figure?<mark key={index} className="figure">{part.text}</mark>:part.text)}</>;
+}
+
+// What two versions in a row of each open translation agreed on (see agreeWords).
+const agreements=new Map<string,Agreement>();
+
+/** An open translation: the words two versions agreed on in the normal colour, the rest grey until
+ * a later version confirms it. A closed one is all normal. */
+function TranslationText({id,text,pending}:{id:string;text:string;pending?:boolean}) {
+  if(!pending){agreements.delete(id);return <Figures text={text}/>;}
+  const next=agreeWords(agreements.get(id),text);agreements.set(id,next);
+  const [agreed,rest]=agreedSplit(text,next.agreed);
+  return <>{agreed&&<Figures text={agreed}/>}{agreed&&rest?' ':''}{rest&&<span className="text-pending"><Figures text={rest}/></span>}</>;
+}
 
 /** One bubble's text: closed sentences in the normal colour, the still open part in grey. */
 function SegmentText({segments,field,missing}:{segments:Segment[];field:'translation'|'source';missing:string}) {
   const {merge,frozen}=useContext(DisplayContext);
-  if(frozen)return <>{segments.map(segment=>{
-    // A line per sentence; a closed one never changes again, the open one is grey.
-    const text=segment.pair[field];
-    return <span key={segment.id} className={`sentence-line ${segment.pending?'text-pending':''}`}>{text?<ChangingText text={text} hold={segment.pending}/>:missing}</span>;
-  })}</>;
-  return <>{segments.map((segment,index)=>{
-    const text=segment.pair[field];
-    return <span key={segment.id} className={merge&&segment.pending?'text-pending':undefined}>{index?' ':''}{text?<ChangingText text={text}/>:missing}</span>;
-  })}</>;
+  const text=(segment:Segment)=>field==='source'?segment.hebrew??segment.pair.source:segment.pair.translation;
+  const body=(segment:Segment)=>{
+    const value=text(segment);
+    if(!value)return missing;
+    if(field==='source')return <Figures text={value}/>;
+    return <TranslationText id={segment.id} text={value} pending={segment.pending}/>;
+  };
+  if(frozen)return <>{segments.map(segment=>
+    // A line per sentence; a closed one never changes again.
+    <span key={segment.id} className="sentence-line">{body(segment)}</span>)}</>;
+  return <>{segments.map((segment,index)=>
+    <span key={segment.id} className={merge&&segment.pending&&field==='source'?'text-pending':undefined}>{index?' ':''}{body(segment)}</span>)}</>;
 }
 
 /** Height a card keeps while its turn is open, so a closing sentence or a slower refresh never pulls the text under the reader upwards. */
@@ -84,19 +104,14 @@ function useNoShrink(open:boolean) {
   return ref;
 }
 
-function BubbleText({pair,segments,direction,originalOpen,onOriginalToggle}:{pair?:Pair;segments?:Segment[];direction:string;originalOpen?:boolean;onOriginalToggle?:(open:boolean)=>void}) {
-  const {locale,tx}=useI18n();
+/** Hebrew as it is heard, above its translation in larger type; both always visible. */
+function BubbleText({pair,segments,direction}:{pair?:Pair;segments?:Segment[];direction:string}) {
+  const {tx}=useI18n();
   const [source,target]=directionParts(direction);const targetRtl=isRtlLanguage(target);
   const parts=segments||[{id:'only',pair:pair!}];
   return <div className="bubble-copy">
+    <p className="bubble-hebrew" lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}><SegmentText segments={parts} field="source" missing={tx('speechMissing')}/></p>
     <p className="translation" lang={htmlLanguage(target)} dir={targetRtl?'rtl':'ltr'}><SegmentText segments={parts} field="translation" missing={tx('translating')}/></p>
-    <details className="bubble-original" open={originalOpen} onToggle={onOriginalToggle?event=>onOriginalToggle(event.currentTarget.open):undefined}>
-      <summary>{tx('original')}</summary>
-      <div className="bubble-source">
-        <span className="bubble-source-label">{tx('recognized',{language:languageName(locale,source,source)})}</span>
-        <p lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}><SegmentText segments={parts} field="source" missing={tx('speechMissing')}/></p>
-      </div>
-    </details>
   </div>;
 }
 
@@ -119,9 +134,9 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
   const holdRef=useNoShrink(frozen&&!group.complete);
   if(turn.groups.length>1||frozen&&!turn.groups.some(item=>item.live?.issue||item.final?.issue)){
     const [,target]=directionParts(group.direction);
-    const segments=turn.groups.map(item=>({id:item.id,pair:shownPair(item,calm)||{source:'',translation:''},pending:!item.complete}));
+    const segments=turn.groups.map(item=>{const pair=shownPair(item,calm)||{source:'',translation:''};return {id:item.id,pair,pending:!item.complete,hebrew:shownSource(item,pair)};});
     return <article ref={holdRef} className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${frozen?'speech-card--frozen':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
-      <BubbleText segments={segments} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(turn.id,open)}/>
+      <BubbleText segments={segments} direction={group.direction}/>
       {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
       <NumberNote groups={turn.groups}/>
     </article>;
@@ -143,7 +158,7 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
   return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
     {empty
       ? <p className={`fragment-failed ${shortMiss?'fragment-muted':''}`}><Icon kind="warning"/><span>{shortMiss?tx('speechMissing'):tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
-      : <BubbleText segments={[{id:group.id,pair:shown,pending:!group.complete}]} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
+      : <BubbleText segments={[{id:group.id,pair:shown,pending:!group.complete,hebrew:shownSource(group,pair)}]} direction={group.direction}/>
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}

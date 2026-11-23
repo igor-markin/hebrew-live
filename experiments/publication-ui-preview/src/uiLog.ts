@@ -1,6 +1,6 @@
 // The window's own log: every version of a bubble as it was drawn, and the reader's actions.
 // Batches go to the engine (`ui_log`), which writes them into the session's diagnostics.
-import {shownPair} from './liveState.ts';
+import {shownPair,shownSource} from './liveState.ts';
 import type {Group} from './liveState.ts';
 
 export type RenderRecord={type:'render';group:string;revision?:number;shown:'live'|'stream'|'none';complete:boolean;
@@ -29,14 +29,18 @@ export function renderRecords(groups:Group[],last:Map<string,Drawn>,calm:boolean
   for(const group of groups){
     const pair=shownPair(group,calm);
     const shown=!pair?'none':group.stream&&pair===group.stream?'stream':'live';
-    const source=pair?.source||'',translation=pair?.translation||'';
+    const source=pair?shownSource(group,pair):'',translation=pair?.translation||'';
     const before=last.get(group.id);
     if(before&&before.source===source&&before.translation===translation&&before.complete===group.complete)continue;
     last.set(group.id,{source,translation,complete:group.complete});
-    const timing=shown==='stream'?{emitted_at:group.stream?.preview_emitted_at,audio_lag:group.stream?.audio_lag}:
+    const sourceChanged=before?before.source!==source:Boolean(source),translationChanged=before?before.translation!==translation:Boolean(translation);
+    // Newer Hebrew drawn ahead of its translation carries its own publication time.
+    const ahead=Boolean(group.source_live&&source===group.source_live.source&&sourceChanged&&!translationChanged);
+    const timing=ahead?{emitted_at:group.source_live?.emitted_at,audio_lag:group.source_live?.audio_lag}:
+      shown==='stream'?{emitted_at:group.stream?.preview_emitted_at,audio_lag:group.stream?.audio_lag}:
       shown==='live'?{emitted_at:group.live?.emitted_at,audio_lag:group.live?.audio_lag}:{};
     records.push({type:'render',group:group.id,revision:group.revision,shown,complete:group.complete,source,translation,
-      source_changed:before?before.source!==source:Boolean(source),translation_changed:before?before.translation!==translation:Boolean(translation),
+      source_changed:sourceChanged,translation_changed:translationChanged,
       erased_source:before?erasedWords(before.source,source):0,erased_translation:before?erasedWords(before.translation,translation):0,
       ...timing,view});
   }

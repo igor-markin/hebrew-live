@@ -83,7 +83,11 @@
 .live-feed .chat-bubble:last-child {background:var(--soft-hover)}
 .live-feed .chat-bubble--reverse {align-self:flex-end;border-radius:18px 4px 18px 18px}
 .live-feed .chat-bubble:last-child {border-color:color-mix(in srgb,var(--accent) 42%,var(--border))}
-.live-feed .bubble-copy>.translation {display:block;margin:0;padding:9px 14px;font-size:17px;font-weight:400;line-height:1.5;letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.live-feed .bubble-copy>.translation {display:block;margin:0;padding:4px 14px 10px;font-size:20px;font-weight:400;line-height:1.45;letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+/* Hebrew as heard: always visible above the translation, smaller and quieter, updated by every recognition. */
+.live-feed .bubble-copy>.bubble-hebrew {display:block;margin:0;padding:9px 14px 2px;font-size:15px;line-height:1.5;color:color-mix(in srgb,var(--foreground) 72%,transparent);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font-family:'Noto Sans Hebrew','Noto Sans',sans-serif}
+/* Times, dates, sums and other figures stand out in both lines. */
+.live-feed mark.figure {background:color-mix(in srgb,var(--accent) 16%,transparent);color:inherit;font-weight:600;border-radius:4px;padding:0 2px}
 .bubble-original {border-top:1px solid color-mix(in srgb,var(--border) 65%,transparent)}
 .bubble-original summary {cursor:pointer;list-style:none;padding:6px 16px;min-height:30px;color:var(--muted);font-size:11px;font-weight:600}
 .bubble-original summary::-webkit-details-marker {display:none}
@@ -119,7 +123,8 @@
 @media(max-width:560px){
  .live-shell .chat-feed {gap:8px;padding-top:16px}
  .live-feed .chat-bubble {max-width:94%}
- .live-feed .bubble-copy>.translation {padding:9px 12px;font-size:16px;line-height:1.5}
+ .live-feed .bubble-copy>.translation {padding:4px 12px 9px;font-size:18px;line-height:1.45}
+ .live-feed .bubble-copy>.bubble-hebrew {padding:8px 12px 2px;font-size:14px}
  .bubble-source p {font-size:15px}
 }
 @media(prefers-reduced-motion:reduce){.bubble-source {animation:none!important;transition:none!important}}

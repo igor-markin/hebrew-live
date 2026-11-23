@@ -1,7 +1,9 @@
 export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number;audio_lag?:number};
 export type NumberIssue = {kind:'missing'|'extra';number:string};
 export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[];emitted_at?:number;audio_lag?:number};
-export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair};
+/** The newest recognised Hebrew of an open group, published before its translation is ready. */
+export type SourceLive = {source:string;emitted_at?:number;audio_lag?:number};
+export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair;source_live?:SourceLive};
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
@@ -187,6 +189,33 @@ export function tickerParagraphs(groups:Group[]):TickerParagraph[] {
     continues=group.complete&&!issue&&(group.live?.reason==='sentence'||group.live?.stage==='technical');
   }
   return paragraphs;
+}
+
+/** Hebrew to show: an open group shows what recognition heard last, without waiting for its translation. */
+export function shownSource(group:Group,pair:Pair|undefined):string {
+  const live=group.source_live?.source;
+  return !group.complete&&live?live:pair?.source||'';
+}
+
+// Figures a reader must not miss: digits with their separators (10:30, 23.11, 1,500), and the
+// currency, percent or unit that follows them.
+const FIGURE=/(?:₪\s?)?\d+(?:[.,:/-]\d+)*(?:\s?(?:%|₪|ש["״]ח|шекел\p{L}*|руб\p{L}*|долл\p{L}*|евро|NIS))?/gu;
+export type TextPart = {text:string;figure:boolean};
+/** `text` cut into plain parts and figures. */
+export function figureParts(text:string):TextPart[] {
+  const parts:TextPart[]=[];let last=0;
+  for(const match of text.matchAll(FIGURE)){
+    if(match.index>last)parts.push({text:text.slice(last,match.index),figure:false});
+    parts.push({text:match[0],figure:true});last=match.index+match[0].length;
+  }
+  if(last<text.length)parts.push({text:text.slice(last),figure:false});
+  return parts;
+}
+
+/** Words of a still open translation: the leading words two versions in a row agreed on, then the rest. */
+export function agreedSplit(text:string,agreed:number):[string,string] {
+  const words=text.split(/\s+/).filter(Boolean);
+  return [words.slice(0,agreed).join(' '),words.slice(agreed).join(' ')];
 }
 
 export function isVisibleGroup(group:Group):boolean {
