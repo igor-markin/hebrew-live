@@ -107,12 +107,23 @@ class TranslationScreen:
             if group and group.pop('stream',None) is not None:
                 group['revision']=group.get('revision',0)+1
             return
+        if kind == 'live_source':
+            # The newest Hebrew of an open group, ahead of its translation.
+            group=self.groups.get(sid)
+            if group and not group['complete']:
+                group['source_live']=dict(value)
+                group['revision']=group.get('revision',0)+1
+            return
         if kind == 'live_publication':
             from copy import deepcopy
-            revision=self.groups.get(sid,{}).get('revision',0)+1
+            old=self.groups.get(sid,{})
+            revision=old.get('revision',0)+1
             self.groups[sid]=dict(id=f'{self.generation}:{sid}', direction=settings.direction if settings else self.direction,
                                  part=settings.part if settings else 1,
                                  blocks=[], complete=value['stage']!='open', live=deepcopy(value),revision=revision)
+            # A translation of older Hebrew must not take the newer Hebrew off the screen.
+            if value['stage']=='open' and old.get('source_live'):
+                self.groups[sid]['source_live']=old['source_live']
             if value['stage']!='open':self.contexts.pop(sid,None)
             return
         if kind in ('block_source','block_translation','group_progress','group_final'):

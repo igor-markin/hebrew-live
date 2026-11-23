@@ -240,6 +240,11 @@ class RetranslationProcessor:
         self.turn=deque()
         self.turn_continues=False
         self.right_context=None
+        # Hybrid mode: a streaming recognizer on the CPU writes the drafts, Whisper only the
+        # closing decode. Off unless HEBREW_LIVE_HYBRID=1 and its model is available.
+        from . import streaming_asr
+        self.streaming=streaming_asr.load(log)
+        self.streamed=False
         if self.async_mt:
             self._mt_condition=threading.Condition()
             self._mt_pending=deque()
@@ -276,6 +281,7 @@ class RetranslationProcessor:
         self.split_text=''
         self.frozen_source=[];self.frozen_target=[]
         self.seen_texts=[];self.previous_seen=()
+        self.live_source=''
 
     def _capture_group(self, detach=False):
         state={key:getattr(self,key,None) for key in self._GROUP_FIELDS}
@@ -430,6 +436,20 @@ class RetranslationProcessor:
             self.part.text('source', record, label+source)
             self.part.text('target', record, label+(target or '[Перевод ещё не показан]')+
                            ('\n['+issue+']' if issue else ''))
+
+    def publish_source(self, text):
+        """Show the newest Hebrew of the open group at once; its translation follows with the
+        next publication. The window keeps it until the group closes."""
+        if self.cancel.is_set() or self.closed:return
+        source = self.with_frozen(text, '')[0] if self.freeze else text
+        if source in (self.live_source, self.visible['current']['source']):return
+        self.live_source = source
+        now = time.monotonic()
+        audio_lag = max(0., now-self.last.end+self.last.offset-self.end/16000)
+        self.updates.put(('context', self.sid, self.settings))
+        self.updates.put(('live_source', self.sid, dict(source=source, emitted_at=now, audio_lag=audio_lag)))
+        self.log.event('live_source', part=self.settings.part, segment=self.sid, source=source,
+                       audio_lag=audio_lag, start=self.start/16000, end=self.end/16000)
 
     def number_issues(self, source, target):
         """Digit figures the whole shown group (frozen sentences and tail) has on one side and
@@ -696,6 +716,13 @@ class RetranslationProcessor:
                 if self.sentence_context else ())
         right = self.right_context if self.sentence_context and self.right_context is not None else ()
         self.continued_words = 0
+        self.streamed = self.streaming is not None and not final
+        if self.streamed:
+            text = self.streaming.text(self.sid, self.audio)
+            e.recognition_status = 'accepted' if text else 'empty'
+            e.recognition_words = None
+            e.recognition_issue = None
+            return text, 0
         if not len(left) and not len(right):
             frozen = self.frozen_start(align_words)
             if not frozen:
@@ -742,6 +769,7 @@ class RetranslationProcessor:
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
                        final=final, closing=closing, source=text,word_alignment=align_words,
                        **(dict(reused=True) if reused else {}),
+                       **(dict(draft_engine='streaming') if self.streamed else {}),
                        **(dict(continued_words=self.continued_words) if self.continued_words else {}))
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'
@@ -804,6 +832,8 @@ class RetranslationProcessor:
         if not self.visible or (not self.visible['current']['translation'] and
                                 not (self.async_mt and self._mt_outstanding)):
             self.publish(text, '')  # Keep a pending first pair stable until its translation arrives.
+        else:
+            self.publish_source(text)
         job=self.request_mt(text,closing)
         if text == self.source and self.draft:
             self.log.event('live_mt_cached', segment=self.sid, source=text)

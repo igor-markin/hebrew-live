@@ -123,18 +123,41 @@ def summarize(events):
     publications = get('live_publication')
     backend_moves_he, backend_moves_tr = Moves(), Moves()
     backend_he, backend_tr, seen = [], [], {}
-    for event in publications:
+    # The last open Hebrew of each group and what the closing version made of it.
+    draft, final_change = {}, dict(groups=0, changed=0, erased_words=0, draft_words=0)
+    # While a group is open the window shows its `live_source` Hebrew, not the publication's.
+    live = set()
+    for event in sorted(publications + get('live_source'), key=lambda e: e.get('elapsed', 0)):
         key = (event['_part'], event.get('segment'))
+        if event.get('event') == 'live_source':
+            if event.get('source'):
+                live.add(key)
+                backend_he.append(event.get('audio_lag'))
+                backend_moves_he.add(key, event['source'])
+                draft[key] = event['source']
+            continue
         current = event.get('current') or {}
         source, translation = current.get('source', ''), current.get('translation', '')
         old_source, old_translation = seen.get(key, ('', ''))
-        if source and source != old_source:
+        shown_live = key in live and event.get('stage') == 'open'
+        if event.get('stage') == 'open' and source:
+            if not shown_live:
+                draft[key] = source
+        elif key in draft and source:
+            before = draft.pop(key)
+            final_change['groups'] += 1
+            final_change['draft_words'] += len(before.split())
+            lost = erased_words(before, source)
+            final_change['erased_words'] += lost
+            final_change['changed'] += bool(lost)
+        if source and source != old_source and not shown_live:
             backend_he.append(event.get('audio_lag'))
         if translation and translation != old_translation:
             backend_tr.append(event.get('audio_lag'))
         seen[key] = (source or old_source, translation or old_translation)
         closed = event.get('stage') in ('closed', 'technical', 'unavailable')
-        backend_moves_he.add(key, source, closed)
+        if not shown_live:
+            backend_moves_he.add(key, source, closed)
         backend_moves_tr.add(key, translation, closed)
 
     count = lambda name: len(get(name))
@@ -157,7 +180,12 @@ def summarize(events):
             hebrew_lag=stats(backend_he), translation_lag=stats(backend_tr),
             first_preview_lag=stats(e.get('audio_lag') for e in get('mt_first_preview')),
             hebrew_moves=backend_moves_he.result(), translation_moves=backend_moves_tr.result(),
+            closing_vs_last_draft=final_change,
             asr_seconds=stats(e.get('seconds') for e in get('live_asr')),
+            whisper_seconds=stats(e.get('seconds') for e in get('live_asr') if not e.get('draft_engine')),
+            whisper_total_seconds=round(sum(e.get('seconds') or 0 for e in get('live_asr')
+                                            if not e.get('draft_engine')), 3),
+            streaming_draft_seconds=stats(e.get('seconds') for e in get('live_asr') if e.get('draft_engine')),
             mt_seconds=stats(e.get('seconds') for e in get('mt_generation')),
             mt_first_token_seconds=stats(e.get('seconds') for e in get('mt_first_token')),
             sentences_frozen=count('sentences_frozen')),
