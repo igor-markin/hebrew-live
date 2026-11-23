@@ -44,6 +44,8 @@ VARIANTS = {
     'all': {'HEBREW_LIVE_CALM_DRAFTS': '1', 'HEBREW_LIVE_MT_SPECULATE': '1',
             'HEBREW_LIVE_MT_SPECULATE_TOLERANCE': '0.3', 'HEBREW_LIVE_TIMING': '0.7,0.7,0,4,0.6'},
     'frozen_view': {'HEBREW_LIVE_SENTENCE_CONTEXT': '1'},
+    # Needs sherpa-onnx in the venv (uv sync --group hybrid) and HEBREW_LIVE_HYBRID_MODEL set.
+    'hybrid': {'HEBREW_LIVE_HYBRID': '1'},
 }
 # (label, path in summary.json); lower is better for all of them.
 METRICS = [
@@ -58,6 +60,8 @@ METRICS = [
     ('renders', 'screen.renders'),
     ('mt_interrupted', 'translation_runs.interrupted'),
     ('mt_p50', 'backend.mt_seconds.p50'), ('asr_p50', 'backend.asr_seconds.p50'),
+    ('whisper_s', 'backend.whisper_total_seconds'),
+    ('close_erased', 'backend.closing_vs_last_draft.erased_words'),
 ]
 
 
