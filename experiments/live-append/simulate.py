@@ -43,6 +43,17 @@ RATE = 16000
 MODELS = Path.home() / 'Library' / 'Application Support' / 'Hebrew Live CLI' / 'models'
 END = re.compile(r'[.?!…]$')
 PUNCT = re.compile(r'[.,?!…:;]$')
+DIRECTION = 'he-ru'   # --direction
+def new_words_cap(hebrew_words):
+    """New translation words allowed when nothing heard follows (a pause, a quiet): a little more
+    than the Hebrew needs, too few to finish the speaker's sentence for them."""
+    return int(1.25 * hebrew_words) + 1
+
+
+QUIET = 1.   # seconds without a newer word after which the last word may be translated
+PAUSE_GATES = __import__('os').environ.get('SIM_PAUSE_GATES', '1') == '1'
+DEBUG = bool(__import__('os').environ.get('SIM_DEBUG'))
+NOISE = 0.            # --pause-noise: level of the 'silence' fed at a pause
 
 
 class Log:
@@ -62,7 +73,7 @@ def stats(values):
         return {}
     pick = lambda q: values[min(len(values) - 1, int(q * len(values)))]
     return dict(p50=round(pick(.5), 3), p95=round(pick(.95), 3), max=round(values[-1], 3),
-                within_2s=round(sum(v <= 2. for v in values) / len(values), 3))
+                **{f'within_{k}s': round(sum(v <= k for v in values) / len(values), 3) for k in (2, 3, 4, 5)})
 
 
 class Gpu:
@@ -83,8 +94,15 @@ class Gpu:
 
 
 class Translator:
-    def __init__(self, engine, gpu, span, context):
+    """--deadline D: a chunk waits for a clause end (or a pause) as long as its first word can still
+    be translated and shown within D seconds of being spoken; then it is sent as it is. The time a
+    call takes is estimated from the calls so far (a + b * words, b from the slowest recent calls)."""
+    SAFETY = .3
+
+    def __init__(self, engine, gpu, span, context, deadline=None):
         self.engine, self.gpu, self.span, self.context = engine, gpu, span, context
+        self.deadline = deadline
+        self.timings = []   # (words, seconds)
         self.pending, self.pairs, self.words = [], [], []
         self.chunks = self.capped = 0
         self.poisoned = False
@@ -97,16 +115,29 @@ class Translator:
             first = self.pending[0]
             cut = next((i + 1 for i, w in enumerate(self.pending) if PUNCT.search(w['text'])), None)
             if cut is None:
-                if not (final or now - first['spoken'] >= self.span):
+                if not (final or self.due(first, now)):
                     return
                 cut = len(self.pending)
             chunk, self.pending = self.pending[:cut], self.pending[cut:]
             self.send(chunk, now)
 
+    def estimate(self, words):
+        recent = self.timings[-20:]
+        per_word = max([.12] + [(seconds - .25) / n for n, seconds in recent])
+        return .25 + per_word * words
+
+    def due(self, first, now):
+        if self.deadline is None:
+            return now - first['spoken'] >= self.span
+        start = max(now, self.gpu.free)
+        return start + self.estimate(len(self.pending)) + self.SAFETY >= first['spoken'] + self.deadline
+
     def send(self, chunk, ready):
         text = ' '.join(w['text'] for w in chunk)
         pairs = tuple(self.pairs[-self.context:]) if self.context else ()
+        began = time.perf_counter()
         translation, shown = self.gpu.run(ready, lambda: self.generate(text, pairs))
+        self.timings.append((len(chunk), time.perf_counter() - began))
         self.chunks += 1
         self.shown.append((text, translation))
         # A cut-off runaway stays on screen but is not given to the next chunks as their context.
@@ -190,7 +221,7 @@ class AgreementTranslator:
 
     def ids(self, text, forced):
         from hebrew_live.languages import prompt_names
-        source, target = prompt_names('he-ru')
+        source, target = prompt_names(DIRECTION)
         pairs = self.pairs[-self.context:]
         before = ' '.join(p[0] for p in pairs)
         done = ' '.join(p[1] for p in pairs)
@@ -358,16 +389,21 @@ class AlignAttTranslator(AgreementTranslator):
     while at least 3% of the attention is there. The words before that token are shown; a word the
     token is in the middle of waits. One call per burst, no agreement between calls."""
 
-    def __init__(self, engine, gpu, heads=4, margin=1, width=7, min_mass=.03, context=2, zscore=False):
+    def __init__(self, engine, gpu, heads=4, margin=1, width=7, min_mass=.03, context=2, zscore=False,
+                 min_prob=0., hold_end=False):
         super().__init__(engine, gpu, 1, False, context)
         self.zscore = zscore
+        # Two more ways to wait, against invented words: a token the model is not sure of
+        # (probability below `min_prob`), and a sentence end the Hebrew has not reached (`hold_end`).
+        self.min_prob, self.hold_end = min_prob, hold_end
         self.capture = AttentionCapture(engine.model, MILMMT_HEADS[:heads])
         self.margin, self.width, self.min_mass = margin, width, min_mass
-        self.stops = {'frontier': 0, 'end': 0, 'cap': 0}
+        self.stops = {'frontier': 0, 'end': 0, 'cap': 0, 'unsure': 0, 'sentence': 0}
+        self.keep_before_end = False
 
     def prompt(self, text, forced):
         from hebrew_live.languages import prompt_names
-        source, target = prompt_names('he-ru')
+        source, target = prompt_names(DIRECTION)
         pairs = self.pairs[-self.context:]
         before = ' '.join(p[0] for p in pairs)
         done = ' '.join(p[1] for p in pairs)
@@ -388,29 +424,68 @@ class AlignAttTranslator(AgreementTranslator):
                 span.append((position, index))
         return ids, span, len(bounds)
 
-    def generate(self, text, forced, new_words=None):
+    def generate(self, text, forced, new_words=None, upto=None, commas=0):
+        close = new_words is None
+        began = time.perf_counter()
+        try:
+            return self._generate(text, forced, close, upto, commas)
+        finally:
+            self.generation = getattr(self, 'generation', [0, 0.])
+            self.generation[1] += time.perf_counter() - began
+
+    def _generate(self, text, forced, close, upto=None, commas=0):
+        """`upto`: Hebrew words the translation may cover (default: all but the last); `commas`:
+        stop after that many clause marks in the output (the Hebrew clauses it may cover)."""
         import mlx.core as mx
         from mlx_lm.models.cache import make_prompt_cache
-        close = new_words is None
         ids, span, count = self.prompt(text, forced)
         positions = np.array([p for p, _ in span])
-        accessible = sum(1 for _, i in span if i < count - 1)
+        upto = count - 1 if upto is None else upto
+        accessible = sum(1 for _, i in span if i < upto)
+        self.last_stop = None
+        marks, ended_once = 0, False
         frontier = accessible + self.margin
         model, tokenizer = self.engine.model, self.engine.tokenizer
         eos = set(tokenizer.eos_token_ids)
         cache = make_prompt_cache(model)
         limit = 3 * len(text.split()) + 3 - len(forced.split())
+        if getattr(self, 'new_words_cap', None) is not None:
+            limit = min(limit, self.new_words_cap)
         tokens, history = [], []
-        self.capture.active = not close
+        self.capture.active = not close and accessible < len(positions)
         try:
             self.capture.forward()
             logits = model(mx.array(ids)[None], cache=cache)
             while True:
                 token = int(mx.argmax(logits[0, -1]).item())
+                self.generation = getattr(self, 'generation', [0, 0.])
+                self.generation[0] += 1
                 if token in eos:
                     self.stops['end'] += 1
+                    self.last_stop = 'end'
                     break
-                if not close and len(positions):
+                if not close:
+                    reason = None
+                    piece = tokenizer.decode([token])
+                    if self.hold_end and re.search(r'[.?!…]', piece) and not END.search(text.strip()):
+                        reason = 'sentence'
+                        # Ended right after the shown words: the model closes a sentence the Hebrew
+                        # goes on with; let it, once, and continue.
+                        if self.keep_before_end and not tokens and not ended_once:
+                            reason, ended_once = None, True
+                    elif self.min_prob > 0:
+                        probability = float(mx.softmax(logits[0, -1].astype(mx.float32))[token].item())
+                        if probability < self.min_prob:
+                            reason = 'unsure'
+                    if reason:
+                        self.stops[reason] += 1
+                        self.last_stop = reason
+                        self.end_mark = re.search(r'[.?!…]', piece).group() if reason == 'sentence' else None
+                        if reason == 'sentence' and self.keep_before_end:
+                            # The model would end the sentence here: the words before it are whole.
+                            return tokenizer.decode(tokens).split()
+                        return self.complete_words(tokenizer, tokens, token)
+                if self.capture.active and len(positions):
                     rows = np.array(self.capture.last())[:, positions]          # [heads, source tokens]
                     history.append(rows)
                     stack = np.stack(history)                                     # [tokens, heads, source]
@@ -419,19 +494,21 @@ class AlignAttTranslator(AgreementTranslator):
                     per_head = median_filter(rows, self.width).argmax(-1)
                     aligned = int(np.sort(per_head)[(len(per_head) - 1) // 2])
                     mass = float(np.array(self.capture.last())[:, positions[accessible:]].sum(-1).mean())
-                    if aligned >= frontier and mass >= self.min_mass:
+                    if aligned >= frontier and mass >= self.min_mass and accessible < len(positions):
                         self.stops['frontier'] += 1
-                        piece = tokenizer.decode([token])
-                        text_out = tokenizer.decode(tokens)
-                        words = text_out.split()
-                        # the token starts a new word: the words before it are complete
-                        if words and not piece.startswith(' ') and not text_out.endswith(' '):
-                            words = words[:-1]
-                        return words
+                        self.last_stop = 'frontier'
+                        return self.complete_words(tokenizer, tokens, token)
                 tokens.append(token)
-                if len((forced + ' ' + tokenizer.decode(tokens)).split()) > limit + len(forced.split()) + 1:
+                if commas and not close and re.search(r'[,;:]', tokenizer.decode([token])):
+                    marks += 1
+                    if marks >= commas:
+                        self.stops['comma'] = self.stops.get('comma', 0) + 1
+                        self.last_stop = 'comma'
+                        return tokenizer.decode(tokens).split()
+                if len(tokenizer.decode(tokens).split()) > limit + 1:
                     self.capped += 1
                     self.stops['cap'] += 1
+                    self.last_stop = 'cap'
                     break
                 self.capture.forward()
                 logits = model(mx.array([[token]]), cache=cache)
@@ -439,7 +516,16 @@ class AlignAttTranslator(AgreementTranslator):
             self.capture.active = False
             self.capture.rows = []
         words = tokenizer.decode(tokens).split()
-        return words if close else words[:-1]   # the last word may still grow
+        return words if close or self.last_stop == 'end' else words[:-1]   # the last word may still grow
+
+    @staticmethod
+    def complete_words(tokenizer, tokens, stop):
+        """The words before the token generation stopped at; the last one only if `stop` starts a new word."""
+        text_out = tokenizer.decode(tokens)
+        words = text_out.split()
+        if words and not tokenizer.decode(tokens + [stop]).startswith(text_out + ' ') and not text_out.endswith(' '):
+            words = words[:-1]
+        return words
 
     def step(self, now, close=False):
         if not close and self.gpu.free > now:
@@ -463,7 +549,147 @@ class AlignAttTranslator(AgreementTranslator):
             self.sentence, self.history, self.shown = [], [], []
 
 
-def hybrid(audio, folder, translator, piece=.1, tail=1.):
+CLAUSE_END = re.compile(r'[,;:]$')
+
+
+class ClauseTranslator(AlignAttTranslator):
+    """AlignAtt that waits for the clause: the open sentence is translated (continuing the shown
+    translation) when a clause ends (comma, ;, :) up to that clause, or, if no clause end comes,
+    when the first untranslated word would otherwise miss --deadline: then as plain AlignAtt
+    (all but the last word). A sentence end or a pause translates the rest. A word counts as
+    translated when a call that may cover it ends at its frontier."""
+    SAFETY = .3
+
+    def __init__(self, engine, gpu, deadline, heads=4, margin=1, hold_end=True, min_prob=0.):
+        super().__init__(engine, gpu, heads, margin, hold_end=hold_end, min_prob=min_prob)
+        self.deadline = deadline
+        self.keep_before_end = True
+        self.end_mark = None    # the sentence end the model wanted after the shown words
+        self.covered = 0
+        self.tried = None       # (words heard, upto) of a call that added nothing
+        self.end_mark_after = None
+        self.timings = []
+
+    def estimate(self, words):
+        per_word = max([.12] + [(seconds - .25) / max(1, n) for n, seconds in self.timings[-20:]])
+        return .25 + per_word * words
+
+    def offer(self, words, now, final=False):
+        for word in words:
+            self.sentence.append(word)
+            if END.search(word['text']):
+                self.close(now)
+        if final and self.sentence:
+            self.close(now, pause=True)
+            return
+        if not self.sentence or self.gpu.free > now:
+            return
+        uncovered = self.sentence[self.covered:]
+        # a clause end with a word heard after it: the model sees where the clause leads
+        clause = max((i for i, w in enumerate(uncovered[:-1]) if CLAUSE_END.search(w['text'])), default=None)
+        if clause is not None:
+            upto = self.covered + clause + 1
+            commas = sum(1 for w in uncovered[:clause + 1] if CLAUSE_END.search(w['text']))
+        elif uncovered and now + self.estimate(len(uncovered)) + self.SAFETY >= uncovered[0]['spoken'] + self.deadline:
+            # all but the last word; the last one too once it is the one that is due
+            # (no newer word for a second: the speaker went quiet without a detected pause)
+            alone = len(uncovered) == 1 and now - uncovered[0]['shown'] >= QUIET
+            upto, commas = len(self.sentence) - (not alone), 0
+        else:
+            return
+        if upto <= self.covered or self.tried == (len(self.sentence), upto):
+            return
+        self.call(now, upto, commas)
+
+    def split(self):
+        """The model ended its sentence after the shown words while the Hebrew goes on (no
+        sentence end heard): end the Russian sentence there and go on with the rest of the Hebrew
+        as a new sentence, the finished pair as context. Keeps prompts short and aligned."""
+        word, at = self.shown[-1]
+        self.shown[-1] = (word + self.end_mark, at)
+        he, ru = self.sentence[:self.covered], ' '.join(w for w, _ in self.shown)
+        self.words.extend(he)
+        self.pairs.append((' '.join(w['text'] for w in he), ru))
+        self.done_text.append(self.pairs[-1])
+        self.sentence, self.shown, self.covered, self.tried = self.sentence[self.covered:], [], 0, None
+
+    def call(self, now, upto, commas):
+        pending = self.end_mark_after
+        if pending and self.shown and 0 < self.covered:
+            self.end_mark = pending
+            upto -= self.covered
+            self.split()
+        self.end_mark_after = None
+        forced = ' '.join(w for w, _ in self.shown)
+        began = time.perf_counter()
+        # AlignAtt over all heard words; the words after `upto` are seen but not translated.
+        text = ' '.join(w['text'] for w in self.sentence)
+        if upto == len(self.sentence):   # nothing after: no attention stop, a cap on new words
+            self.new_words_cap = new_words_cap(upto - self.covered)
+        try:
+            added, end = self.gpu.run(now, lambda: self.generate(text, forced, 0, upto, 0))
+        finally:
+            self.new_words_cap = None
+        self.timings.append((upto - self.covered, time.perf_counter() - began))
+        if DEBUG:
+            print('CALL', round(now, 2), self.covered, upto, len(self.sentence), commas, self.last_stop, added, file=sys.stderr)
+        self.chunks += 1
+        self.shown.extend((w, end) for w in added)
+        # 'end' with nothing added: the shown translation already says what was heard.
+        if self.last_stop in ('sentence', 'end') or added and self.last_stop in ('frontier', 'comma'):
+            for word in self.sentence[self.covered:upto]:
+                word['translated'] = end
+            self.covered = upto
+            self.tried = None
+            if self.last_stop == 'sentence' and self.shown:
+                self.end_mark_after = self.end_mark
+        else:
+            self.tried = (len(self.sentence), upto)
+
+    def close(self, now, pause=False):
+        text = ' '.join(w['text'] for w in self.sentence)
+        forced = ' '.join(w for w, _ in self.shown)
+        if pause and PAUSE_GATES:
+            # A pause is not a sentence end: the model must not finish the sentence for the
+            # speaker. Gates on, and no more new words than the Hebrew left can need.
+            self.new_words_cap = new_words_cap(len(self.sentence) - self.covered)
+            try:
+                added, end = self.gpu.run(now, lambda: self.generate(text, forced, 0, len(self.sentence), 0))
+            finally:
+                self.new_words_cap = None
+        else:
+            added, end = self.gpu.run(now, lambda: self.generate(text, forced, None))
+        self.chunks += 1
+        self.shown.extend((w, end) for w in added)
+        for word in self.sentence[self.covered:]:
+            word['translated'] = end
+        self.words.extend(self.sentence)
+        translation = ' '.join(w for w, _ in self.shown)
+        self.pairs.append((text, translation))
+        self.done_text.append((text, translation))
+        self.sentence, self.history, self.shown = [], [], []
+        self.covered, self.tried, self.end_mark_after = 0, None, None
+
+
+def pauses(audio, piece, silence):
+    """Per piece: True where `silence` seconds of quiet end after speech (an energy VAD standing in
+    for the app's Silero VAD, which closes a fragment after a pause)."""
+    step = int(piece * RATE)
+    rms = np.array([np.sqrt(np.mean(audio[i:i + step] ** 2)) if len(audio[i:i + step]) else 0.
+                    for i in range(0, len(audio), step)])
+    loud = rms > max(1e-4, .1 * np.percentile(rms, 90))
+    marks, quiet, spoke = [], 0, False
+    for is_loud in loud:
+        quiet = 0 if is_loud else quiet + 1
+        spoke |= bool(is_loud)
+        hit = spoke and quiet * piece >= silence - 1e-9
+        if hit:
+            spoke = False
+        marks.append(hit)
+    return marks
+
+
+def hybrid(audio, folder, translator, piece=.1, tail=1., silence=None, pause_tail=.8):
     import sherpa_onnx
     folder = Path(folder) / 'sherpa-onnx'
     recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
@@ -473,9 +699,24 @@ def hybrid(audio, folder, translator, piece=.1, tail=1.):
     stream = recognizer.create_stream()
     samples = np.concatenate([audio, np.zeros(int(tail * RATE), np.float32)])
     step = int(piece * RATE)
+    marks = pauses(samples, piece, silence) if silence else []
+    inserted = []   # (stream seconds where zeros were fed, seconds fed) at pauses, as the app does
+    def audio_time(stamp):
+        return stamp - sum(length for at, length in inserted if at <= stamp)
+    fed = flush_until = 0.
     seen, words, current, idle = 0, [], None, 0
-    for start in range(0, len(samples), step):
-        stream.accept_waveform(RATE, samples[start:start + step])
+    for index, start in enumerate(range(0, len(samples), step)):
+        chunk = samples[start:start + step]
+        stream.accept_waveform(RATE, chunk)
+        fed += len(chunk) / RATE
+        pause = index < len(marks) and marks[index]
+        if pause:
+            flush_until = fed + 2.
+            if pause_tail:
+                inserted.append((fed, pause_tail))
+                noise = np.random.default_rng(0).normal(0, NOISE, int(pause_tail * RATE)).astype(np.float32)
+                stream.accept_waveform(RATE, noise)
+                fed += pause_tail
         began = time.perf_counter()
         decoded = False
         while recognizer.is_ready(stream):
@@ -493,19 +734,20 @@ def hybrid(audio, folder, translator, piece=.1, tail=1.):
             if current is None:
                 current = dict(text='', shown=now)
             current['text'] += token.replace('▁', ' ').strip()
-            current['spoken'] = min(float(stamp) + .04, len(audio) / RATE)
+            current['spoken'] = min(audio_time(float(stamp)) + .04, len(audio) / RATE)
         seen = len(result.tokens)
         # Nothing new for a while: the last word is finished (the speaker paused).
         # A word goes on in the next token unless it starts with a space, so it is finished when the
         # next word starts, or when two decoded chunks in a row brought nothing (a pause).
         idle = 0 if fresh else idle + decoded
-        if current is not None and idle >= 2:
+        # After a pause the words still coming out are the last ones before it: nothing follows them.
+        if current is not None and (idle >= 2 or pause or fresh and fed <= flush_until):
             done.append(current)
             current = None
         for w in done:
             w['shown'] = now  # a word is complete when the next one starts
         words.extend(done)
-        translator.offer(done, now)
+        translator.offer(done, now, final=pause)
     if current is not None:
         current['shown'] = len(samples) / RATE
         words.append(current)
@@ -563,31 +805,55 @@ def whole(engine, text, context):
     for sentence in sentences:
         out = ''.join(p for p, _ in engine.translate(sentence, context=tuple(pairs[-context:]))).strip()
         pairs.append((sentence, out))
+    whole.pairs = pairs
     return ' '.join(t for _, t in pairs)
+
+
+def doubtful(pairs):
+    """Figures and weekdays one side of a (Hebrew, Russian) pair has and the other cannot account for;
+    a wrong weekday that weekday_guard fixes in the app counts as fixed, not doubtful."""
+    from hebrew_live.number_guard import check
+    from hebrew_live.weekday_guard import fix
+    found = dict(numbers=0, days=0, days_fixed=0)
+    for he, ru in pairs:
+        fixed, days = fix(he, ru) if DIRECTION == 'he-ru' else (ru, [])
+        found['numbers'] += len(check(he, fixed, 'he', DIRECTION.split('-')[1]))
+        found['days'] += sum(1 for item in days if item.kind != 'fixed')
+        found['days_fixed'] += sum(1 for item in days if item.kind == 'fixed')
+    return found
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('wavs', nargs='+', type=Path)
-    parser.add_argument('--mode', choices=['hybrid', 'agree', 'mt-agree', 'alignatt'], required=True)
+    parser.add_argument('--mode', choices=['hybrid', 'agree', 'mt-agree', 'alignatt', 'clause'], required=True)
     parser.add_argument('--k', type=int, default=2, help='mt-agree: continuations that must agree')
     parser.add_argument('--no-instruction', action='store_true', help='mt-agree: plain prompt')
     parser.add_argument('--span', type=float, default=0., help='seconds of speech before a chunk is sent')
     parser.add_argument('--step', type=float, default=.5, help='agree: seconds between Whisper passes')
     parser.add_argument('--context', type=int, default=4, help='previous chunks given as pairs')
     parser.add_argument('--heads', type=int, default=4, help='alignatt: translation heads used')
+    parser.add_argument('--min-prob', type=float, default=0., help='alignatt: wait at a token below this probability')
+    parser.add_argument('--hold-end', action='store_true', help='alignatt: wait at a sentence end the Hebrew has not reached')
     parser.add_argument('--zscore', action='store_true', help='alignatt: z-score attention over the call')
     parser.add_argument('--margin', type=int, default=1, help='alignatt: border margin in source tokens')
     parser.add_argument('--translator', type=Path, help='hybrid: an MLX chat model folder instead of MiLMMT')
+    parser.add_argument('--direction', default='he-ru', choices=['he-ru', 'he-en'])
+    parser.add_argument('--deadline', type=float, help='hybrid: wait for a clause end, but show within this many seconds')
+    parser.add_argument('--pause', type=float, help='hybrid: seconds of quiet that end a fragment (feeds 0.8 s of zeros)')
+    parser.add_argument('--pause-tail', type=float, default=.8, help='hybrid: seconds of zeros fed at a pause')
+    parser.add_argument('--pause-noise', type=float, default=0.)
     parser.add_argument('--zipformer', type=Path)
     parser.add_argument('--text-dir', type=Path)
     args = parser.parse_args()
+    global DIRECTION, NOISE
+    DIRECTION, NOISE = args.direction, args.pause_noise
     from hebrew_live.cli import Engine
     if args.translator:
         engine = ChatEngine(args.translator)
     else:
         engine = Engine(MODELS, Log())
-        engine.language, engine.direction, engine.topic = 'he', 'he-ru', 'none'
+        engine.language, engine.direction, engine.topic = 'he', args.direction, 'none'
     engine.warmup()
     for wav in args.wavs:
         audio, rate = soundfile.read(wav, dtype='float32')
@@ -597,33 +863,49 @@ def main():
             import soxr
             audio = soxr.resample(audio, rate, RATE).astype(np.float32)
         gpu = Gpu()
-        if args.mode == 'alignatt':
-            translator = AlignAttTranslator(engine, gpu, args.heads, args.margin, zscore=args.zscore)
+        if args.mode == 'clause':
+            translator = ClauseTranslator(engine, gpu, args.deadline or 4., args.heads, args.margin,
+                                          hold_end=args.hold_end, min_prob=args.min_prob)
+        elif args.mode == 'alignatt':
+            translator = AlignAttTranslator(engine, gpu, args.heads, args.margin, zscore=args.zscore,
+                                            min_prob=args.min_prob, hold_end=args.hold_end)
         elif args.mode == 'mt-agree':
             translator = AgreementTranslator(engine, gpu, args.k, not args.no_instruction)
         else:
-            translator = Translator(engine, gpu, args.span, args.context)
+            translator = Translator(engine, gpu, args.span, args.context, args.deadline)
         began = time.perf_counter()
-        if args.mode in ('hybrid', 'mt-agree', 'alignatt'):
-            words = hybrid(audio, args.zipformer, translator)
+        logged = len(engine.log.events) if hasattr(engine, 'log') else 0
+        if args.mode in ('hybrid', 'mt-agree', 'alignatt', 'clause'):
+            words = hybrid(audio, args.zipformer, translator, silence=args.pause, pause_tail=args.pause_tail)
         else:
             words = agree(audio, engine, gpu, translator, args.step)
         hebrew = ' '.join(w['text'] for w in words)
         chunked = translator.text()
+        if hasattr(translator, 'generation'):
+            generated, generating = translator.generation
+        else:
+            runs = [e for n, e in engine.log.events[logged:] if n == 'mt_generation'] if hasattr(engine, 'log') else []
+            generated, generating = sum(e['tokens'] for e in runs), sum(e['seconds'] for e in runs)
         reference_translation = whole(engine, hebrew, 2)
-        row = dict(wav=wav.name, mode=args.mode, span=args.span,
+        row = dict(wav=wav.name, mode=args.mode, direction=args.direction, span=args.span,
+                   deadline=args.deadline, pause=args.pause,
                    k=args.k if args.mode == 'mt-agree' else None,
                    instruction=not args.no_instruction if args.mode == 'mt-agree' else None,
                    skipped=getattr(translator, 'skipped', None), stops=getattr(translator, 'stops', None),
-                   heads=args.heads if args.mode == 'alignatt' else None,
-                   margin=args.margin if args.mode == 'alignatt' else None, zscore=args.zscore if args.mode == 'alignatt' else None, step=args.step if args.mode == 'agree' else None,
+                   heads=args.heads if args.mode in ('alignatt', 'clause') else None,
+                   margin=args.margin if args.mode in ('alignatt', 'clause') else None, zscore=args.zscore if args.mode in ('alignatt', 'clause') else None,
+                   min_prob=args.min_prob if args.mode in ('alignatt', 'clause') else None, hold_end=args.hold_end if args.mode in ('alignatt', 'clause') else None, step=args.step if args.mode == 'agree' else None,
                    seconds=round(len(audio) / RATE, 1), wall=round(time.perf_counter() - began, 1),
                    words=len(words), chunks=translator.chunks, capped=translator.capped,
                    words_per_chunk=round(len(translator.words) / max(1, translator.chunks), 2),
                    hebrew_lag=stats([w['shown'] - w['spoken'] for w in words]),
                    translation_lag=stats([w['translated'] - w['spoken'] for w in translator.words]),
                    gpu_busy=round(gpu.busy / (len(audio) / RATE), 3), erased_words=0,
-                   chrf_chunked_vs_whole=round(chrf(chunked, reference_translation), 1))
+                   chrf_chunked_vs_whole=round(chrf(chunked, reference_translation), 1),
+                   doubtful=doubtful(getattr(translator, 'shown_pairs', None) or translator.shown),
+                   doubtful_whole=doubtful(whole.pairs),
+                   tokens_per_chunk=round(generated / max(1, translator.chunks), 1),
+                   tokens_per_s=round(generated / max(1e-6, generating), 1))
         if args.translator:
             import mlx.core as mx
             calls = engine.calls
@@ -637,7 +919,7 @@ def main():
         print(json.dumps(row, ensure_ascii=False), flush=True)
         if args.text_dir:
             args.text_dir.mkdir(parents=True, exist_ok=True)
-            name = f'{wav.stem}.{args.mode}.{args.span}.k{args.k}.{int(not args.no_instruction)}' + (f'.h{args.heads}m{args.margin}z{int(args.zscore)}' if args.mode == 'alignatt' else '')
+            name = f'{wav.stem}.{args.direction}.{args.mode}.{args.span}.d{args.deadline}p{args.pause}.k{args.k}.{int(not args.no_instruction)}' + (f'.h{args.heads}m{args.margin}z{int(args.zscore)}p{args.min_prob}e{int(args.hold_end)}' if args.mode in ('alignatt', 'clause') else '')
             (args.text_dir / f'{name}.json').write_text(json.dumps(dict(
                 hebrew=hebrew, chunks=getattr(translator, 'shown_pairs', None) or translator.shown, whole=reference_translation,
                 words=[{k: w.get(k) for k in ('text', 'spoken', 'shown', 'translated')} for w in translator.words]),
