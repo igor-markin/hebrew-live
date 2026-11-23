@@ -57,10 +57,9 @@ hiddenimports = [
     "sherpa_onnx",
 ]
 
-# Bundle the required Whisper runtime; Whisper and MiLMMT weights download on first preparation.
+# Bundle the runtimes; MiLMMT weights download on first preparation, the streaming ASR model is bundled.
 for package in (
     "mlx",
-    "mlx_whisper",
     "mlx_lm",
     "onnxruntime",
     "sherpa_onnx",

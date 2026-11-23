@@ -1,9 +1,9 @@
 # Third-party software, models, and fonts
 
-Current alpha.3 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
+Current desktop profile: streaming zipformer recognition (bundled) and MiLMMT translation only.
 Bundled models: Silero VAD (2,327,524 bytes) and the streaming Hebrew recognizer
-zipformer2-66m-streaming-he (72,316,960 bytes) for the append-only live screen. The pinned Whisper/MiLMMT files
-are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
+zipformer2-66m-streaming-he (72,316,960 bytes) for the append-only live screen. The pinned MiLMMT files
+are required at first preparation (~2.22 GB), then reused offline. Whisper is retired. GigaAM-He,
 CoreML helpers/models and experimental recognition selection are excluded.
 The alpha has no Developer ID signature and is not notarized. Older measurements
 and build profiles below are historical; they are not acceptance evidence for the
@@ -12,7 +12,7 @@ alpha.3 DMG.
 
 This is an engineering inventory, not legal advice or a completed rights review. The
 project's original code is Apache-2.0. Silero VAD and zipformer2-66m-streaming-he are bundled in the desktop app;
-Whisper Turbo and MiLMMT are downloaded from their pinned sources when the app is
+MiLMMT is downloaded from its pinned source when the app is
 prepared. No model weights are included in
 the public source archive, wheel, or sdist. The source CLI downloads its own
 model set separately.
@@ -24,8 +24,8 @@ material.
 | Role | Pinned source | Current size | Stated terms/evidence | Checksum posture | Release status |
 | --- | --- | ---: | --- | --- | --- |
 | Retired fast desktop Hebrew ASR | [GigaAM-He](https://huggingface.co/asfberlin/fast-hebrew-asr) at `f374969f14a6c7b9d5a829f8bfb80de041931f8b` | 885,421,100 bytes for the three exported files | The model card states MIT for its weights and base [GigaAM](https://github.com/salute-developers/GigaAM/blob/7447938d791c4f3e643386ee22c33777004293a5/LICENSE), and asks to retain HebDB attribution. Training data is not bundled. | Source checkpoint, ONNX export, mel filters, and vocabulary are pinned by `fast_asr_manifest.json`; the desktop build no longer verifies or bundles them. | Retired: not in the alpha.1, alpha.2 or alpha.3 release artifacts, and excluded from the desktop app, wheel, sdist and public export; the helper and `fast_asr_notice.txt` remain in the repository's source tree only. This is the publisher's stated license, not an independent rights warranty. |
-| Hebrew ASR (desktop and CLI) | `mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx` at `53ad8c6cd8b32eb0303f093a404ae13c1b1d567f` | 1,613,977,880 bytes | The MLX conversion card does not state a license. Its named upstream `ivrit-ai/whisper-large-v3-turbo` card states Apache-2.0. | Pinned conversion revision and exact two-file SHA-256 inventory; desktop download and verification. | Downloaded from the pinned source during desktop preparation and CLI setup; conversion metadata review remains open before public release. |
-| Legacy multilingual CLI ASR | `mlx-community/whisper-large-v3-turbo` at `a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb` | ~1.5 GB | MLX conversion of OpenAI Whisper; confirm conversion metadata and upstream MIT notice at the pinned revision. | Pinned revision plus local per-file SHA-256 manifest. | Retired: `setup` no longer downloads it and recognition cannot select it, though a manifest that lists it is still accepted; conversion metadata review remains open. |
+| Retired Hebrew Whisper ASR | `mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx` at `53ad8c6cd8b32eb0303f093a404ae13c1b1d567f` | 1,613,977,880 bytes | The MLX conversion card does not state a license. Its named upstream `ivrit-ai/whisper-large-v3-turbo` card states Apache-2.0. | None: no longer downloaded or verified. | Retired: desktop preparation and CLI setup no longer download it, and the app no longer bundles mlx-whisper. Speech is recognized by the bundled streaming model; a manifest that lists the old files is still accepted and they are not checked. |
+| Retired multilingual CLI ASR | `mlx-community/whisper-large-v3-turbo` at `a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb` | ~1.5 GB | MLX conversion of OpenAI Whisper; confirm conversion metadata and upstream MIT notice at the pinned revision. | Pinned revision plus local per-file SHA-256 manifest. | Retired: `setup` no longer downloads it and recognition cannot select it, though a manifest that lists it is still accepted; conversion metadata review remains open. |
 | Default MT | `translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX` at `24877ecba801e4b198a5679445501022682d867c` | 2,216,770,326 bytes | The pinned model card declares `license: gemma`, identifies Xiaomi MiLMMT as the base, and links the [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and prohibited-use policy. | Exact downloaded files are checked against the pinned desktop inventory before use and after repair. | Downloaded directly from the pinned source during desktop preparation; the app still supplies Gemma terms and use restrictions. Rights review remains open. |
 | Streaming Hebrew ASR (append-only live screen) | [ivrit-ai/zipformer2-66m-streaming-he](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he) at `ee769a2a13b887f91572eec349458bfb0fe79e7a`, the ivrit.ai mirror of [thewh1teagle/zipformer2-66m-streaming-he](https://huggingface.co/thewh1teagle/zipformer2-66m-streaming-he) by Yakov Kolani | 72,316,960 bytes (int8 sherpa-onnx encoder, decoder, joiner, tokens) | The model card states CC-BY-4.0; base model k2-fsa icefall streaming Zipformer (Apache-2.0); trained on ivrit.ai audio under the [ivrit.ai license](https://www.ivrit.ai/en/the-license/). Run with sherpa-onnx (Apache-2.0). | Four-file SHA-256 inventory in `streaming_asr_manifest.json`, checked before bundling. | Bundled in desktop app with `streaming_asr_notice.txt` (attribution, license link, no endorsement). |
 | VAD | exact Silero VAD Git commit `867c2aa692646a1f1de3e94a15c9dd9f614c0acb` | 2,327,524 bytes | The [license at that exact commit](https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/LICENSE) is MIT. This is the `silero-vad` repository, not the separately licensed `silero-models` repository. | SHA-256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3` is checked before bundling and on first launch. | Bundled in desktop app; retain the MIT notice. |
@@ -34,7 +34,7 @@ Primary model pages:
 
 - [GigaAM-He model and attribution (retired)](https://huggingface.co/asfberlin/fast-hebrew-asr)
 - [ivrit.ai training-data license](https://www.ivrit.ai/en/the-license/)
-- [Pinned Hebrew Whisper Turbo MLX conversion](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f)
+- [Retired Hebrew Whisper Turbo MLX conversion](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f)
 - [Upstream ivrit.ai model](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo)
 - [Pinned MiLMMT conversion](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX/tree/24877ecba801e4b198a5679445501022682d867c)
 - [Pinned Silero VAD source file](https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/src/silero_vad/data/silero_vad.onnx)
@@ -46,7 +46,7 @@ note without downloading; setup repeats that information before starting the dow
 
 ## Bring-your-own compatible models
 
-The CLI accepts explicit local paths for an MLX Whisper ASR directory, an MLX-LM
+The CLI accepts explicit local paths for an MLX-LM
 translation directory, and a Silero-compatible VAD ONNX file. These paths must be
 outside the setup-managed `models/` directory. This prevents a path override from
 silently bypassing the managed SHA-256 manifest. If any managed component is used,
@@ -123,15 +123,14 @@ and source-offer obligations, especially LGPL dependencies, must be checked
 against the exact signed binary before publication.
 
 The desktop bundle supplements copied package metadata with
-`legal/BUNDLED-RUNTIME-NOTICES.txt`: upstream texts for mlx-whisper,
+`legal/BUNDLED-RUNTIME-NOTICES.txt`: upstream texts for
 SentencePiece and Tokenizers, matching CPython and PyInstaller license texts
 (including the bootloader exception), and OpenSSL/XZ notices. The file records
-its license-source revisions; mlx-whisper's installed wheel declares MIT but
-omits the license file, so its upstream mlx-examples notice is preserved.
+its license-source revisions. mlx-whisper is no longer bundled.
 
 Specific unresolved binary review items include corresponding-source and
 replacement obligations for bundled LGPL components such as `python-bidi`
-and `soxr`, and the Whisper conversion's provenance. The signed/notarized
+and `soxr`. The signed/notarized
 binary must be scanned again because signing or dependency replacement can
 change its contents. These open items are release blockers for a claim of
 complete third-party compliance; a license label in a lockfile alone does not

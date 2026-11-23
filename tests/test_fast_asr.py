@@ -48,7 +48,7 @@ class FastAsrTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "vocab.json"):
                 model_at(root / "unused", root)
 
-    def test_model_selection_rejects_retired_fast_recognition_even_if_installed(self):
+    def test_retired_fast_recognition_becomes_the_streaming_model_even_if_installed(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             model = folder / "fast-asr"
@@ -56,10 +56,9 @@ class FastAsrTests(unittest.TestCase):
             for name in ("multilingual_ctc_ft.onnx", "mel_filters.npy", "vocab.json"):
                 (model / name).touch()
             (folder / "milmmt-4b-4bit").mkdir()
-            with self.assertRaisesRegex(ValueError, "Unknown model selection"):
-                validate({"asr": "fast", "translation": "milmmt"})
-            with self.assertRaisesRegex(ValueError, "Unknown model selection"):
-                validate({"asr": "fast", "translation": "milmmt"}, folder)
+            for selected in (validate({"asr": "fast", "translation": "milmmt"}),
+                             validate({"asr": "fast", "translation": "milmmt"}, folder)):
+                self.assertEqual(selected, {"asr": "streaming", "translation": "milmmt"})
 
 
 if __name__ == "__main__":

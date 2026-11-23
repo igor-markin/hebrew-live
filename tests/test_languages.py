@@ -29,11 +29,15 @@ from hebrew_live.translation import prompt
 
 class LanguageCapabilityTests(unittest.TestCase):
     def test_pinned_translation_contract_has_explicit_targets(self):
-        self.assertEqual(len(target_languages()),45)
+        # Hebrew to Russian and Hebrew to English are the product directions.
+        self.assertEqual([item.code for item in target_languages()],['ru','en'])
+        self.assertEqual(direction_for_target('ru'),'he-ru')
         self.assertEqual(direction_for_target('en'),'he-en')
-        self.assertEqual(prompt_names('he-zh-tw'),('Hebrew','Chinese (Traditional)'))
-        self.assertEqual(validate_direction('ru-he'),'ru-he')
-        for direction in ('en-ru','he-he','he-te'):
+        with self.assertRaises(ValueError):direction_for_target('fr')
+        self.assertEqual(prompt_names('he-zh-tw'),('Hebrew','Chinese (Traditional)'))  # archives still name it
+        self.assertEqual(validate_direction('he-ru'),'he-ru')
+        self.assertEqual(validate_direction('he-en'),'he-en')
+        for direction in ('ru-he','en-he','he-fr','en-ru','he-he','he-te'):
             with self.assertRaises(ValueError):validate_direction(direction)
 
     def test_each_milmmt_target_uses_the_exact_registry_prompt_name(self):
@@ -50,8 +54,17 @@ class LanguageCapabilityTests(unittest.TestCase):
             folder=Path(tmp)
             (folder/'preferences.json').write_text('{"schema_version": 2, "draft_catchup_enabled": false}')
             self.assertNotIn('target_language',read_preferences(folder))
-            save_preferences(folder,target_language='fr',ui_locale='he')
-            self.assertEqual(read_preferences(folder)['target_language'],'fr')
+            save_preferences(folder,target_language='ru',ui_locale='he')
+            self.assertEqual(read_preferences(folder)['target_language'],'ru')
+            with self.assertRaises(ValueError):save_preferences(folder,target_language='fr')
+            save_preferences(folder,target_language='en')
+            self.assertEqual(read_preferences(folder)['target_language'],'en')
+            # Another target saved by an earlier release reads as Russian, with a notice, without a write.
+            raw=json.loads((folder/'preferences.json').read_text());raw['target_language']='fr'
+            (folder/'preferences.json').write_text(json.dumps(raw));before=(folder/'preferences.json').read_bytes()
+            migrated=read_preferences(folder)
+            self.assertEqual(migrated['target_language'],'ru');self.assertIn('Russian or English only',migrated['preference_notices'][0])
+            self.assertEqual((folder/'preferences.json').read_bytes(),before)
             self.assertEqual(read_preferences(folder)['ui_locale'],'he')
             self.assertEqual(json.loads((folder/'preferences.json').read_text())['schema_version'],4)
 
@@ -61,10 +74,10 @@ class LanguageCapabilityTests(unittest.TestCase):
             barrier=threading.Barrier(3)
             def update(**value):
                 barrier.wait();save_preferences(folder,**value)
-            first=threading.Thread(target=update,kwargs={'target_language':'fr'})
+            first=threading.Thread(target=update,kwargs={'target_language':'ru'})
             second=threading.Thread(target=update,kwargs={'ui_locale':'he'})
             first.start();second.start();barrier.wait();first.join();second.join()
-            self.assertEqual(read_preferences(folder)['target_language'],'fr')
+            self.assertEqual(read_preferences(folder)['target_language'],'ru')
             self.assertEqual(read_preferences(folder)['ui_locale'],'he')
 
     def test_language_inventory_is_read_only_and_reports_product_boundaries(self):
@@ -74,8 +87,9 @@ class LanguageCapabilityTests(unittest.TestCase):
         with patch.object(cli,'require_supported_platform') as guard,patch.object(sys,'argv',['he-ru','languages']),contextlib.redirect_stdout(output):
             self.assertEqual(cli.main(),0)
         guard.assert_not_called()
-        self.assertIn('MiLMMT targets (45)',output.getvalue())
-        self.assertIn('Overall product registry: 46 languages',output.getvalue())
+        self.assertIn('MiLMMT targets (2)',output.getvalue())
+        self.assertIn('Hebrew to Russian and Hebrew to English are the only directions',output.getvalue())
+        self.assertIn('Overall product registry: 3 languages',output.getvalue())
         self.assertIn('does not qualify arbitrary-language live input',output.getvalue())
 
     def test_installed_storage_and_uninstall_are_read_only_platform_independent_previews(self):
@@ -118,10 +132,10 @@ class TargetBoundaryTests(unittest.TestCase):
         stop.set();self.assertEqual(target_action_blocker(False,stop,cancel),'stopping')
         cancel.set();self.assertEqual(target_action_blocker(False,stop,cancel),'cancelling')
 
-    def test_current_contract_preserves_legacy_ru_he_and_rejects_retired_only_target(self):
-        self.assertEqual(validate_direction('ru-he'),'ru-he')
-        self.assertEqual(validate_direction('he-hr'),'he-hr')
-        with self.assertRaises(ValueError):validate_direction('he-bo')
+    def test_current_contract_keeps_only_hebrew_to_russian(self):
+        self.assertEqual(validate_direction('he-ru'),'he-ru')
+        for direction in ('ru-he','he-hr','he-bo'):
+            with self.assertRaises(ValueError):validate_direction(direction)
 
     def test_target_storage_failure_keeps_applied_boundary_and_is_reported(self):
         control=Control(Settings(direction='he-en',language='he'),threading.Event())
@@ -189,7 +203,7 @@ class BrowserLanguageActionTests(unittest.TestCase):
     def test_browser_admits_only_advertised_target_and_supported_locale(self):
         with tempfile.TemporaryDirectory() as tmp:
             with BrowserUI(open_browser=False) as ui:
-                self.assertEqual(ui.state['direction'],'he-en')
+                self.assertEqual(ui.state['direction'],'he-ru')
                 ui.preference_folder=Path(tmp)/'settings'
                 ui.details(target_languages=[dict(code='en',name='English',rtl=False),dict(code='ru',name='Russian',rtl=False)])
                 with self.post(ui,{'action':'target_language','value':'ru'}) as response:self.assertEqual(response.status,202)

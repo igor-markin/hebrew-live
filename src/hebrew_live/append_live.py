@@ -60,8 +60,10 @@ def hebrew_source(settings):
 
 class DraftRouter:
     """The live screen feed.inference drives: append-only (AppendProcessor) for Hebrew speech,
-    the retranslating screen (RetranslationProcessor) for other source languages, or for
-    everything when the streaming model cannot be loaded. Both number groups from one counter."""
+    or the retranslating screen (RetranslationProcessor) when the streaming model cannot be
+    loaded. The product engine no longer recognizes whole groups (Whisper is gone), so there
+    that fallback only reports errors; the app checks the streaming model before a session
+    starts (runtime.run_session). Both number groups from one counter."""
     COUNTERS = ('counter', 'export_counter', 'mt_counter')
 
     def __init__(self, engine, updates, log, cancel, append=None):
@@ -71,7 +73,7 @@ class DraftRouter:
         if self.append is None and enabled():
             try:
                 self.append = AppendProcessor(engine, updates, log, cancel)
-            except Exception as error:  # no streaming model: the retranslating screen
+            except Exception as error:
                 try:
                     log.event('append_unavailable', error=type(error).__name__, detail=str(error)[:200])
                 except Exception:

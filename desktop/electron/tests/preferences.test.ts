@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,7 +16,7 @@ test("desktop onboarding preferences are separate, atomic, and private", () => {
     showWelcome: false,
   });
   assert.equal(readDesktopPreferences(file).uiLocale, "en");
-  assert.equal(readDesktopPreferences(file).asrBackend, "turbo");
+  assert.equal(readDesktopPreferences(file).asrBackend, "streaming");
   assert.equal(saved.showWelcome, false);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).schemaVersion, 1);
@@ -32,11 +32,14 @@ test("unsupported preference fields and interface languages are rejected", () =>
   assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { acceptedAgreementVersion: AGREEMENT_VERSION }), /unsupported/);
 });
 
-test("fixed Whisper Turbo recognition persists and is validated on read", () => {
+test("fixed streaming recognition persists and is validated on read", () => {
   const folder = mkdtempSync(path.join(os.tmpdir(), "hebrew-live-recognition-"));
   const file = path.join(folder, "preferences.json");
-  saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "turbo" });
-  assert.equal(readDesktopPreferences(file).asrBackend, "turbo");
+  saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "streaming" });
+  assert.equal(readDesktopPreferences(file).asrBackend, "streaming");
+  writeFileSync(file, JSON.stringify({ ...DEFAULT_PREFERENCES, asrBackend: "turbo" }));
+  assert.equal(readDesktopPreferences(file).asrBackend, "streaming");
+  assert.throws(() => saveDesktopPreferences(file, DEFAULT_PREFERENCES, { asrBackend: "turbo" } as never), /unsupported/);
 });
 
 test("explicit agreement acceptance persists its version and timestamp", () => {

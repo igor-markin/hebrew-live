@@ -169,7 +169,7 @@ class _Memory:
 class RemoteEngine:
     """Parent proxy. Durable session state and processors never leave the parent."""
     def __init__(self, folder, log, language="he", backend="turbo", asr_path=None,
-                 translation_path=None, direction="he-en", topic="none", stop=None,
+                 translation_path=None, direction="he-ru", topic="none", stop=None,
                  cancel=None, startup_timeout=STARTUP_TIMEOUT,
                  shutdown_grace=SHUTDOWN_GRACE, cancel_grace=CANCEL_GRACE,
                  engine_factory=None,worker_target=_engine_process,
@@ -412,7 +412,7 @@ class SplitRemoteEngine:
     accepts_hint=accepts_context=True
 
     def __init__(self, folder, log, language="he", backend="turbo", asr_path=None,
-                 translation_path=None, direction="he-en", topic="none", stop=None,
+                 translation_path=None, direction="he-ru", topic="none", stop=None,
                  cancel=None, engine_factory=None, startup_timeout=STARTUP_TIMEOUT,
                  bridge_models=None):
         if bridge_models is not None:raise ValueError('Split MLX workers do not support bridge preview')

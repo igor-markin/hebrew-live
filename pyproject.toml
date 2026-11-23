@@ -12,7 +12,6 @@ classifiers = [
 ]
 dependencies = [
     "certifi==2026.7.22",
-    "mlx-whisper==0.4.3",
     "mlx-lm==0.31.3",
     "onnxruntime==1.29.0",
     "sounddevice==0.5.6",

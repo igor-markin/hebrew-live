@@ -182,22 +182,6 @@ class DesktopDownloadTests(unittest.TestCase):
             self.assertEqual(transferred, 0)
             self.assertEqual((models / "silero.onnx").read_bytes(), b"abcdef")
 
-    def test_optional_accurate_download_preserves_invalid_cli_file_until_verified(self):
-        payload = b"correct"
-        item = ModelFile("asr", "Whisper", Path("asr/weights.safetensors"), len(payload),
-                         hashlib.sha256(payload).hexdigest(), "https://example.invalid/weights")
-        with tempfile.TemporaryDirectory() as tmp:
-            models = Path(tmp)
-            target = models / item.relative
-            target.parent.mkdir(parents=True)
-            target.write_bytes(b"previous invalid bytes")
-            download_one(models, item, cancelled=lambda: False, progress=lambda _size: None,
-                         opener=lambda *_args: Response(payload))
-            self.assertEqual(target.read_bytes(), payload)
-            preserved = list(target.parent.glob("weights.safetensors.previous-invalid-*"))
-            self.assertEqual(len(preserved), 1)
-            self.assertEqual(preserved[0].read_bytes(), b"previous invalid bytes")
-
     def test_bad_content_range_never_appends_and_restarts_from_zero(self):
         item = model_file()
         with tempfile.TemporaryDirectory() as tmp:

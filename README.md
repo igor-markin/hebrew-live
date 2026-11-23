@@ -20,17 +20,17 @@ Then open Hebrew Live again. The command removes only the download mark that the
 
 1. Read and accept the [software agreement](docs/legal/EULA.en.txt) and linked model terms.
 2. Review the Mac, Metal, memory and disk checks.
-3. Prepare the pinned Whisper Turbo and MiLMMT files. First preparation downloads about **3.83 GB**; Silero VAD is included in the app. Completed verified files are reused.
+3. Prepare the pinned MiLMMT files. First preparation downloads about **2.22 GB**; Silero VAD and the streaming Hebrew recognizer are included in the app. Completed verified files are reused.
 4. Choose the interface and translation languages, then confirm audio storage and microphone access.
 5. At **Ready to begin**, press **Start recording**.
 
-After preparation, recognition and translation run locally without a network connection. Opening a saved conversation does not start recording. The release uses one recognition mode: **ivrit.ai Whisper Turbo**, with **MiLMMT** translation. GigaAM-He, alternate recognition selection and the CoreML experiment are excluded from the desktop release.
+After preparation, recognition and translation run locally without a network connection. Opening a saved conversation does not start recording. The release uses one recognition mode: the **ivrit.ai zipformer2** streaming recognizer, with **MiLMMT** translation from Hebrew into Russian or English. Whisper, GigaAM-He, alternate recognition selection and the CoreML experiment are excluded from the desktop release.
 
 ## Models
 
 | Component | Purpose | Placement |
 | --- | --- | --- |
-| [ivrit.ai Whisper Turbo MLX](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx/tree/53ad8c6cd8b32eb0303f093a404ae13c1b1d567f) | Hebrew recognition | 1.614 GB downloaded at preparation |
+| [ivrit.ai zipformer2-66m streaming](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he/tree/ee769a2a13b887f91572eec349458bfb0fe79e7a) | Hebrew recognition | 72.3 MB in the app |
 | [MiLMMT-46-4B, 4-bit MLX](https://huggingface.co/translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX/tree/24877ecba801e4b198a5679445501022682d867c) | Translation | 2.217 GB downloaded at preparation |
 | [Silero VAD](https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/LICENSE) | Speech and silence detection | 2.33 MB in the app, copied to model storage |
 

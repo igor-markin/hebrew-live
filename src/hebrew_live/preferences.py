@@ -25,13 +25,17 @@ def read(folder):
    models=dict(models,translation='milmmt')
    result['preference_notices']=[RETIRED_TRANSLATION_NOTICE]
   if isinstance(models,dict) and models.get('asr') in ('fast','multilingual'):
-   models=dict(models,asr='turbo')
-   result.setdefault('preference_notices',[]).append('This release uses Whisper Turbo. Previous model files were not deleted.')
+   result.setdefault('preference_notices',[]).append('This release recognizes speech with the bundled streaming model. Previous model files were not deleted.')
   result['models']=model_validate(models)
  if 'target_language' in data:
   from .languages import LANGUAGES
   target=data['target_language']
   if target not in LANGUAGES or target=='he':raise ValueError('Invalid target language')
+  from .languages import TARGETS
+  if target not in TARGETS:
+   # Only Hebrew to Russian or English remains; another earlier target becomes Russian.
+   target=TARGETS[0]
+   result.setdefault('preference_notices',[]).append('This release translates Hebrew into Russian or English only; the target language was set to Russian.')
   result['target_language']=target
  if 'ui_locale' in data:
   if data['ui_locale'] not in ('en','ru','he'):raise ValueError('Invalid interface language')
@@ -51,7 +55,8 @@ def save(folder,**values):
   if 'models' in data:data['models']=model_validate(data['models'])
   if 'target_language' in data:
    from .languages import LANGUAGES
-   if data['target_language'] not in LANGUAGES or data['target_language']=='he':raise ValueError('Invalid target language')
+   from .languages import TARGETS
+   if data['target_language'] not in TARGETS:raise ValueError('Invalid target language')
   if 'ui_locale' in data and data['ui_locale'] not in ('en','ru','he'):raise ValueError('Invalid interface language')
   data['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
   data['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))

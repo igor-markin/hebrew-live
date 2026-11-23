@@ -126,11 +126,7 @@ class Control:
             if key == ' ':
                 reason = 'resume' if self.paused else 'pause'
             elif key == '\x14':
-                if settings.direction not in ('he-ru','ru-he'):
-                    return False
-                direction = 'ru-he' if settings.direction == 'he-ru' else 'he-ru'
-                settings = replace(settings, part=settings.part+1, direction=direction, language=direction[:2])
-                reason = 'direction'
+                return False  # Hebrew to Russian is the only direction
             else:
                 settings = replace(settings, generation=settings.generation+1)
             # Commit control state only after the ordered boundary was accepted.

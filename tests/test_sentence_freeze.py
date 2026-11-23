@@ -183,24 +183,3 @@ class TailOnlyTests(unittest.TestCase):
   self.assertEqual(self.shown()[-1],('א. ב ג','A. B C'))
 
 
-class ContinuedDecodeTests(unittest.TestCase):
- def engine(self,calls):
-  from hebrew_live.cli import Engine
-  e=Engine.__new__(Engine);e.language='he';e.direction='he-ru';e.early_reject=False;e.encoder_reuse=False;e.asr_path='fake'
-  e.log=SimpleNamespace(event=lambda *a,**kw:None)
-  e.asr=SimpleNamespace(transcribe=lambda *a,**kw:(calls.append(kw),dict(language='he',segments=[dict(text=' ב ג')]))[1])
-  return e
- def test_forced_start_reaches_whisper_and_only_new_words_come_back(self):
-  calls=[];e=self.engine(calls)
-  self.assertEqual(e.recognize([],align_words=False,continues='א.'),'ב ג')
-  self.assertEqual(calls[0]['prefix'],'א.');self.assertFalse(calls[0]['word_timestamps']);self.assertTrue(calls[0]['without_timestamps'])
-  e.recognize([],align_words=False)
-  self.assertNotIn('prefix',calls[1]);self.assertNotIn('without_timestamps',calls[1])
-  with self.assertRaises(ValueError):e.recognize([],continues='א.')
- def test_only_text_that_leaves_room_for_new_words_may_be_continued(self):
-  e=self.engine([])
-  with patch('hebrew_live.whisper_reuse.compatible',return_value=True):
-   self.assertTrue(e.can_continue('שלום לכם. מה שלומכם?'))
-   self.assertFalse(e.can_continue(''));self.assertFalse(e.can_continue('שלום '*400))
-  with patch('hebrew_live.whisper_reuse.compatible',return_value=False):
-   self.assertFalse(e.can_continue('שלום לכם.'))

@@ -94,9 +94,9 @@ class TerminalTests(unittest.TestCase):
                 events=[json.loads(line)['event'] for file in sorted(folder.glob('*.jsonl')) for line in file.read_text().splitlines()]
                 self.assertEqual(events.count('pause'),1)
                 self.assertEqual(events.count('resume'),1)
-                self.assertEqual(events.count('direction'),1)
+                self.assertEqual(events.count('direction'),0)  # Ctrl+T no longer switches to Russian-to-Hebrew
                 self.assertEqual(events.count('clear'),1)
-                self.assertEqual(len(list(folder.iterdir())),10)  # + summary.json
+                self.assertEqual(len(list(folder.iterdir())),6)  # one part + summary.json
                 self.assertIn('Paused',output.decode(errors='replace'))
                 self.assertIn('Session saved:',output.decode(errors='replace'))
                 self.assertIn('שלום',output.decode(errors='replace'))

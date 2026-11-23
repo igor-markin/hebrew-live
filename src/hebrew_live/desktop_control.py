@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .desktop_download import DesktopDownloadError, DownloadCancelled, prepare_models, verify_accurate_asr
+from .desktop_download import DesktopDownloadError, DownloadCancelled, prepare_models
 from .desktop_locations import resolve_model_locations
 from .desktop_preflight import bundled_models, check_computer, load_inventory
 
@@ -89,11 +89,11 @@ class _WarmupLog:
         self.writer.event("warmup_error", {"type": type(exc).__name__})
 
 
-def desktop_asr_backend(models: Path, selected: str = "turbo") -> str:
-    """Whisper Turbo is the sole release recognition backend."""
-    if selected != "turbo":
+def desktop_asr_backend(models: Path, selected: str = "streaming") -> str:
+    """The bundled streaming model is the sole recognition backend ('turbo' is its old name)."""
+    if selected not in ("streaming", "turbo"):
         raise DesktopDownloadError("unsupported_mode", "Unsupported recognition mode.")
-    return selected
+    return "streaming"
 
 
 def desktop_inventory(models: Path) -> dict[str, Any]:
@@ -102,7 +102,7 @@ def desktop_inventory(models: Path) -> dict[str, Any]:
 
 
 def warmup_models(models: Path, writer: ProtocolWriter, cancel: threading.Event,
-                  backend: str = "turbo") -> dict[str, Any]:
+                  backend: str = "streaming") -> dict[str, Any]:
     writer.event("preparation_phase", {"phase": "warming"})
     from .cli import VAD
     import numpy as np
@@ -112,7 +112,7 @@ def warmup_models(models: Path, writer: ProtocolWriter, cancel: threading.Event,
         raise DownloadCancelled()
     from .remote_engine import RemoteEngine
     log = _WarmupLog(writer)
-    engine = RemoteEngine(models, log, language="he", direction="he-en",
+    engine = RemoteEngine(models, log, language="he", direction="he-ru",
                           backend=desktop_asr_backend(models, backend),
                           stop=cancel, cancel=cancel)
     try:
@@ -161,8 +161,8 @@ class DesktopController:
         self.writer.event("preflight_complete", result)
         return result
 
-    def start_preparation(self, backend: str = "turbo") -> None:
-        desktop_asr_backend(self.models, backend)
+    def start_preparation(self, backend: str = "streaming") -> None:
+        backend = desktop_asr_backend(self.models, backend)
         with self.lock:
             if self.preparing:
                 raise DesktopDownloadError("busy", "Model preparation is already running.")
@@ -183,7 +183,6 @@ class DesktopController:
                 inventory=inventory,
                 bundled_root=self.bundled,
             )
-            verify_accurate_asr(self.models)
             result.update(warmup_models(self.models, self.writer, self.cancel_prepare, backend))
             if self.cancel_prepare.is_set():
                 raise DownloadCancelled()
@@ -249,8 +248,8 @@ class DesktopController:
                 self.backend_log = None
         self.writer.event("backend_exit", {"code": code, "expected": expected})
 
-    def start_backend(self, backend: str = "turbo") -> None:
-        desktop_asr_backend(self.models, backend)
+    def start_backend(self, backend: str = "streaming") -> None:
+        backend = desktop_asr_backend(self.models, backend)
         with self.lock:
             if self.preparing:
                 raise DesktopDownloadError("busy", "Model preparation is still running.")
@@ -260,7 +259,6 @@ class DesktopController:
                 return
             from .desktop_download import verify_desktop_external
             verify_desktop_external(self.models, self.inventory)
-            verify_accurate_asr(self.models)
             desktop_folder = self.data_home / "desktop"
             desktop_folder.mkdir(parents=True, exist_ok=True)
             log_path = desktop_folder / "backend.log"
@@ -426,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
                     from .languages import target_language_options
                     writer.response(identity, {"source": "he", "targets": target_language_options()})
                 elif command == "prepare":
-                    backend = payload.get("asr_backend", "turbo")
+                    backend = payload.get("asr_backend", "streaming")
                     controller.start_preparation(backend);writer.response(identity, {"started": True})
                 elif command == "cancel_prepare":
                     controller.cancel_prepare.set();writer.response(identity, {"cancelled": True})
@@ -435,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif command == "save_preferences":
                     writer.response(identity, controller.save_preferences(payload))
                 elif command == "start_backend":
-                    backend = payload.get("asr_backend", "turbo")
+                    backend = payload.get("asr_backend", "streaming")
                     controller.start_backend(backend);writer.response(identity, {"started": True})
                 elif command == "backend_state":
                     writer.response(identity, controller.backend_state())

@@ -1,8 +1,7 @@
 """Translation language capabilities and stable direction identifiers.
 
-The live product records Hebrew speech.  The optional ``ru-he`` direction is
-kept for backwards-compatible CLI/archive use, but browser target switching
-always keeps Hebrew as the source language.
+The product translates Hebrew speech into Russian or English: ``he-ru`` (the default)
+and ``he-en`` are the live directions. The language table stays for reading archived sessions and prompts.
 """
 from dataclasses import dataclass
 
@@ -74,10 +73,12 @@ _LANGUAGES = (
 LANGUAGES = {language.code: language for language in _LANGUAGES}
 
 
+TARGETS = ('ru', 'en')
+
+
 def target_languages():
-    """Return targets advertised by the single supported MiLMMT contract."""
-    return tuple(language for language in _LANGUAGES
-                 if language.code != 'he' and language.milmmt_name is not None)
+    """The product translates into Russian or English."""
+    return tuple(LANGUAGES[code] for code in TARGETS)
 
 
 def target_language_options():
@@ -88,7 +89,7 @@ def target_language_options():
 def direction_for_target(target):
     supported = {language.code for language in target_languages()}
     if target not in supported:
-        raise ValueError(f'Unsupported target language for MiLMMT: {target}')
+        raise ValueError(f'Unsupported target language: {target}; Hebrew is translated into Russian or English only')
     return f'he-{target}'
 
 
@@ -101,10 +102,8 @@ def split_direction(direction):
     return source, target
 
 
-def validate_direction(direction, allow_legacy=True):
+def validate_direction(direction, allow_legacy=False):
     source, target = split_direction(direction)
-    if allow_legacy and (source, target) == ('ru', 'he'):
-        return direction
     if source != 'he':
         raise ValueError('The live product records Hebrew speech')
     direction_for_target(target)

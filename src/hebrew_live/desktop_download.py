@@ -155,11 +155,6 @@ def _open(request: urllib.request.Request, timeout: int):
 
 
 def _activate_download(partial: Path, target: Path, item: ModelFile) -> None:
-    # An optional CLI ASR file may belong to an earlier setup. Keep its bytes
-    # intact until a replacement has passed the pinned checksum.
-    if item.component == "asr" and target.exists():
-        preserved = target.with_name(f"{target.name}.previous-invalid-{time.time_ns()}")
-        os.replace(target, preserved)
     os.replace(partial, target)
 
 
@@ -178,7 +173,7 @@ def download_one(
     target.parent.mkdir(parents=True, exist_ok=True)
     if file_verified(target, item):
         return 0
-    if target.exists() and item.component != "asr":
+    if target.exists():
         try:
             target.unlink()
         except OSError as exc:
@@ -283,14 +278,12 @@ def write_manifest(models: Path, inventory: dict[str, Any]) -> None:
     from .cli import SPEC, manifest_assets, required_model_files
 
     desktop_items = [item for item in iter_model_files(inventory)
-                     if item.component in ("translation", "vad", "asr")]
+                     if item.component in ("translation", "vad")]
     if any(not file_verified(models / item.relative, item) for item in desktop_items):
         raise DesktopDownloadError("corrupt_file", "A required model file failed verification.")
     desktop_files = {str(item.relative): item.sha256 for item in desktop_items}
     files = dict(desktop_files)
     assets = ["translation", "vad"]
-    if any(item.component == "asr" for item in iter_model_files(inventory)):
-        assets.append("asr")
     previous_path = models / "manifest.json"
     if previous_path.exists():
         try:
@@ -317,26 +310,6 @@ def write_manifest(models: Path, inventory: dict[str, Any]) -> None:
             files.update(entries)
             assets.append(asset)
     atomic_json(previous_path, {"schema_version": 2, "assets": assets, "spec": SPEC, "files": files})
-
-
-def verify_accurate_asr(models: Path) -> None:
-    """Verify the required pinned Whisper files without inspecting unrelated CLI assets."""
-    from .cli import manifest_assets
-    from .desktop_preflight import accurate_inventory
-
-    try:
-        manifest = json.loads((models / "manifest.json").read_text())
-        declared, _legacy = manifest_assets(manifest)
-        hashes = manifest["files"]
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.") from exc
-    if "asr" not in declared or not isinstance(hashes, dict):
-        raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.")
-    for item in iter_model_files(accurate_inventory()):
-        if item.component == "asr" and (
-            hashes.get(str(item.relative)) != item.sha256 or not file_verified(models / item.relative, item)
-        ):
-            raise DesktopDownloadError("accurate_model_missing", "Whisper Turbo needs model preparation.")
 
 
 def verify_desktop_external(models: Path, inventory: dict[str, Any]) -> None:
