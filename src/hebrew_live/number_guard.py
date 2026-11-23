@@ -115,8 +115,10 @@ def _classify(word, language):
 class _Side:
     """Digit figures of one text, plus every number its words could stand for."""
 
-    def __init__(self, text, language):
-        tokens = _TOKEN.findall(_THOUSANDS.sub('', text))
+    def __init__(self, text, language, thousands=True):
+        found = list(_TOKEN.finditer(_THOUSANDS.sub('', text) if thousands else text))
+        tokens = [match.group() for match in found]
+        self.mentions = []         # (value, digits or None, character offset), every number in reading order
         self.figures = []          # (value, digits as written), digit numbers only
         self.values = set()        # integers the text can account for
         self.spoken = set()        # digit strings read out one digit at a time
@@ -124,13 +126,14 @@ class _Side:
         self.concat = ''.join(self.chunks)
         self.quarter = False
         total = current = 0
-        rank = 4; is_open = False; run = ''; previous = None
+        rank = 4; is_open = False; run = ''; previous = None; began = 0
 
         def close(adjacent=False):
             nonlocal total, current, rank, is_open, previous
             if is_open:
                 value = total + current
                 self.values.add(value)
+                self.mentions.append((value, None, began))
                 # "nineteen ninety-six": two adjacent two-digit numbers read as a year.
                 if previous is not None and 10 <= previous <= 99 and value <= 99:
                     self.values.add(previous * 100 + value)
@@ -151,6 +154,7 @@ class _Side:
                 following = _classify(tokens[index + 1], language) if index + 1 < len(tokens) else None
                 value = int(token) * 1000 if following and following[0] == 'T' else int(token)
                 self.figures.append((value, token)); self.values.update((value, int(token)))
+                self.mentions.append((value, token, found[index].start()))
                 continue
             item = _classify(token, language)
             if item is None:
@@ -169,11 +173,15 @@ class _Side:
                 end_run()
             if role == 'f':
                 close()
+                self.mentions.append((value, None, found[index].start()))
             elif role == 'T':
+                began = began if is_open else found[index].start()
                 total += (current or 1) * 1000; current = 0; rank = 4; is_open = True
             elif role == 'A':
+                began = began if is_open else found[index].start()
                 total += value; current = 0; rank = 4; is_open = True
             elif role == 'H':
+                began = began if is_open else found[index].start()
                 current = (current or 1) * 100; rank = 3; is_open = True
             elif role == 'x' and is_open and rank == 1 and 0 < current % 100 < 10:
                 current += 10; rank = 0                      # "שלוש עשרה" is thirteen
@@ -181,6 +189,7 @@ class _Side:
                 level = {'u': 1, 'x': 2, 't': 2, 'h': 3}[role]
                 if is_open and level >= rank:
                     close(adjacent=True)                     # a new number starts: "עשרים וארבע שבע"
+                began = began if is_open else found[index].start()
                 current += value; rank = level; is_open = True
         close(); end_run()
         # A clock hour may come back in the other 12-hour half; "a quarter to five" names the next hour.
@@ -203,3 +212,31 @@ def check(source, translation, source_language='he', target_language='ru'):
     issues = [Issue('missing', digits) for value, digits in original.figures if not translated.explains(value, digits)]
     issues += [Issue('extra', digits) for value, digits in translated.figures if not original.explains(value, digits)]
     return issues
+
+
+def unheard(source, shown, new, source_language='he', target_language='ru'):
+    """Index of the first of the `new` words (a call's output, continuing the `shown` translation
+    of `source`) that brings a number the source has not said yet, or None.
+
+    Counted, not just looked up: «1 ... тоже 1» needs the source to say one twice. Digits and
+    number words both count on the translation side, so a live translation waits for the number
+    instead of guessing it; this is for stopping generation, not for an alarm (see `check`)."""
+    if not new:
+        return None
+    origin = _Side(source, source_language)
+    said = {}
+    for value, _, _ in origin.mentions:
+        said[value] = said.get(value, 0) + 1
+    start = len(shown) + 1 if shown else 0
+    text = (shown + ' ' + ' '.join(new)) if shown else ' '.join(new)
+    starts, at = [], start
+    for word in new:
+        starts.append(at)
+        at += len(word) + 1
+    used = {}
+    for value, digits, offset in _Side(text, target_language, thousands=False).mentions:
+        used[value] = used.get(value, 0) + 1
+        allowed = said.get(value) or (1 if origin.explains(value, digits or str(value)) else 0)
+        if offset >= start and used[value] > allowed:
+            return max(i for i, begin in enumerate(starts) if begin <= offset)
+    return None

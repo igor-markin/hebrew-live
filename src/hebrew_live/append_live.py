@@ -493,6 +493,10 @@ class AppendProcessor:
                 mark = added.pop(0)
                 if card.out:
                     card.out[-1] += mark
+            if not close and added:
+                cut = self._numbers(card, added, settings)
+                if cut is not None:
+                    added, stop = added[:cut], 'number'
             new, days = self._weekdays(card, upto, ' '.join(card.out), ' '.join(added), settings)
             added = new.split()
             card.out.extend(added)
@@ -521,6 +525,20 @@ class AppendProcessor:
                        capped=stop == 'cap', lags=lags)
         if days:
             self.log.event('weekday_check', part=settings.part, segment=card.sid, stage='append', issues=days)
+
+    def _numbers(self, card, added, settings):
+        """Index of the first new word with a number the open sentence's Hebrew has not said
+        (number_guard.unheard), or None. A live call stops there and the words wait for the
+        number to be heard; the last call of a card (the sentence is over) is not held."""
+        if os.environ.get('HEBREW_LIVE_NUMBER_WAIT', '1') == '0':
+            return None
+        from .languages import split_direction
+        source, target = split_direction(settings.direction)
+        if source != 'he':
+            return None
+        from .number_guard import unheard
+        hebrew = ' '.join(w['text'] for w in card.words[card.base:])
+        return unheard(hebrew, ' '.join(card.out[card.base_out:]), added, 'he', target)
 
     def _weekdays(self, card, upto, shown, out, settings):
         """The call's new words with a weekday the Hebrew does not name replaced (weekday_guard).

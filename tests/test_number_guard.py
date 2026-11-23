@@ -1,6 +1,6 @@
 import unittest
 
-from hebrew_live.number_guard import Issue, _Side, check
+from hebrew_live.number_guard import Issue, _Side, check, unheard
 
 
 class NumberGuardTests(unittest.TestCase):
@@ -81,6 +81,26 @@ class NumberGuardTests(unittest.TestCase):
         self.assertEqual(check('Встреча 27 мая', 'הפגישה ב-17 במאי', 'ru', 'he'), [Issue('missing', '27'), Issue('extra', '17')])
         self.assertEqual(check('27 מאי', '27 mai', 'he', 'fr'), [])
         self.assertEqual(check('עשרים ושבע במאי', '27 mai', 'he', 'fr'), [])
+
+
+class UnheardTests(unittest.TestCase):
+    def test_a_number_waits_until_the_hebrew_says_it(self):
+        self.assertEqual(unheard('לביטוח נסיעות לחו"ל יש להקיש', '', 'Для страхования путешествий — 4'.split()), 4)
+        self.assertIsNone(unheard('לביטוח נסיעות לחו"ל יש להקיש ארבע', '', 'Для страхования путешествий — 4'.split()))
+        self.assertEqual(unheard('יש להקיש', 'Для', 'страхования нажмите четыре'.split()), 2)
+
+    def test_a_number_said_once_is_used_once(self):
+        hebrew = 'לביטוח רכב יש להקיש אחת, לביטוח דירה יש להקיש'
+        self.assertEqual(unheard(hebrew, 'Для автострахования нажмите 1,', 'для жилья — тоже 1.'.split()), 4)
+        self.assertIsNone(unheard(hebrew + ' שתיים', 'Для автострахования нажмите 1,', 'для жилья — 2.'.split()))
+        self.assertEqual(unheard('press one', '', 'нажмите один, потом один'.split(), 'en', 'ru'), 3)
+
+    def test_spoken_numbers_times_and_english(self):
+        self.assertIsNone(unheard('בשעה עשרים ושלוש', '', 'в двадцать три часа'.split()))
+        self.assertIsNone(unheard('בשעה עשר בבוקר', '', 'в 10:00 утра'.split()))
+        self.assertIsNone(unheard('הקישו 2', '', 'press two'.split(), 'he', 'en'))
+        self.assertEqual(unheard('שלום', '', 'Hello, press one'.split(), 'he', 'en'), 2)
+        self.assertIsNone(unheard('שלום', '', 'Здравствуйте, это вторник'.split()))
 
 
 if __name__ == '__main__':
