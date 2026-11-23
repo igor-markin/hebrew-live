@@ -409,11 +409,13 @@ class RetranslationProcessor:
         if value == previous: return
         self.visible = deepcopy(value)
         if job:self.published_job=(job.id,job.version)
+        now=time.monotonic();audio_lag=max(0., now-captured+offset-end/16000)
         self.updates.put(('context', self.sid, self.settings))
-        self.updates.put(('live_publication', self.sid, value))
+        # The window echoes these two back when it draws this version, so the log can tell
+        # how long after the speech the text really reached the screen.
+        self.updates.put(('live_publication', self.sid, dict(value, emitted_at=now, audio_lag=audio_lag)))
         self.log.event('live_publication', part=self.settings.part,segment=self.sid, **value,
-                       audio_lag=max(0., time.monotonic()-captured+offset-end/16000),
-                       from_start=time.monotonic()-captured+offset-start/16000)
+                       audio_lag=audio_lag, from_start=now-captured+offset-start/16000)
         if job:self.mt_event('mt_published',job,new_content=not previous or previous['current']['translation']!=target)
         if value.get('numbers'):
             self.log.event('number_mismatch', part=self.settings.part, segment=self.sid, stage=stage,
@@ -909,7 +911,8 @@ class RetranslationProcessor:
                     if candidate and candidate != preview and len(shown) >= self.visible_length(job):
                         self.updates.put(('live_stream',job.group,dict(
                             source=shown_source,translation=shown,start=job.start/16000,end=job.end/16000,
-                            preview_id=f'{job.id}:{job.version}',preview_emitted_at=now)))
+                            preview_id=f'{job.id}:{job.version}',preview_emitted_at=now,
+                            audio_lag=max(0.,now-job.captured_at+job.captured_offset-job.end/16000))))
                         if not preview:
                             self.mt_event('mt_first_preview',job,seconds=now-began,
                                           audio_lag=max(0.,now-job.captured_at+job.captured_offset-job.end/16000))
