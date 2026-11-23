@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from hebrew_live.session_summary import write as write_summary  # noqa: E402
+from hebrew_live.session_summary import read_events, write as write_summary  # noqa: E402
 
 INSTALLED = Path.home() / 'Library' / 'Application Support' / 'Hebrew Live CLI' / 'models'
 VARIANTS = {
@@ -80,7 +80,14 @@ def models_folder(target):
     return target
 
 
-def run(wav, variant, workdir, watcher):
+def closed_text(session):
+    """The Hebrew of every closed version, in order: the session's final transcript."""
+    return ' '.join((event.get('current') or {}).get('source', '') for event in read_events(session)
+                    if event.get('event') == 'live_publication'
+                    and event.get('stage') in ('closed', 'technical')).strip()
+
+
+def run(wav, variant, workdir, watcher, hyp_dir=None):
     logs = workdir / 'logs'
     env = dict(os.environ, **VARIANTS[variant], HEBREW_LIVE_HOME=str(workdir / 'home'))
     env.pop('HEBREW_LIVE_DESKTOP_MANAGED', None)
@@ -106,6 +113,8 @@ def run(wav, variant, workdir, watcher):
             window.kill()
     session = max(logs.glob('*/'), key=lambda path: path.stat().st_mtime)
     summary = write_summary(session)
+    if hyp_dir is not None:
+        (hyp_dir / f'{Path(wav).stem}.{variant}.{workdir.name}.txt').write_text(closed_text(session) + '\n')
     return dict(wav=Path(wav).name, variant=variant, seconds=round(time.monotonic() - started, 1),
                 exit=engine.returncode, window=window is not None, errors=errors[:3],
                 **{label: value(summary, path) for label, path in METRICS})
@@ -131,6 +140,8 @@ def main():
     parser.add_argument('--rounds', type=int, default=1)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--seed', type=int, default=20261123)
+    parser.add_argument('--hyp-dir', type=Path, help='write each run\'s closed Hebrew here (speech text: keep it '
+                        'outside the repository) for WER against a reference')
     args = parser.parse_args()
     watcher = Path(__file__).with_name('window_watch.mjs')
     random.seed(args.seed)
@@ -145,7 +156,7 @@ def main():
                 workdir = base / f'run-{len(rows)}'
                 workdir.mkdir()
                 (workdir / 'models').symlink_to(models)
-                row = dict(run(wav, variant, workdir, watcher), round=round_number)
+                row = dict(run(wav, variant, workdir, watcher, args.hyp_dir), round=round_number)
                 rows.append(row)
                 with args.out.open('a') as file:
                     file.write(json.dumps(row, ensure_ascii=False) + '\n')
