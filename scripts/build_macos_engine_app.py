@@ -92,12 +92,24 @@ def main() -> int:
             if digest != item["sha256"]:
                 raise SystemExit(f"Bundled model checksum mismatch: {relative}")
             hashes[str(relative)] = digest
+    # The streaming Hebrew recognizer of the append-only screen (streaming_asr_manifest.json).
+    streaming = json.loads((ROOT / "src" / "hebrew_live" / "streaming_asr_manifest.json").read_text())
+    for name, item in streaming["files"].items():
+        relative = Path(streaming["folder"]) / name
+        source = model_root / relative
+        if not source.is_file() or source.stat().st_size != item["bytes"]:
+            raise SystemExit(f"Bundled model missing or wrong size: {relative}")
+        with source.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != item["sha256"]:
+            raise SystemExit(f"Bundled model checksum mismatch: {relative}")
+        hashes[str(relative)] = digest
     if sum(item["bytes"] for part in inventory["components"] for item in part["files"]) != inventory["total_bytes"]:
         raise SystemExit("Bundled model inventory total is inconsistent")
     bundle_manifest = build_root / "manifest.json"
     bundle_manifest.write_text(json.dumps({
         "schema_version": 1,
-        "assets": ["vad"],
+        "assets": ["vad", "streaming-asr"],
         "files": hashes,
     }, indent=2, sort_keys=True) + "\n")
     environment["HEBREW_LIVE_BUNDLE_MODELS"] = str(model_root)

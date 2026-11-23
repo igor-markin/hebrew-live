@@ -44,6 +44,54 @@ def _bumping(name):
     return wrapper
 for _name in ('__delitem__','pop','popitem','clear','setdefault','__ior__'):setattr(_State,_name,_bumping(_name))
 
+UI_LOG_BYTES=262144
+UI_LOG_ITEMS=400
+UI_TEXT_LIMIT=4000
+UI_LOG_KINDS=('render','click','scroll','key','visibility','resize','follow','settings')
+
+def _number(value):
+    return value if isinstance(value,(int,float)) and not isinstance(value,bool) and value==value else None
+
+def _text(value,limit=UI_TEXT_LIMIT):
+    return value[:limit] if isinstance(value,str) else None
+
+def ui_log_entry(item,received,parts):
+    """(event name, fields) for one record of the window's log, or None for a malformed one.
+
+    `render` is one version of a bubble as the window drew it: the text on screen, when, and,
+    from the publication time the window echoes back, how long after the speech it got there
+    (`screen_lag` = the engine's audio lag at publication + publication to drawn). The other
+    kinds are the reader's own actions: clicks, scrolling, keys, window focus and size."""
+    if not isinstance(item,dict) or item.get('type') not in UI_LOG_KINDS:return None
+    kind=item['type'];age=_number(item.get('age_ms'))
+    age=max(0.,age/1000) if age is not None else 0.
+    if kind=='render':
+        group=_text(item.get('group'),128)
+        if group is None:return None
+        fields=dict(group=group,part=parts.get(group),revision=_number(item.get('revision')),
+                    shown=item.get('shown') if item.get('shown') in ('live','stream','none') else 'none',
+                    complete=bool(item.get('complete')),source=_text(item.get('source')) or '',
+                    translation=_text(item.get('translation')) or '',
+                    source_changed=bool(item.get('source_changed')),translation_changed=bool(item.get('translation_changed')),
+                    view=_text(item.get('view'),16) or 'cards')
+        for key in ('erased_source','erased_translation','frozen_lines'):
+            value=_number(item.get(key))
+            if value is not None:fields[key]=value
+        emitted=_number(item.get('emitted_at'));lag=_number(item.get('audio_lag'))
+        if emitted is not None and emitted<=received:
+            fields['publish_to_screen']=round(received-age-emitted,4)
+            if lag is not None:fields['screen_lag']=round(lag+fields['publish_to_screen'],4)
+        return 'ui_render',fields
+    fields={}
+    for key in ('target','label','key','state','view'):
+        value=_text(item.get(key),80)
+        if value is not None:fields[key]=value
+    for key in ('top','height','client_height','width','following','visible'):
+        value=item.get(key)
+        if isinstance(value,bool) or _number(value) is not None:fields[key]=value
+    fields['age']=round(age,4)
+    return 'ui_'+kind,fields
+
 VOCABULARY_LIMIT=500
 VOCABULARY_LENGTH={'he':60,'ru':120,'en':120}
 
@@ -81,18 +129,21 @@ class BrowserUI:
                     'recording_started':False,'capture_active':False,
                     'input_source':'microphone','input_source_locked':False,'phone_status':None,'input_error':None})
         self.state['desktop_mode']=self.desktop_mode
-        # Live display experiments, off by default: HEBREW_LIVE_CALM_DRAFTS=1 keeps a shown
-        # translation until a refresh is complete; sentence splits merge into one bubble.
+        # HEBREW_LIVE_CALM_DRAFTS keeps a shown translation until a refresh is complete; on by
+        # default since 23.11.2026 (fewer erased words, measured), =0 rolls it back.
+        # Live display experiments, off by default: sentence splits merge into one bubble.
         # HEBREW_LIVE_SENTENCE_CONTEXT=1 freezes closed sentences: one card per speaker turn,
         # a line per sentence, the open part grey, and visible text never shrinks.
         # HEBREW_LIVE_TICKER=1 builds on frozen sentences: closed sentences flow as plain paragraphs
         # that never change, and only the sentence still being spoken is a grey line updated in place.
         ticker=os.environ.get('HEBREW_LIVE_TICKER','0')=='1'
         frozen=ticker or os.environ.get('HEBREW_LIVE_SENTENCE_CONTEXT','0')=='1'
-        self.state['calm_drafts']=frozen or os.environ.get('HEBREW_LIVE_CALM_DRAFTS','0')=='1'
+        self.state['calm_drafts']=frozen or os.environ.get('HEBREW_LIVE_CALM_DRAFTS','1')!='0'
         self.state['merge_sentences']=frozen or os.environ.get('HEBREW_LIVE_SENTENCE_SPLIT','0')=='1'
         self.state['frozen_sentences']=frozen
         self.state['ticker_view']=ticker
+        # HEBREW_LIVE_APPEND=1: shown text is final, so an open translation is not greyed.
+        self.state['append_view']=os.environ.get('HEBREW_LIVE_APPEND','0')=='1'
         # HEBREW_LIVE_UI_PUSH=0 rolls the pages back to polling `state` (the events route answers 404).
         self.push_enabled=os.environ.get('HEBREW_LIVE_UI_PUSH')!='0'
         self.closing=False
@@ -212,8 +263,22 @@ class BrowserUI:
                 if self.headers.get_content_type()!='application/json':return self.reply(415,b'{}')
                 try:
                     size=int(self.headers.get('Content-Length','0'))
-                    if not 0<size<=8192:return self.reply(400,b'{}')  # A ticker report carries one sentence.
+                    # A ticker report carries one sentence; a window log batch up to UI_LOG_BYTES.
+                    if not 0<size<=UI_LOG_BYTES:return self.reply(400,b'{}')
                     payload=json.loads(self.rfile.read(size));action=payload.get('action')
+                    if size>8192 and action!='ui_log':return self.reply(400,b'{}')
+                    if action=='ui_log':
+                        received=time.monotonic()
+                        items=payload.get('items')
+                        if not isinstance(items,list) or len(items)>UI_LOG_ITEMS:return self.reply(400,b'{}')
+                        with owner.lock:
+                            event=owner.on_preview_seen
+                            parts={item.get('id'):item.get('part') for item in owner.state.get('groups',[]) if isinstance(item,dict)}
+                        if event is None:return self.reply(200,b'{"ok":true}')
+                        for item in items:
+                            entry=ui_log_entry(item,received,parts)
+                            if entry is not None:event(entry[0],**entry[1])
+                        return self.reply(200,b'{"ok":true}')
                     if action=='ui_preview_seen':
                         identity=payload.get('group');preview_id=payload.get('preview_id')
                         if not isinstance(identity,str) or len(identity)>128 or not isinstance(preview_id,str) or len(preview_id)>64:

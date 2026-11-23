@@ -338,6 +338,12 @@ class Session:
         if failures:self.note_unprocessed(self.current,None,None,'archive_finalize_failed','unknown')
         try:self.write_integrity()
         except Exception as exc:failures.append(exc)
+        try:
+            # Numbers for comparing sessions and settings; a failure here never loses the session.
+            from .session_summary import write
+            write(self.path)
+        except Exception:
+            pass
         if failures:
             raise failures[0]
 

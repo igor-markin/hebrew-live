@@ -240,6 +240,11 @@ class RetranslationProcessor:
         self.turn=deque()
         self.turn_continues=False
         self.right_context=None
+        # Hybrid mode: a streaming recognizer on the CPU writes the drafts, Whisper only the
+        # closing decode. Off unless HEBREW_LIVE_HYBRID=1 and its model is available.
+        from . import streaming_asr
+        self.streaming=streaming_asr.load(log)
+        self.streamed=False
         if self.async_mt:
             self._mt_condition=threading.Condition()
             self._mt_pending=deque()
@@ -276,6 +281,7 @@ class RetranslationProcessor:
         self.split_text=''
         self.frozen_source=[];self.frozen_target=[]
         self.seen_texts=[];self.previous_seen=()
+        self.live_source=''
 
     def _capture_group(self, detach=False):
         state={key:getattr(self,key,None) for key in self._GROUP_FIELDS}
@@ -393,6 +399,9 @@ class RetranslationProcessor:
         previous = self.visible
         if self.freeze and stage != 'unavailable':
             source, target = self.with_frozen(source, target)
+        days = []
+        if stage != 'unavailable':
+            target, days = self.weekday_fix(source, target)
         snapshot = dict(source=source, translation=target, fragment=job.fragment if job else self.last.id,
                         revision=job.revision if job else self.last.revision,
                         source_status='accepted' if job else self.last_status)
@@ -406,15 +415,21 @@ class RetranslationProcessor:
         if stage in ('closed', 'technical'):
             # Only a closed phrase: the figures of a growing one change every second.
             value['numbers'] = self.number_issues(snapshot['source'], snapshot['translation'])
+        if days:
+            value['days'] = days
         if value == previous: return
         self.visible = deepcopy(value)
         if job:self.published_job=(job.id,job.version)
+        now=time.monotonic();audio_lag=max(0., now-captured+offset-end/16000)
         self.updates.put(('context', self.sid, self.settings))
-        self.updates.put(('live_publication', self.sid, value))
+        # The window echoes these two back when it draws this version, so the log can tell
+        # how long after the speech the text really reached the screen.
+        self.updates.put(('live_publication', self.sid, dict(value, emitted_at=now, audio_lag=audio_lag)))
         self.log.event('live_publication', part=self.settings.part,segment=self.sid, **value,
-                       audio_lag=max(0., time.monotonic()-captured+offset-end/16000),
-                       from_start=time.monotonic()-captured+offset-start/16000)
+                       audio_lag=audio_lag, from_start=now-captured+offset-start/16000)
         if job:self.mt_event('mt_published',job,new_content=not previous or previous['current']['translation']!=target)
+        if days and stage in ('closed', 'technical'):
+            self.log.event('weekday_check', part=self.settings.part, segment=self.sid, stage=stage, issues=days)
         if value.get('numbers'):
             self.log.event('number_mismatch', part=self.settings.part, segment=self.sid, stage=stage,
                            issues=value['numbers'])
@@ -428,6 +443,34 @@ class RetranslationProcessor:
             self.part.text('source', record, label+source)
             self.part.text('target', record, label+(target or '[Перевод ещё не показан]')+
                            ('\n['+issue+']' if issue else ''))
+
+    def publish_source(self, text):
+        """Show the newest Hebrew of the open group at once; its translation follows with the
+        next publication. The window keeps it until the group closes."""
+        if self.cancel.is_set() or self.closed:return
+        source = self.with_frozen(text, '')[0] if self.freeze else text
+        if source in (self.live_source, self.visible['current']['source']):return
+        self.live_source = source
+        now = time.monotonic()
+        audio_lag = max(0., now-self.last.end+self.last.offset-self.end/16000)
+        self.updates.put(('context', self.sid, self.settings))
+        self.updates.put(('live_source', self.sid, dict(source=source, emitted_at=now, audio_lag=audio_lag)))
+        self.log.event('live_source', part=self.settings.part, segment=self.sid, source=source,
+                       audio_lag=audio_lag, start=self.start/16000, end=self.end/16000,
+                       **(dict(heard_until=self.streaming.heard_until) if self.streamed else {}))
+
+    def weekday_fix(self, source, target):
+        """The translation with a weekday the Hebrew does not name replaced by the one it does,
+        and [{kind, he, ru, expected}] for every fixed or doubtful day (weekday_guard).
+        `HEBREW_LIVE_WEEKDAY_CHECK=0` turns it off."""
+        if os.environ.get('HEBREW_LIVE_WEEKDAY_CHECK', '1') == '0' or not source.strip() or not target.strip():
+            return target, []
+        from .languages import split_direction
+        if split_direction(self.settings.direction) != ('he', 'ru'):
+            return target, []
+        from .weekday_guard import fix
+        fixed, issues = fix(source, target)
+        return fixed, [item._asdict() for item in issues]
 
     def number_issues(self, source, target):
         """Digit figures the whole shown group (frozen sentences and tail) has on one side and
@@ -694,6 +737,13 @@ class RetranslationProcessor:
                 if self.sentence_context else ())
         right = self.right_context if self.sentence_context and self.right_context is not None else ()
         self.continued_words = 0
+        self.streamed = self.streaming is not None and not final
+        if self.streamed:
+            text = self.streaming.text(self.sid, self.audio)
+            e.recognition_status = 'accepted' if text else 'empty'
+            e.recognition_words = None
+            e.recognition_issue = None
+            return text, 0
         if not len(left) and not len(right):
             frozen = self.frozen_start(align_words)
             if not frozen:
@@ -740,6 +790,8 @@ class RetranslationProcessor:
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
                        final=final, closing=closing, source=text,word_alignment=align_words,
                        **(dict(reused=True) if reused else {}),
+                       **(dict(draft_engine='streaming', heard_until=self.streaming.heard_until)
+                          if self.streamed else {}),
                        **(dict(continued_words=self.continued_words) if self.continued_words else {}))
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'
@@ -802,6 +854,8 @@ class RetranslationProcessor:
         if not self.visible or (not self.visible['current']['translation'] and
                                 not (self.async_mt and self._mt_outstanding)):
             self.publish(text, '')  # Keep a pending first pair stable until its translation arrives.
+        else:
+            self.publish_source(text)
         job=self.request_mt(text,closing)
         if text == self.source and self.draft:
             self.log.event('live_mt_cached', segment=self.sid, source=text)
@@ -909,7 +963,8 @@ class RetranslationProcessor:
                     if candidate and candidate != preview and len(shown) >= self.visible_length(job):
                         self.updates.put(('live_stream',job.group,dict(
                             source=shown_source,translation=shown,start=job.start/16000,end=job.end/16000,
-                            preview_id=f'{job.id}:{job.version}',preview_emitted_at=now)))
+                            preview_id=f'{job.id}:{job.version}',preview_emitted_at=now,
+                            audio_lag=max(0.,now-job.captured_at+job.captured_offset-job.end/16000))))
                         if not preview:
                             self.mt_event('mt_first_preview',job,seconds=now-began,
                                           audio_lag=max(0.,now-job.captured_at+job.captured_offset-job.end/16000))

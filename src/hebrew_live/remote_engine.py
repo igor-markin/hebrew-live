@@ -337,6 +337,13 @@ class RemoteEngine:
                 _best_effort_event(self.log,'mt_cancel',outcome=outcome,seconds=time.monotonic()-began)
             self._rpc_lock.release()
 
+    def clause_generate(self, *args, **kwargs):
+        """The append-only screen's translator call (cli.Engine.clause_generate) in the child."""
+        with self._rpc_lock:
+            _,message=self._request_locked("clause_generate",*args,**kwargs)
+            if message[0]=="failed":raise RemoteEngineError(self._format_failure(message,"Translation failed"))
+            self._apply(message[3]);return message[2]
+
     def switch_models(self, selection):
         with self._rpc_lock:
             _,message=self._request_locked("switch_models",selection,timeout=STARTUP_TIMEOUT)
@@ -450,6 +457,8 @@ class SplitRemoteEngine:
         state=dict(language=self.language,direction=self.direction,topic=self.topic,
                    translation_context=list(self.translation_context),recognition_guard_due=False)
         yield from self.mt.translate(text,_remote_state=state,**options)
+
+    def clause_generate(self,*args,**kwargs):return self.mt.clause_generate(*args,**kwargs)
 
     def switch_models(self,selection):
         self.asr.switch_models(selection)

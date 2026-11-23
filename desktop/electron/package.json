@@ -55,6 +55,10 @@
         "to": "legal/silero_notice.txt"
       },
       {
+        "from": "../../src/hebrew_live/streaming_asr_notice.txt",
+        "to": "legal/streaming_asr_notice.txt"
+      },
+      {
         "from": "../../docs/THIRD_PARTY.md",
         "to": "legal/THIRD_PARTY.md"
       },

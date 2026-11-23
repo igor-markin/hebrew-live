@@ -1,12 +1,16 @@
-export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number};
+export type Pair = {source:string;translation:string;label?:string|null;start?:number;end?:number;issue?:string|null;preview_id?:string;preview_emitted_at?:number;audio_lag?:number};
 export type NumberIssue = {kind:'missing'|'extra';number:string};
-export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[]};
-export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair};
+/** A weekday the Hebrew names and the translation got wrong (weekday_guard.py). */
+export type DayIssue = {kind:'fixed'|'wrong'|'missing'|'extra';he:string;ru:string;expected:string};
+export type LiveValue = {current:Pair;history:Pair[];stage:string;issue?:string|null;reason?:string|null;start?:number;end?:number;numbers?:NumberIssue[];days?:DayIssue[];emitted_at?:number;audio_lag?:number};
+/** The newest recognised Hebrew of an open group, published before its translation is ready. */
+export type SourceLive = {source:string;emitted_at?:number;audio_lag?:number};
+export type Group = {id:string;revision?:number;direction:string;complete:boolean;live?:LiveValue;stream?:Pair;final?:Pair;final_progress?:Pair;source_live?:SourceLive};
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
   status_code?:string;ui_locale?:'en'|'ru'|'he';target_language?:string;
-  desktop_mode?:boolean;calm_drafts?:boolean;merge_sentences?:boolean;frozen_sentences?:boolean;ticker_view?:boolean;recording_started?:boolean;capture_active?:boolean;
+  desktop_mode?:boolean;calm_drafts?:boolean;append_view?:boolean;merge_sentences?:boolean;frozen_sentences?:boolean;ticker_view?:boolean;recording_started?:boolean;capture_active?:boolean;
   target_languages?:{code:string;name:string;rtl:boolean}[];target_error?:string|null;target_error_code?:string|null;
   target_capabilities_assumed?:boolean;
   publication?:string;paused:boolean;finished:boolean;stopping?:boolean;cancelling?:boolean;
@@ -37,6 +41,7 @@ function group(value:unknown): value is Group {
   if(value.live!==undefined){
     if(!record(value.live)||!pair(value.live.current)||!Array.isArray(value.live.history)||!value.live.history.every(pair)||typeof value.live.stage!=='string'||!optionalString(value.live.issue)||!optionalString(value.live.reason)||!optionalNumber(value.live.start)||!optionalNumber(value.live.end))return false;
     if(value.live.numbers!==undefined&&(!Array.isArray(value.live.numbers)||!value.live.numbers.every(item=>record(item)&&(item.kind==='missing'||item.kind==='extra')&&typeof item.number==='string'&&/^\d{1,40}$/.test(item.number))))return false;
+    if(value.live.days!==undefined&&(!Array.isArray(value.live.days)||!value.live.days.every(item=>record(item)&&['fixed','wrong','missing','extra'].includes(item.kind as string)&&['he','ru','expected'].every(key=>typeof item[key]==='string'&&(item[key] as string).length<=40))))return false;
   }
   return true;
 }
@@ -50,7 +55,7 @@ export function parseLiveState(value:unknown):LiveState {
   if(value.partial_kind!==undefined&&value.partial_kind!==null&&!['known_unprocessed','capture_unknown','mixed'].includes(String(value.partial_kind)))throw new Error('Invalid local API snapshot');
   if(value.partial_ranges!==undefined&&(!Array.isArray(value.partial_ranges)||!value.partial_ranges.every(item=>typeof item==='string')))throw new Error('Invalid local API snapshot');
   if(value.partial_details!==undefined&&(!Array.isArray(value.partial_details)||!value.partial_details.every(item=>record(item)&&(item.part===null||typeof item.part==='number')&&(item.direction===null||typeof item.direction==='string')&&typeof item.reason==='string'&&(item.start===null||typeof item.start==='number')&&(item.end===null||typeof item.end==='number'))))throw new Error('Invalid local API snapshot');
-  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.ticker_view)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
+  if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.append_view)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.ticker_view)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
   if(value.input_source!==undefined&&!['microphone','phone'].includes(String(value.input_source))||!optionalBoolean(value.input_source_locked)||!optionalString(value.phone_status)||
     value.input_error!==undefined&&value.input_error!==null&&!['phone_not_ready','phone_stopped'].includes(String(value.input_error)))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
@@ -189,6 +194,33 @@ export function tickerParagraphs(groups:Group[]):TickerParagraph[] {
   return paragraphs;
 }
 
+/** Hebrew to show: an open group shows what recognition heard last, without waiting for its translation. */
+export function shownSource(group:Group,pair:Pair|undefined):string {
+  const live=group.source_live?.source;
+  return !group.complete&&live?live:pair?.source||'';
+}
+
+// Figures a reader must not miss: digits with their separators (10:30, 23.11, 1,500), and the
+// currency, percent or unit that follows them.
+const FIGURE=/(?:₪\s?)?\d+(?:[.,:/-]\d+)*(?:\s?(?:%|₪|ש["״]ח|шекел\p{L}*|руб\p{L}*|долл\p{L}*|евро|NIS))?/gu;
+export type TextPart = {text:string;figure:boolean};
+/** `text` cut into plain parts and figures. */
+export function figureParts(text:string):TextPart[] {
+  const parts:TextPart[]=[];let last=0;
+  for(const match of text.matchAll(FIGURE)){
+    if(match.index>last)parts.push({text:text.slice(last,match.index),figure:false});
+    parts.push({text:match[0],figure:true});last=match.index+match[0].length;
+  }
+  if(last<text.length)parts.push({text:text.slice(last),figure:false});
+  return parts;
+}
+
+/** Words of a still open translation: the leading words two versions in a row agreed on, then the rest. */
+export function agreedSplit(text:string,agreed:number):[string,string] {
+  const words=text.split(/\s+/).filter(Boolean);
+  return [words.slice(0,agreed).join(' '),words.slice(agreed).join(' ')];
+}
+
 export function isVisibleGroup(group:Group):boolean {
   const pair=shownPair(group);
   const issue=group.live?.issue||group.final?.issue;
@@ -245,6 +277,23 @@ export function numberNotes(groups:Group[]):string[] {
     for(const item of group.live.numbers||[])if(!seen.includes(item.number))seen.push(item.number);
   }
   return seen;
+}
+
+/**
+ * Weekdays of the closed phrases: `fixed` were replaced by the day the Hebrew names, `check` are
+ * days the Hebrew and the translation do not agree on (a day the Hebrew lacks, or one the
+ * translation lost). Once each; an open phrase never has a note.
+ */
+export function dayNotes(groups:Group[]):{fixed:string[];check:string[]} {
+  const fixed:string[]=[],check:string[]=[];
+  for(const group of groups){
+    if(!group.complete||!group.live||!['closed','technical'].includes(group.live.stage))continue;
+    for(const item of group.live.days||[]){
+      const [list,word]=item.kind==='fixed'?[fixed,item.expected]:[check,item.kind==='extra'?item.ru:item.expected];
+      if(word&&!list.includes(word))list.push(word);
+    }
+  }
+  return {fixed,check};
 }
 
 export type VocabularyEntry={he:string;ru:string;en:string};

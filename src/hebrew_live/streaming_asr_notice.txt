@@ -1,0 +1,23 @@
+Streaming Hebrew speech recognition model notice
+
+zipformer2-66m-streaming-he, developed by Yakov Kolani (thewh1teagle).
+Original model: https://huggingface.co/thewh1teagle/zipformer2-66m-streaming-he
+Files taken from the ivrit.ai mirror at a pinned revision:
+https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he
+Revision: ee769a2a13b887f91572eec349458bfb0fe79e7a
+Files: sherpa-onnx/encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, tokens.txt
+(unchanged; their SHA-256 sums are in streaming_asr_manifest.json).
+
+License: Creative Commons Attribution 4.0 International (CC BY 4.0).
+https://creativecommons.org/licenses/by/4.0/
+The model is provided "as is", without warranties of any kind. Hebrew Live is not
+endorsed by the model's author or by ivrit.ai.
+
+Base model: icefall streaming Zipformer (k2-fsa), Apache License 2.0.
+https://github.com/k2-fsa/icefall
+https://huggingface.co/Zengwei/icefall-asr-librispeech-streaming-zipformer-2023-05-17
+
+Training audio: ivrit.ai (https://www.ivrit.ai), under the ivrit.ai license:
+https://www.ivrit.ai/en/the-license/
+
+Runtime: sherpa-onnx (k2-fsa), Apache License 2.0. https://github.com/k2-fsa/sherpa-onnx

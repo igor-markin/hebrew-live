@@ -21,6 +21,7 @@ dependencies = [
     "rich==15.0.0",
     "huggingface-hub==1.30.0",
     "python-bidi==0.6.11",
+    "sherpa-onnx==2.0.3",
 ]
 [dependency-groups]
 desktop-build = [

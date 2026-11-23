@@ -1,6 +1,8 @@
 """Validated per-fragment timing, independent of model weights."""
 import math
-DEFAULTS=(1.,1.,0,4.,.6)
+# 0.7 s first draft and refresh: measured 23.11.2026 on four recordings with the window open
+# (experiments/corpus/replay_variants.py); previously 1.0/1.0.
+DEFAULTS=(.7,.7,0,4.,.6)
 FIELDS=('first_seconds','interval_seconds','preview_limit','fragment_seconds','silence_seconds')
 def validate(values):
     if not isinstance(values,dict) or set(values)!=set(FIELDS):raise ValueError('Нужны все пять настроек')

@@ -5,7 +5,9 @@ import {Disclosure} from '@heroui/react/disclosure';
 import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
-import {agreeWords, archiveRecordingLabel, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import {UiLog,clickTarget,renderRecords} from './uiLog';
+import type {Drawn} from './uiLog';
+import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -19,7 +21,7 @@ const I18nContext=createContext<{locale:UiLocale;tx:Translate}>({locale:'en',tx:
 const useI18n=()=>useContext(I18nContext);
 // Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT,
 // HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences, HEBREW_LIVE_TICKER for the ticker view).
-const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false});
+const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false,append:false});
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -49,20 +51,42 @@ function ChangingText({text:incoming,hold=false}:{text:string;hold?:boolean}) {
   return <>{text.slice(0,kept)}<span className="text-fresh" key={text}>{text.slice(kept)}</span></>;
 }
 
-type Segment={id:string;pair:Pair;pending?:boolean};
+type Segment={id:string;pair:Pair;pending?:boolean;hebrew?:string};
+
+/** Text with its figures (times, dates, sums, numbers) marked, so the eye finds them first. */
+function Figures({text}:{text:string}) {
+  return <>{figureParts(text).map((part,index)=>part.figure?<mark key={index} className="figure">{part.text}</mark>:part.text)}</>;
+}
+
+// What two versions in a row of each open translation agreed on (see agreeWords).
+const agreements=new Map<string,Agreement>();
+
+/** An open translation: the words two versions agreed on in the normal colour, the rest grey until
+ * a later version confirms it. A closed one is all normal. */
+function TranslationText({id,text,pending}:{id:string;text:string;pending?:boolean}) {
+  // In the append-only view every shown word is final.
+  const {append}=useContext(DisplayContext);
+  if(!pending||append){agreements.delete(id);return <Figures text={text}/>;}
+  const next=agreeWords(agreements.get(id),text);agreements.set(id,next);
+  const [agreed,rest]=agreedSplit(text,next.agreed);
+  return <>{agreed&&<Figures text={agreed}/>}{agreed&&rest?' ':''}{rest&&<span className="text-pending"><Figures text={rest}/></span>}</>;
+}
 
 /** One bubble's text: closed sentences in the normal colour, the still open part in grey. */
 function SegmentText({segments,field,missing}:{segments:Segment[];field:'translation'|'source';missing:string}) {
   const {merge,frozen}=useContext(DisplayContext);
-  if(frozen)return <>{segments.map(segment=>{
-    // A line per sentence; a closed one never changes again, the open one is grey.
-    const text=segment.pair[field];
-    return <span key={segment.id} className={`sentence-line ${segment.pending?'text-pending':''}`}>{text?<ChangingText text={text} hold={segment.pending}/>:missing}</span>;
-  })}</>;
-  return <>{segments.map((segment,index)=>{
-    const text=segment.pair[field];
-    return <span key={segment.id} className={merge&&segment.pending?'text-pending':undefined}>{index?' ':''}{text?<ChangingText text={text}/>:missing}</span>;
-  })}</>;
+  const text=(segment:Segment)=>field==='source'?segment.hebrew??segment.pair.source:segment.pair.translation;
+  const body=(segment:Segment)=>{
+    const value=text(segment);
+    if(!value)return missing;
+    if(field==='source')return <Figures text={value}/>;
+    return <TranslationText id={segment.id} text={value} pending={segment.pending}/>;
+  };
+  if(frozen)return <>{segments.map(segment=>
+    // A line per sentence; a closed one never changes again.
+    <span key={segment.id} className="sentence-line">{body(segment)}</span>)}</>;
+  return <>{segments.map((segment,index)=>
+    <span key={segment.id} className={merge&&segment.pending&&field==='source'?'text-pending':undefined}>{index?' ':''}{body(segment)}</span>)}</>;
 }
 
 /** Height a card keeps while its turn is open, so a closing sentence or a slower refresh never pulls the text under the reader upwards. */
@@ -82,19 +106,14 @@ function useNoShrink(open:boolean) {
   return ref;
 }
 
-function BubbleText({pair,segments,direction,originalOpen,onOriginalToggle}:{pair?:Pair;segments?:Segment[];direction:string;originalOpen?:boolean;onOriginalToggle?:(open:boolean)=>void}) {
-  const {locale,tx}=useI18n();
+/** Hebrew as it is heard, above its translation in larger type; both always visible. */
+function BubbleText({pair,segments,direction}:{pair?:Pair;segments?:Segment[];direction:string}) {
+  const {tx}=useI18n();
   const [source,target]=directionParts(direction);const targetRtl=isRtlLanguage(target);
   const parts=segments||[{id:'only',pair:pair!}];
   return <div className="bubble-copy">
+    <p className="bubble-hebrew" lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}><SegmentText segments={parts} field="source" missing={tx('speechMissing')}/></p>
     <p className="translation" lang={htmlLanguage(target)} dir={targetRtl?'rtl':'ltr'}><SegmentText segments={parts} field="translation" missing={tx('translating')}/></p>
-    <details className="bubble-original" open={originalOpen} onToggle={onOriginalToggle?event=>onOriginalToggle(event.currentTarget.open):undefined}>
-      <summary>{tx('original')}</summary>
-      <div className="bubble-source">
-        <span className="bubble-source-label">{tx('recognized',{language:languageName(locale,source,source)})}</span>
-        <p lang={htmlLanguage(source)} dir={isRtlLanguage(source)?'rtl':'ltr'}><SegmentText segments={parts} field="source" missing={tx('speechMissing')}/></p>
-      </div>
-    </details>
   </div>;
 }
 
@@ -103,6 +122,16 @@ function NumberNote({groups}:{groups:Group[]}) {
   const {tx}=useI18n();
   const notes=numberNotes(groups);
   return notes.length?<span className="bubble-status number-note">{tx('checkNumber',{numbers:notes.join(', ')})}</span>:null;
+}
+
+/** A calm note under a closed bubble whose weekday was corrected from the Hebrew, or is doubtful. */
+function DayNote({groups}:{groups:Group[]}) {
+  const {tx}=useI18n();
+  const {fixed,check}=dayNotes(groups);
+  return <>
+    {fixed.length?<span className="bubble-status number-note">{tx('dayFixed',{days:fixed.join(', ')})}</span>:null}
+    {check.length?<span className="bubble-status number-note">{tx('checkDay',{days:check.join(', ')})}</span>:null}
+  </>;
 }
 
 type SpeechProps={turn:SpeechTurn;onRetry?:(id:string)=>void;retrying:boolean;retryEnabled:boolean;originalOpen:boolean;onOriginalToggle:(id:string,open:boolean)=>void};
@@ -117,11 +146,11 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
   const holdRef=useNoShrink(frozen&&!group.complete);
   if(turn.groups.length>1||frozen&&!turn.groups.some(item=>item.live?.issue||item.final?.issue)){
     const [,target]=directionParts(group.direction);
-    const segments=turn.groups.map(item=>({id:item.id,pair:shownPair(item,calm)||{source:'',translation:''},pending:!item.complete}));
+    const segments=turn.groups.map(item=>{const pair=shownPair(item,calm)||{source:'',translation:''};return {id:item.id,pair,pending:!item.complete,hebrew:shownSource(item,pair)};});
     return <article ref={holdRef} className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${frozen?'speech-card--frozen':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
-      <BubbleText segments={segments} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(turn.id,open)}/>
+      <BubbleText segments={segments} direction={group.direction}/>
       {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
-      <NumberNote groups={turn.groups}/>
+      <NumberNote groups={turn.groups}/><DayNote groups={turn.groups}/>
     </article>;
   }
   const live=group.live;
@@ -141,11 +170,11 @@ const Speech=memo(function Speech({turn,onRetry,retrying,retryEnabled,originalOp
   return <article className={`speech-card chat-bubble ${isRtlLanguage(target)?'chat-bubble--reverse':''} ${issue&&empty&&!shortMiss?'chat-bubble--issue':''}`} data-group={group.id} data-preview-id={group.stream?.preview_id}>
     {empty
       ? <p className={`fragment-failed ${shortMiss?'fragment-muted':''}`}><Icon kind="warning"/><span>{shortMiss?tx('speechMissing'):tx('fragmentFailed')}<small>{tx('fragment',{number:position})}{interval}</small></span></p>
-      : <BubbleText segments={[{id:group.id,pair:shown,pending:!group.complete}]} direction={group.direction} originalOpen={originalOpen} onOriginalToggle={open=>onOriginalToggle(group.id,open)}/>
+      : <BubbleText segments={[{id:group.id,pair:shown,pending:!group.complete,hebrew:shownSource(group,pair)}]} direction={group.direction}/>
     }
     {!group.complete&&<span className="bubble-status">{tx('draft')}</span>}
     {live?.stage==='technical'&&<span className="bubble-status">{tx('continued')}</span>}
-    <NumberNote groups={[group]}/>
+    <NumberNote groups={[group]}/><DayNote groups={[group]}/>
     {issue&&!shortMiss&&(unconfirmedDraft?<span className="bubble-status bubble-unconfirmed">{issueText(locale,issue)}</span>:<p className="unavailable bubble-issue">{issueText(locale,issue)}</p>)}
     {issue&&onRetry&&<div className="fragment-retry"><Button variant="tertiary" isDisabled={!retryEnabled||retrying} onPress={()=>onRetry(group.id)}>{retrying?tx('retrying'):tx('retry')}</Button>{!retryEnabled&&!retrying&&<small>{tx('pauseFirst')}</small>}</div>}
     {previous&&<Disclosure className="history bubble-history"><Disclosure.Heading><Disclosure.Trigger className="history-trigger">{!previous.label||previous.label==='Предыдущая версия'?tx('previous'):previous.label}<Disclosure.Indicator/></Disclosure.Trigger></Disclosure.Heading><Disclosure.Content><Disclosure.Body className="history-body"><BubbleText pair={previous} direction={group.direction}/></Disclosure.Body></Disclosure.Content></Disclosure>}
@@ -410,7 +439,7 @@ export default function Live(){
   const shownVisibleGroups=useMemo(()=>visibleGroups.filter(isVisibleGroup),[visibleGroups]);
   const lastGroup=shownVisibleGroups.at(-1);
   const lastPair=lastGroup&&shownPair(lastGroup,!!state.calm_drafts);
-  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences,ticker:!!state.ticker_view}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences,state.ticker_view]);
+  const display=useMemo(()=>({calm:!!state.calm_drafts,merge:!!state.merge_sentences,frozen:!!state.frozen_sentences,ticker:!!state.ticker_view,append:!!state.append_view}),[state.calm_drafts,state.merge_sentences,state.frozen_sentences,state.ticker_view,state.append_view]);
   const followKey=selected?'archive':`${lastGroup?.id||''}:${lastGroup?.revision??''}:${lastPair?.source||''}:${lastPair?.translation||''}`;
   const follow=useFollowLatest(followKey,!selected);
 
@@ -441,6 +470,51 @@ export default function Live(){
     });});
     return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
   },[state.groups,state.session,selected]);
+
+  // Everything the reader saw and did goes to the session log (see uiLog.ts).
+  const uiLog=useMemo(()=>new UiLog(),[]);
+  const drawn=useRef(new Map<string,Drawn>());
+  const viewName=display.ticker?'ticker':display.frozen?'frozen':'cards';
+  useEffect(()=>{drawn.current.clear();},[state.session,state.generation]);
+  useEffect(()=>{
+    if(selected)return;
+    let first=0,second=0;
+    first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{
+      for(const record of renderRecords(state.groups.filter(isVisibleGroup),drawn.current,display.calm,viewName))uiLog.push(record);
+    });});
+    return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  },[state.groups,selected,display.calm,viewName,uiLog]);
+  useEffect(()=>{
+    const view=()=>viewName;
+    const click=(event:PointerEvent)=>uiLog.push({type:'click',...clickTarget(event.target as Element|null),view:view()});
+    const key=(event:KeyboardEvent)=>{
+      // Only the name of a control key; what is typed into a field is never logged.
+      const typing=event.key.length===1&&(event.target as HTMLElement|null)?.closest('input,textarea');
+      uiLog.push({type:'key',key:typing?'char':event.key.slice(0,24),...clickTarget(event.target as Element|null)});
+    };
+    const visibility=()=>{uiLog.push({type:'visibility',visible:document.visibilityState==='visible'});if(document.visibilityState!=='visible')uiLog.flush(true);};
+    let resizeTimer:ReturnType<typeof setTimeout>|undefined;
+    const resize=()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>uiLog.push({type:'resize',width:window.innerWidth,height:window.innerHeight}),300);};
+    const toggle=(event:Event)=>{const node=event.target as HTMLElement;if(node instanceof HTMLDetailsElement)uiLog.push({type:'settings',target:node.className.split(/\s+/)[0]||'details',state:node.open?'open':'closed'});};
+    const leave=()=>uiLog.flush(true);
+    document.addEventListener('pointerdown',click,true);document.addEventListener('keydown',key,true);
+    document.addEventListener('visibilitychange',visibility);window.addEventListener('resize',resize);
+    document.addEventListener('toggle',toggle,true);window.addEventListener('pagehide',leave);
+    uiLog.push({type:'resize',width:window.innerWidth,height:window.innerHeight});
+    return()=>{document.removeEventListener('pointerdown',click,true);document.removeEventListener('keydown',key,true);
+      document.removeEventListener('visibilitychange',visibility);window.removeEventListener('resize',resize);
+      document.removeEventListener('toggle',toggle,true);window.removeEventListener('pagehide',leave);clearTimeout(resizeTimer);uiLog.flush(true);};
+  },[uiLog,viewName]);
+
+  useEffect(()=>{uiLog.push({type:'follow',following:follow.following});},[follow.following,uiLog]);
+  useEffect(()=>{
+    const node=follow.containerRef.current;if(!node)return;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const scrolled=()=>{if(timer!==undefined)return;timer=setTimeout(()=>{timer=undefined;
+      uiLog.push({type:'scroll',top:Math.round(node.scrollTop),height:node.scrollHeight,client_height:node.clientHeight});},300);};
+    node.addEventListener('scroll',scrolled,{passive:true});
+    return()=>{node.removeEventListener('scroll',scrolled);clearTimeout(timer);};
+  },[follow.containerRef,uiLog]);
 
   const closeSidebar=useCallback(()=>{setSidebar(false);requestAnimationFrame(()=>openSidebarRef.current?.focus());},[]);
   useEffect(()=>{

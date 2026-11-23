@@ -22,6 +22,8 @@ datas = [
     (str(PACKAGE_ROOT / "gemma_notice.txt"), "hebrew_live"),
     (str(PACKAGE_ROOT / "gemma_terms.txt"), "hebrew_live"),
     (str(PACKAGE_ROOT / "silero_notice.txt"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "streaming_asr_notice.txt"), "hebrew_live"),
+    (str(PACKAGE_ROOT / "streaming_asr_manifest.json"), "hebrew_live"),
     # Retranslation hashes the prompt source at import time for diagnostic
     # provenance.  PyInstaller's PYZ archive does not expose that source as a
     # normal filesystem path, so keep the exact file beside the frozen package.
@@ -42,11 +44,17 @@ for component in inventory["components"]:
         relative = Path(folder) / item["path"]
         datas.append((str(Path(bundle_models) / relative),
                       str(Path("hebrew_live/bundled_models") / relative.parent)))
+streaming = json.loads((PACKAGE_ROOT / "streaming_asr_manifest.json").read_text())
+for name in streaming["files"]:
+    relative = Path(streaming["folder"]) / name
+    datas.append((str(Path(bundle_models) / relative),
+                  str(Path("hebrew_live/bundled_models") / relative.parent)))
 datas.append((bundle_manifest, "hebrew_live/bundled_models"))
 binaries = []
 hiddenimports = [
     "mlx_lm.models.gemma3_text",
     "hebrew_live.model_selection",
+    "sherpa_onnx",
 ]
 
 # Bundle the required Whisper runtime; Whisper and MiLMMT weights download on first preparation.
@@ -55,6 +63,7 @@ for package in (
     "mlx_whisper",
     "mlx_lm",
     "onnxruntime",
+    "sherpa_onnx",
     "sounddevice",
     "soundfile",
     "soxr",
@@ -72,6 +81,7 @@ for distribution in (
     "mlx",
     "mlx-lm",
     "onnxruntime",
+    "sherpa-onnx",
     "sounddevice",
     "soundfile",
     "soxr",

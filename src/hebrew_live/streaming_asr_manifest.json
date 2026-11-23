@@ -1,0 +1,27 @@
+{
+  "model": "zipformer2-66m-streaming-he",
+  "author": "Yakov Kolani (thewh1teagle)",
+  "source_repo": "ivrit-ai/zipformer2-66m-streaming-he",
+  "source_revision": "ee769a2a13b887f91572eec349458bfb0fe79e7a",
+  "original_repo": "thewh1teagle/zipformer2-66m-streaming-he",
+  "license": "CC-BY-4.0",
+  "folder": "streaming-asr/sherpa-onnx",
+  "files": {
+    "encoder.int8.onnx": {
+      "bytes": 70478964,
+      "sha256": "6c6febcb74a09435315a1d872a6539f6e7fc2c333533f14c74edc0e85c49ffcd"
+    },
+    "decoder.int8.onnx": {
+      "bytes": 1049105,
+      "sha256": "feb03e7c8aa761593a9284a6fa1e91259be3702de75f630062256c1a59c5a906"
+    },
+    "joiner.int8.onnx": {
+      "bytes": 771805,
+      "sha256": "1d2c6d8e6dabc5eb52de52e95718e9bdfbffbfe7ead3808fb5ffd74e83bd9cae"
+    },
+    "tokens.txt": {
+      "bytes": 17086,
+      "sha256": "e4ebb5e72a6aeef47437a55fa2308ebbedb7c51c557de7a89bf965c23ea9af4a"
+    }
+  }
+}

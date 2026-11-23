@@ -22,7 +22,10 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
     from .stream import Boundary
     from .retranslation import RetranslationProcessor
     phrases=PhraseProcessor(engine,updates,log,cancel)
-    draft=RetranslationProcessor(engine,updates,log,cancel)
+    from . import append_live
+    # The append-only screen (streaming Hebrew, chunked translation) for Hebrew speech;
+    # HEBREW_LIVE_APPEND=0 or a missing streaming model keeps the retranslating screen.
+    draft=append_live.DraftRouter(engine,updates,log,cancel)
     draft.catchup_inbox=inbox
     phrases.deadline_barrier=getattr(inbox,"deadline_blocked",lambda:False)
     age_scheduler=getattr(engine,'phrase_scheduler','batch')=='age'
