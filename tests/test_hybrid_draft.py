@@ -10,6 +10,8 @@ from hebrew_live import session_summary, streaming_asr
 
 
 class FakeStreaming:
+    heard_until = 1.5
+
     def __init__(self, texts):
         self.texts, self.calls = texts, []
 
@@ -89,7 +91,8 @@ class Summary(unittest.TestCase):
         events = [
             dict(event='live_publication', elapsed=1, segment=1, stage='open', audio_lag=.5,
                  current=dict(source='שלום אני', translation='Привет')),
-            dict(event='live_source', elapsed=1.5, segment=1, source='שלום אני רוצה', audio_lag=.3),
+            dict(event='live_source', elapsed=1.5, segment=1, source='שלום אני רוצה', audio_lag=.3,
+                 start=0, end=2, heard_until=1.5),
             dict(event='live_publication', elapsed=1.8, segment=1, stage='open', audio_lag=.9,
                  current=dict(source='שלום אני', translation='Привет, я')),
             dict(event='live_publication', elapsed=3, segment=1, stage='closed', audio_lag=.9,
@@ -104,6 +107,7 @@ class Summary(unittest.TestCase):
         self.assertEqual(backend['hebrew_moves']['erased_words'], 0)  # the older publication is not on screen
         self.assertEqual(backend['whisper_total_seconds'], .5)
         self.assertEqual(backend['streaming_draft_seconds']['count'], 1)
+        self.assertEqual(backend['hebrew_word_lag']['p50'], .8)
 
 
 if __name__ == '__main__':

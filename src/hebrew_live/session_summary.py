@@ -179,6 +179,12 @@ def summarize(events):
         backend=dict(
             hebrew_lag=stats(backend_he), translation_lag=stats(backend_tr),
             first_preview_lag=stats(e.get('audio_lag') for e in get('mt_first_preview')),
+            # A streaming draft writes a word a little after hearing it: the lag of its last
+            # written word (also counts trailing silence, so an upper bound).
+            hebrew_word_lag=stats(e['audio_lag'] + max(0., e['end'] - e['start'] - e['heard_until'])
+                                  for e in get('live_source')
+                                  if isinstance(e.get('heard_until'), (int, float)) and
+                                  all(isinstance(e.get(k), (int, float)) for k in ('audio_lag', 'start', 'end'))),
             hebrew_moves=backend_moves_he.result(), translation_moves=backend_moves_tr.result(),
             closing_vs_last_draft=final_change,
             asr_seconds=stats(e.get('seconds') for e in get('live_asr')),

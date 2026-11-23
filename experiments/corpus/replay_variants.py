@@ -63,6 +63,7 @@ METRICS = [
     ('mt_interrupted', 'translation_runs.interrupted'),
     ('mt_p50', 'backend.mt_seconds.p50'), ('asr_p50', 'backend.asr_seconds.p50'),
     ('whisper_s', 'backend.whisper_total_seconds'),
+    ('he_word_p50', 'backend.hebrew_word_lag.p50'),
     ('close_erased', 'backend.closing_vs_last_draft.erased_words'),
 ]
 

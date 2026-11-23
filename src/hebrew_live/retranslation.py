@@ -449,7 +449,8 @@ class RetranslationProcessor:
         self.updates.put(('context', self.sid, self.settings))
         self.updates.put(('live_source', self.sid, dict(source=source, emitted_at=now, audio_lag=audio_lag)))
         self.log.event('live_source', part=self.settings.part, segment=self.sid, source=source,
-                       audio_lag=audio_lag, start=self.start/16000, end=self.end/16000)
+                       audio_lag=audio_lag, start=self.start/16000, end=self.end/16000,
+                       **(dict(heard_until=self.streaming.heard_until) if self.streamed else {}))
 
     def number_issues(self, source, target):
         """Digit figures the whole shown group (frozen sentences and tail) has on one side and
@@ -769,7 +770,8 @@ class RetranslationProcessor:
                        start=self.start/16000, end=self.end/16000, status=self.last_status,
                        final=final, closing=closing, source=text,word_alignment=align_words,
                        **(dict(reused=True) if reused else {}),
-                       **(dict(draft_engine='streaming') if self.streamed else {}),
+                       **(dict(draft_engine='streaming', heard_until=self.streaming.heard_until)
+                          if self.streamed else {}),
                        **(dict(continued_words=self.continued_words) if self.continued_words else {}))
         if self.last_status != 'accepted' or not text.strip():
             self.last_status = self.last_status if self.last_status != 'accepted' else 'empty'

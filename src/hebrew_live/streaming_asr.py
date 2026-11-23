@@ -43,6 +43,7 @@ class StreamingDraft:
         self.stream = None
         self.fed = 0
         self.seconds = 0.
+        self.heard_until = 0.  # seconds into the group where the last written token was heard
 
     def text(self, key, audio):
         """Text of `audio` (16 kHz float32, the whole group so far) for group `key`. A new key
@@ -56,8 +57,10 @@ class StreamingDraft:
             self.fed = len(audio)
             while self.recognizer.is_ready(self.stream):
                 self.recognizer.decode_stream(self.stream)
+        result = self.recognizer.get_result_all(self.stream)
+        self.heard_until = float(result.timestamps[-1]) if result.timestamps else 0.
         self.seconds = time.perf_counter() - began
-        return self.recognizer.get_result(self.stream).strip()
+        return result.text.strip()
 
 
 def load(log=None):
