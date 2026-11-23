@@ -12,7 +12,7 @@ if (!url) { console.error('usage: window_watch.mjs URL [WIDTH HEIGHT]'); process
 const browser = await chromium.launch({channel: process.env.WINDOW_CHANNEL || 'chrome', headless: true});
 try {
   const page = await browser.newPage({viewport: {width: Number(width), height: Number(height)},
-    deviceScaleFactor: process.env.WINDOW_SHOTS ? 2 : 1});
+    deviceScaleFactor: process.env.WINDOW_SHOTS ? 2 : 1, locale: process.env.WINDOW_LOCALE || 'ru-RU'});
   page.on('console', message => { if (message.type() === 'error') console.error('page:', message.text()); });
   await page.goto(url, {waitUntil: 'domcontentloaded'});
   const deadline = Date.now() + 2 * 3600e3;

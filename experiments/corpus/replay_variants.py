@@ -33,6 +33,8 @@ from hebrew_live.session_summary import read_events, write as write_summary  # n
 INSTALLED = Path.home() / 'Library' / 'Application Support' / 'Hebrew Live CLI' / 'models'
 VARIANTS = {
     'default': {},
+    # The defaults before 23.11.2026, spelled out.
+    'previous': {'HEBREW_LIVE_CALM_DRAFTS': '0', 'HEBREW_LIVE_TIMING': '1,1,0,4,0.6'},
     'calm': {'HEBREW_LIVE_CALM_DRAFTS': '1'},
     'speculate': {'HEBREW_LIVE_MT_SPECULATE': '1', 'HEBREW_LIVE_MT_SPECULATE_TOLERANCE': '0.3'},
     'fast': {'HEBREW_LIVE_TIMING': '0.7,0.7,0,4,0.6'},
