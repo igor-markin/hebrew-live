@@ -101,6 +101,8 @@ class UnheardTests(unittest.TestCase):
         self.assertIsNone(unheard('הקישו 2', '', 'press two'.split(), 'he', 'en'))
         self.assertEqual(unheard('שלום', '', 'Hello, press one'.split(), 'he', 'en'), 2)
         self.assertIsNone(unheard('שלום', '', 'Здравствуйте, это вторник'.split()))
+        self.assertEqual(unheard('להשמעה חוזרת יש', 'Для повтора', 'нажмите «восьмёрку»'.split()), 1)
+        self.assertIsNone(unheard('לחזרה הקישו שמונה', '', 'Назад — нажмите «восьмерку»'.split()))
 
 
 if __name__ == '__main__':
