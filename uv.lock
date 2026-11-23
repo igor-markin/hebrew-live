@@ -240,6 +240,7 @@ dependencies = [
     { name = "onnxruntime" },
     { name = "python-bidi" },
     { name = "rich" },
+    { name = "sherpa-onnx" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "soxr" },
@@ -249,9 +250,6 @@ dependencies = [
 desktop-build = [
     { name = "pyinstaller" },
     { name = "pyobjc-framework-avfoundation" },
-]
-hybrid = [
-    { name = "sherpa-onnx" },
 ]
 
 [package.metadata]
@@ -263,6 +261,7 @@ requires-dist = [
     { name = "onnxruntime", specifier = "==1.29.0" },
     { name = "python-bidi", specifier = "==0.6.11" },
     { name = "rich", specifier = "==15.0.0" },
+    { name = "sherpa-onnx", specifier = "==2.0.3" },
     { name = "sounddevice", specifier = "==0.5.6" },
     { name = "soundfile", specifier = "==0.14.0" },
     { name = "soxr", specifier = "==1.1.0" },
@@ -273,7 +272,6 @@ desktop-build = [
     { name = "pyinstaller", specifier = "==6.22.3" },
     { name = "pyobjc-framework-avfoundation", specifier = "==12.2.2" },
 ]
-hybrid = [{ name = "sherpa-onnx", specifier = "==2.0.3" }]
 
 [[package]]
 name = "hf-xet"

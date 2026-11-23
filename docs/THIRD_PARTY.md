@@ -1,7 +1,8 @@
 # Third-party software, models, and fonts
 
 Current alpha.3 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
-Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
+Bundled models: Silero VAD (2,327,524 bytes) and the streaming Hebrew recognizer
+zipformer2-66m-streaming-he (72,316,960 bytes) for the append-only live screen. The pinned Whisper/MiLMMT files
 are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
 CoreML helpers/models and experimental recognition selection are excluded.
 The alpha has no Developer ID signature and is not notarized. Older measurements
@@ -10,7 +11,7 @@ alpha.3 DMG.
 
 
 This is an engineering inventory, not legal advice or a completed rights review. The
-project's original code is Apache-2.0. Silero VAD is bundled in the desktop app;
+project's original code is Apache-2.0. Silero VAD and zipformer2-66m-streaming-he are bundled in the desktop app;
 Whisper Turbo and MiLMMT are downloaded from their pinned sources when the app is
 prepared. No model weights are included in
 the public source archive, wheel, or sdist. The source CLI downloads its own
@@ -26,6 +27,7 @@ material.
 | Hebrew ASR (desktop and CLI) | `mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx` at `53ad8c6cd8b32eb0303f093a404ae13c1b1d567f` | 1,613,977,880 bytes | The MLX conversion card does not state a license. Its named upstream `ivrit-ai/whisper-large-v3-turbo` card states Apache-2.0. | Pinned conversion revision and exact two-file SHA-256 inventory; desktop download and verification. | Downloaded from the pinned source during desktop preparation and CLI setup; conversion metadata review remains open before public release. |
 | Legacy multilingual CLI ASR | `mlx-community/whisper-large-v3-turbo` at `a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb` | ~1.5 GB | MLX conversion of OpenAI Whisper; confirm conversion metadata and upstream MIT notice at the pinned revision. | Pinned revision plus local per-file SHA-256 manifest. | Retired: `setup` no longer downloads it and recognition cannot select it, though a manifest that lists it is still accepted; conversion metadata review remains open. |
 | Default MT | `translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX` at `24877ecba801e4b198a5679445501022682d867c` | 2,216,770,326 bytes | The pinned model card declares `license: gemma`, identifies Xiaomi MiLMMT as the base, and links the [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and prohibited-use policy. | Exact downloaded files are checked against the pinned desktop inventory before use and after repair. | Downloaded directly from the pinned source during desktop preparation; the app still supplies Gemma terms and use restrictions. Rights review remains open. |
+| Streaming Hebrew ASR (append-only live screen) | [ivrit-ai/zipformer2-66m-streaming-he](https://huggingface.co/ivrit-ai/zipformer2-66m-streaming-he) at `ee769a2a13b887f91572eec349458bfb0fe79e7a`, the ivrit.ai mirror of [thewh1teagle/zipformer2-66m-streaming-he](https://huggingface.co/thewh1teagle/zipformer2-66m-streaming-he) by Yakov Kolani | 72,316,960 bytes (int8 sherpa-onnx encoder, decoder, joiner, tokens) | The model card states CC-BY-4.0; base model k2-fsa icefall streaming Zipformer (Apache-2.0); trained on ivrit.ai audio under the [ivrit.ai license](https://www.ivrit.ai/en/the-license/). Run with sherpa-onnx (Apache-2.0). | Four-file SHA-256 inventory in `streaming_asr_manifest.json`, checked before bundling. | Bundled in desktop app with `streaming_asr_notice.txt` (attribution, license link, no endorsement). |
 | VAD | exact Silero VAD Git commit `867c2aa692646a1f1de3e94a15c9dd9f614c0acb` | 2,327,524 bytes | The [license at that exact commit](https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/LICENSE) is MIT. This is the `silero-vad` repository, not the separately licensed `silero-models` repository. | SHA-256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3` is checked before bundling and on first launch. | Bundled in desktop app; retain the MIT notice. |
 
 Primary model pages:
@@ -102,7 +104,7 @@ license material for the web code/fonts actually embedded in `hebrew_live/web`; 
 not duplicate the full license directories of separately installed Python packages.
 
 The desktop bundle includes `gemma_notice.txt`, the complete dated
-`gemma_terms.txt`, and `silero_notice.txt`. The Electron
+`gemma_terms.txt`, `silero_notice.txt` and `streaming_asr_notice.txt`. The Electron
 shell also carries the project agreement in English and Russian, privacy
 statement, original-code license, Electron and Chromium notices from the exact
 installed Electron binary, and this inventory. It requires explicit

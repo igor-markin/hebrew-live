@@ -47,11 +47,14 @@ VARIANTS = {
     'all': {'HEBREW_LIVE_CALM_DRAFTS': '1', 'HEBREW_LIVE_MT_SPECULATE': '1',
             'HEBREW_LIVE_MT_SPECULATE_TOLERANCE': '0.3', 'HEBREW_LIVE_TIMING': '0.7,0.7,0,4,0.6'},
     'frozen_view': {'HEBREW_LIVE_SENTENCE_CONTEXT': '1'},
-    # Needs sherpa-onnx in the venv (uv sync --group hybrid) and HEBREW_LIVE_HYBRID_MODEL set.
+    # Uses the bundled or HEBREW_LIVE_HYBRID_MODEL streaming model.
     'hybrid': {'HEBREW_LIVE_HYBRID': '1'},
     # Append-only screen (append_live.py); needs the same model. Snapshots every 0.3 s or 0.7 s.
     'append': {'HEBREW_LIVE_APPEND': '1', 'HEBREW_LIVE_TIMING': '0.3,0.3,0,4,0.6'},
     'append_07': {'HEBREW_LIVE_APPEND': '1'},
+    'retranslate': {'HEBREW_LIVE_APPEND': '0'},
+    'append_d3': {'HEBREW_LIVE_APPEND_DEADLINE': '3'},
+    'append_d5': {'HEBREW_LIVE_APPEND_DEADLINE': '5'},
 }
 # (label, path in summary.json); lower is better for all of them.
 METRICS = [
@@ -72,6 +75,8 @@ METRICS = [
     ('ap_he_p50', 'append.hebrew_word_lag.p50'), ('ap_he_max', 'append.hebrew_word_lag.max'),
     ('ap_tr_p50', 'append.translation_word_lag.p50'), ('ap_tr_p95', 'append.translation_word_lag.p95'),
     ('ap_tr_max', 'append.translation_word_lag.max'), ('ap_capped', 'append.capped'),
+    ('ap_tr_le2', 'append.translation_within.2s'), ('ap_tr_le3', 'append.translation_within.3s'),
+    ('ap_tr_le4', 'append.translation_within.4s'), ('ap_tr_le5', 'append.translation_within.5s'),
 ]
 
 

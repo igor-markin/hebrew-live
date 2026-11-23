@@ -1,14 +1,22 @@
-"""Append-only live screen (opt-in): shown Hebrew and shown translation are never changed.
+"""Append-only live screen for Hebrew speech: shown Hebrew and shown translation are never changed.
 
-    HEBREW_LIVE_APPEND=1  HEBREW_LIVE_HYBRID_MODEL=/path/to/zipformer2-66m-streaming-he
-    [HEBREW_LIVE_APPEND_SPAN=2.0]
+    [HEBREW_LIVE_APPEND=0]  [HEBREW_LIVE_HYBRID_MODEL=/path/to/zipformer2-66m-streaming-he]
+    [HEBREW_LIVE_APPEND_DEADLINE=4.5]
+
+On by default; HEBREW_LIVE_APPEND=0, another source language, or a missing streaming model keep
+the retranslating screen (DraftRouter). The model is the one bundled with the app unless
+HEBREW_LIVE_HYBRID_MODEL names another.
 
 Hebrew comes word by word from the streaming zipformer (it never rewrites a written word). The
-words are translated in chunks that end at a comma or a sentence end, or once the chunk's first
-word was spoken HEBREW_LIVE_APPEND_SPAN seconds ago (the cap that keeps the translation within
-about three seconds of speech in fast speech without pauses). Each chunk is translated as the
-continuation of the chunks before it (`translation.prompt` pairs), so a shown translation is never
-redone. A sentence end or a pause closes the card. Whisper is not used.
+open sentence is translated by MiLMMT continuing the translation already shown (clause_mt:
+forced prefix, AlignAtt stop), so a shown translation is never redone. A call is made when a
+clause ends (comma, ;, :) and a word after it is heard, up to that clause; or, without a clause
+end, when the first untranslated word would otherwise miss HEBREW_LIVE_APPEND_DEADLINE seconds
+(the call time is estimated from the calls so far), up to all but the last word. A sentence end
+or a pause closes the card with a call that translates the rest. When the model ends a sentence
+the Hebrew goes on with, the Russian sentence ends there and the rest starts a new one.
+HEBREW_LIVE_APPEND_MIN_PROB (default 0) also stops at a token the model is less sure of.
+Whisper is not used.
 
 Measured design: experiments/live-append/simulate.py. Every shown word's lag (from the end of the
 word in the audio) goes to the diagnostics: `append_words` for Hebrew, `append_chunk` for its
@@ -28,28 +36,124 @@ from . import streaming_asr
 RATE = 16000
 CLAUSE = re.compile(r'[.,?!…:;]["»”)]*$')
 SENTENCE = re.compile(r'[.?!…]["»”)]*$')
+PUNCTUATION = re.compile(r'[.,?!…:;]+')
+PUNCTUATION_WORD = re.compile(r'[.,?!…:;»"”)\]]+')   # not a dash: «— 80» starts a word group
 PAUSE_TAIL = .8      # seconds of silence fed at a pause so the last words come out
 GAP_LIMIT = .5       # silence fed for a gap between speech pieces
 CONTEXT = 4          # previous chunks given to the translator
+SAFETY = .3          # seconds kept in reserve before the deadline
+QUIET = 1.           # seconds without a newer word after which the last word may be translated
+TICK = .1            # how often waiting chunks are checked against their deadline
 
 
 def enabled():
-    return os.environ.get('HEBREW_LIVE_APPEND', '0') == '1'
+    return os.environ.get('HEBREW_LIVE_APPEND', '1') == '1'
 
 
-def span_seconds():
+def hebrew_source(settings):
+    from .languages import split_direction
     try:
-        return max(.3, float(os.environ.get('HEBREW_LIVE_APPEND_SPAN', '2.0')))
+        return split_direction(settings.direction)[0] == 'he'
+    except (AttributeError, ValueError):
+        return False
+
+
+class DraftRouter:
+    """The live screen feed.inference drives: append-only (AppendProcessor) for Hebrew speech,
+    the retranslating screen (RetranslationProcessor) for other source languages, or for
+    everything when the streaming model cannot be loaded. Both number groups from one counter."""
+    COUNTERS = ('counter', 'export_counter', 'mt_counter')
+
+    def __init__(self, engine, updates, log, cancel, append=None):
+        from .retranslation import RetranslationProcessor
+        self.retranslation = RetranslationProcessor(engine, updates, log, cancel)
+        self.append = append
+        if self.append is None and enabled():
+            try:
+                self.append = AppendProcessor(engine, updates, log, cancel)
+            except Exception as error:  # no streaming model: the retranslating screen
+                try:
+                    log.event('append_unavailable', error=type(error).__name__, detail=str(error)[:200])
+                except Exception:
+                    pass
+        self.active = self.append or self.retranslation
+        self._inbox = None
+
+    def _pick(self, settings):
+        wanted = self.append if self.append is not None and hebrew_source(settings) else self.retranslation
+        if wanted is not self.active:
+            self.active.flush('direction')
+            for name in self.COUNTERS:
+                setattr(wanted, name, max(getattr(wanted, name), getattr(self.active, name)))
+            self.active = wanted
+
+    def process(self, f):
+        self._pick(f.settings)
+        self.active.process(f)
+
+    def __getattr__(self, name):
+        if name in DraftRouter.COUNTERS or name in ('async_mt', '_mt_outstanding', 'poll_mt', 'flush', 'drain_mt'):
+            return getattr(self.active, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name in DraftRouter.COUNTERS:
+            setattr(self.active, name, value)
+        elif name == 'catchup_inbox':
+            self.retranslation.catchup_inbox = value
+            if self.append is not None:
+                self.append.catchup_inbox = value
+        else:
+            object.__setattr__(self, name, value)
+
+    def shutdown_mt(self):
+        if self.append is not None:
+            self.append.shutdown_mt()
+        self.retranslation.shutdown_mt()
+
+
+def new_words_cap(hebrew_words):
+    """New translation words allowed when nothing heard follows (a pause, a quiet): a little more
+    than the Hebrew needs, too few to finish the speaker's sentence for them."""
+    return int(1.25 * hebrew_words) + 1
+
+
+def min_probability():
+    try:
+        return float(os.environ.get('HEBREW_LIVE_APPEND_MIN_PROB', '0'))
     except ValueError:
-        return 2.
+        return 0.
+
+
+def deadline_seconds():
+    try:
+        return max(1., float(os.environ.get('HEBREW_LIVE_APPEND_DEADLINE', '4.5')))
+    except ValueError:
+        return 4.5
+
+
+class EngineGenerator:
+    """clause_mt through the engine (cli.Engine.clause_generate), which may live in a worker
+    process (remote_engine): the model is used only where it was loaded."""
+
+    def __init__(self, engine, min_prob=0.):
+        self.engine, self.min_prob = engine, min_prob
+
+    def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+        from .clause_mt import Result
+        value = self.engine.clause_generate(text, forced, [list(p) for p in pairs], direction, upto=upto,
+                                            close=close, max_new=max_new, min_prob=self.min_prob)
+        return Result(value['words'], value['stop'], value.get('end_mark'), value.get('tokens', 0))
 
 
 class Card:
     def __init__(self, sid, settings, start):
         self.sid, self.settings, self.start = sid, settings, start
-        self.words, self.translations = [], []
-        self.sent = 0          # words handed to the translator
-        self.outstanding = 0   # chunks not translated yet
+        self.words, self.out = [], []   # Hebrew words (dicts), translation words shown
+        self.covered = 0       # Hebrew words the shown translation covers
+        self.base = self.base_out = 0   # where the open sentence starts in words / out
+        self.tried = None      # (words heard, upto) of a call that added nothing: not again
+        self.end_mark = None   # the sentence end the model wanted after the shown words
         self.closing = self.closed = False
         self.reason = None
 
@@ -60,15 +164,21 @@ class AppendProcessor:
     _mt_outstanding = 0
     catchup_inbox = None
 
-    def __init__(self, engine, updates, log, cancel, recognizer=None, span=None):
+    def __init__(self, engine, updates, log, cancel, recognizer=None, deadline=None, ticker=True, generator=None):
         self.engine, self.updates, self.log, self.cancel = engine, updates, log, cancel
         if recognizer is None:
-            draft = streaming_asr.load(log, flag='HEBREW_LIVE_APPEND')
+            draft = streaming_asr.load(log, flag='HEBREW_LIVE_APPEND', default='1')
             if draft is None:
                 raise RuntimeError('append mode needs the streaming model (HEBREW_LIVE_HYBRID_MODEL)')
             recognizer = draft.recognizer
         self.recognizer = recognizer
-        self.span = span_seconds() if span is None else span
+        self.deadline = deadline_seconds() if deadline is None else deadline
+        self.timings = []        # (words, seconds) of recent translation calls
+        self.busy = False        # a call is queued or running
+        self.cards = []          # cards not closed yet, oldest first
+        if generator is None:
+            generator = EngineGenerator(engine, min_probability())
+        self.generator = generator
         self.counter = self.export_counter = self.mt_counter = 0
         self.lock = threading.RLock()
         self.jobs = queue.Queue()
@@ -77,8 +187,11 @@ class AppendProcessor:
         self.clock = None
         self.card = None
         self.new_stream()
+        self.stopped = threading.Event()
         self.worker = threading.Thread(target=self._translate_loop, name='append-translation', daemon=True)
         self.worker.start()
+        if ticker:
+            threading.Thread(target=self._tick_loop, name='append-deadline', daemon=True).start()
 
     # ---- audio and words -------------------------------------------------------------
     def new_stream(self):
@@ -138,6 +251,17 @@ class AppendProcessor:
         fresh = len(tokens) > self.seen
         done = []
         for token, stamp in zip(tokens[self.seen:], stamps[self.seen:]):
+            piece = token.replace('▁', ' ').strip()
+            if PUNCTUATION.fullmatch(piece):
+                # «תור ,»: the mark ends the word before it, it is not a word of its own
+                if self.current is not None:
+                    self.current['text'] += piece
+                    continue
+                if done:
+                    done[-1]['text'] += piece
+                    continue
+                self.punctuate(piece)
+                continue
             if token.startswith((' ', '▁')) and self.current is not None:
                 done.append(self.current)
                 self.current = None
@@ -166,53 +290,103 @@ class AppendProcessor:
                 if self.card is None or self.card.closing:
                     self.counter += 1
                     self.card = Card(3_000_000 + self.counter, self.settings, word['end'])
+                    self.cards.append(self.card)
                 word['shown'] = now
                 self.card.words.append(word)
                 if self.card not in touched:
                     touched.append(self.card)
                 if SENTENCE.search(word['text']):
-                    self.chunk(False, None, sentence=True)
+                    self.card.closing = True
+                    self.card.reason = 'sentence'
             for card in touched:
                 if not card.closed:
                     self.publish(card, lag=max(0., now - card.words[-1]['end'] / RATE))
         self.log.event('append_words', part=self.settings.part, count=len(words),
                        lags=[round(max(0., now - w['end'] / RATE), 3) for w in words])
 
-    def chunk(self, final, reason, sentence=False):
-        """Hand the words that are due to the translator."""
+    def punctuate(self, mark):
+        """A punctuation token after its word was shown: it ends that word (only the end of the
+        shown Hebrew changes, by the mark), also after a pause while the card is closing; with
+        no open card it is dropped."""
         with self.lock:
             card = self.card
-            if card is None or card.closing:
-                return
-            pending = card.words[card.sent:]
-            if pending:
-                cut = next((i + 1 for i, w in enumerate(pending) if CLAUSE.search(w['text'])), None)
-                if cut is None and (final or self.audio_now() - pending[0]['end'] / RATE >= self.span):
-                    cut = len(pending)
-                while cut:
-                    self.send(card, pending[:cut])
-                    pending = pending[cut:]
-                    cut = next((i + 1 for i, w in enumerate(pending) if CLAUSE.search(w['text'])), None)
-                    if cut is None and final and pending:
-                        cut = len(pending)
-            if sentence or final:
+            if card is None or card.closed or not card.words:
+                return True   # nothing to end: a mark alone is not shown
+            card.words[-1]['text'] += mark
+            if SENTENCE.search(mark) and not card.closing:
                 card.closing = True
-                card.reason = reason or 'sentence'
-                if not card.outstanding:
-                    self.close(card)
+                card.reason = 'sentence'
+            self.publish(card, lag=max(0., self.audio_now() - card.words[-1]['end'] / RATE))
+            return True
 
-    def send(self, card, words):
-        card.sent += len(words)
-        card.outstanding += 1
-        self.mt_counter += 1
-        self.jobs.put((card, words, self.settings))
+    def chunk(self, final, reason, sentence=False, tick=False):
+        """A pause (final) closes the card; then start a translation call if one is due."""
+        with self.lock:
+            if final and self.card is not None and not self.card.closing:
+                self.card.closing = True
+                self.card.reason = reason or 'pause'
+            self.schedule()
+
+    def estimate(self, words):
+        """Seconds a call for `words` Hebrew words is expected to take: the slowest recent rate."""
+        per_word = max([.12] + [(seconds - .25) / max(1, n) for n, seconds in self.timings[-20:]])
+        return .25 + per_word * words
+
+    def due(self, card):
+        """(upto, why) of the call the open card needs now, or None.
+
+        A clause end (comma, ;, :) with a word heard after it: up to the clause. No clause end,
+        but the first untranslated word would otherwise miss the deadline: all but the last word,
+        or the last word when it is the only one left."""
+        words = card.words
+        uncovered = words[card.covered:]
+        if not uncovered:
+            return None
+        clause = max((i for i, w in enumerate(uncovered[:-1]) if CLAUSE.search(w['text'])), default=None)
+        if clause is not None:
+            return card.covered + clause + 1, 'clause'
+        now = self.audio_now()
+        if now + self.estimate(len(uncovered)) + SAFETY >= uncovered[0]['end'] / RATE + self.deadline:
+            # all but the last word; the last one too once it is the one that is due and no
+            # newer word came for QUIET seconds (a quiet the pause detector did not take for a pause)
+            alone = len(uncovered) == 1 and now - uncovered[0]['shown'] >= QUIET
+            return len(words) - (not alone), 'deadline'
+        return None
+
+    def schedule(self):
+        """Hand the translator its next call while it is idle: the oldest card that is over gets
+        its last call, else the open card one if due. Called under the lock."""
+        if self.busy or self.cancel.is_set():
+            return
+        for card in self.cards:
+            if card.closed:
+                continue
+            if card.closing:
+                self.busy = True
+                self.jobs.put((card, None, 'close', card.settings))
+                return
+            due = self.due(card)
+            if due is None:
+                return
+            upto, why = due
+            if upto <= card.covered or card.tried == (len(card.words), upto):
+                return
+            self.busy = True
+            self.jobs.put((card, upto, why, card.settings))
+            return
+
+    def _tick_loop(self):
+        while not self.stopped.wait(TICK):
+            if self.clock is not None and not self.cancel.is_set():
+                with self.lock:
+                    self.schedule()
 
     def publish(self, card, lag, stage='open'):
         source = ' '.join(w['text'] for w in card.words)
-        translation = ' '.join(t for t in card.translations if t)
+        translation = ' '.join(card.out)
         end = card.words[-1]['end'] if card.words else card.start
         value = dict(current=dict(source=source, translation=translation, fragment=card.sid,
-                                  revision=len(card.words) + len(card.translations), source_status='accepted'),
+                                  revision=len(card.words) + len(card.out), source_status='accepted'),
                      history=[], stage=stage, issue=None, reason=card.reason if stage != 'open' else None,
                      start=card.start / RATE, end=end / RATE)
         now = time.monotonic()
@@ -224,6 +398,8 @@ class AppendProcessor:
         if card.closed:
             return
         card.closed = True
+        if card in self.cards:
+            self.cards.remove(card)
         self.publish(card, lag=0., stage='closed')
         try:
             part = self.log.parts[card.settings.part]
@@ -236,7 +412,7 @@ class AppendProcessor:
                                      audio=(), prefix=0.)
             label = f'[Группа {card.sid}; дописывание; closed]\n'
             part.text('source', record, label + ' '.join(w['text'] for w in card.words))
-            part.text('target', record, label + ' '.join(t for t in card.translations if t))
+            part.text('target', record, label + ' '.join(card.out))
 
     # ---- translation -----------------------------------------------------------------
     def _translate_loop(self):
@@ -245,68 +421,124 @@ class AppendProcessor:
             try:
                 if job is None:
                     return
-                self._translate(*job)
-            except Exception as error:  # a failed chunk must not stop the screen
                 try:
-                    self.log.event('append_failed', error=type(error).__name__)
-                except Exception:
-                    pass
+                    self._translate(*job)
+                except Exception as error:  # a failed call must not stop the screen
+                    try:
+                        import traceback
+                        where = traceback.extract_tb(error.__traceback__)[-1]
+                        self.log.event('append_failed', error=type(error).__name__, detail=str(error)[:200],
+                                       where=f'{os.path.basename(where.filename)}:{where.lineno}')
+                    except Exception:
+                        pass
+                    with self.lock:
+                        card = job[0]
+                        if job[2] == 'close' and not card.closed:
+                            self.close(card)
+                        else:
+                            card.tried = (len(card.words), job[1])
             finally:
+                with self.lock:
+                    self.busy = False
+                    if job is not None:
+                        self.schedule()
                 self.jobs.task_done()
 
-    def _translate(self, card, words, settings):
-        text = ' '.join(w['text'] for w in words)
+    def _split(self, card):
+        """The model ended its sentence after the shown words while the Hebrew went on (no
+        sentence end heard): end the translation's sentence there and go on with the rest of the
+        Hebrew as a new sentence, the finished pair as context. Keeps prompts short and aligned."""
+        card.out[-1] += card.end_mark
+        self.pairs.append((' '.join(w['text'] for w in card.words[card.base:card.covered]),
+                           ' '.join(card.out[card.base_out:])))
+        card.base, card.base_out, card.end_mark = card.covered, len(card.out), None
+
+    def _translate(self, card, upto, why, settings):
         e = self.engine
         e.language, e.direction, e.topic = settings.language, settings.direction, settings.topic
         began = time.monotonic()
-        out, capped = '', False
-        limit_words, limit_chars = 3 * len(words) + 3, 3 * len(text) + 20
-        if not self.cancel.is_set():
-            for piece, _ in e.translate(text, context=tuple(self.pairs[-CONTEXT:])):
-                out += piece
-                if len(out.split()) > limit_words or len(out) > limit_chars or self.cancel.is_set():
-                    capped = True
-                    break
-        out = out.strip()
-        days = []
+        close = why == 'close'
         with self.lock:
-            out, days = self._weekdays(card, words, out, settings)
-        now = self.audio_now()
+            if card.end_mark and card.out and card.covered > card.base:
+                self._split(card)
+            card.end_mark = None
+            words = card.words[card.base:]
+            text = ' '.join(w['text'] for w in words)
+            forced = ' '.join(card.out[card.base_out:])
+            pairs = tuple(self.pairs[-CONTEXT:])
+        result = None
+        if text and not self.cancel.is_set():
+            if close and card.reason != 'sentence':
+                # A pause is not a sentence end: the model must not finish the sentence for the
+                # speaker. Stops on, all words may be covered, and no more new words than the
+                # Hebrew left can need.
+                left = len(words) - (card.covered - card.base)
+                result = self.generator.generate(text, forced, pairs, settings.direction, upto=len(words),
+                                                 close=False, max_new=new_words_cap(left))
+            elif close:
+                result = self.generator.generate(text, forced, pairs, settings.direction, close=True)
+            else:
+                relative = upto - card.base
+                # nothing heard after: no attention stop, so a cap on new words
+                cap = new_words_cap(upto - card.covered) if relative == len(words) else None
+                result = self.generator.generate(text, forced, pairs, settings.direction, upto=relative,
+                                                 max_new=cap)
+        added = list(result.words) if result else []
+        stop = result.stop if result else 'empty'
         with self.lock:
-            # A runaway that had to be cut stays on screen but is not context for the next chunks.
-            if not capped:
-                self.pairs.append((text, out))
-            card.translations.append(out)
-            card.outstanding -= 1
-            lags = [round(max(0., now - w['end'] / RATE), 3) for w in words]
-            self.publish(card, lag=max(lags))
-            if card.closing and not card.outstanding:
+            upto = len(card.words) if close else upto
+            # A mark the model puts first («?», «»», «.») belongs to the word before it; at the
+            # start of a card there is none, and a mark alone is not shown.
+            while added and PUNCTUATION_WORD.fullmatch(added[0]):
+                mark = added.pop(0)
+                if card.out:
+                    card.out[-1] += mark
+            new, days = self._weekdays(card, upto, ' '.join(card.out), ' '.join(added), settings)
+            added = new.split()
+            card.out.extend(added)
+            now = self.audio_now()
+            covered = []
+            # 'end' with nothing added: the shown translation already says what was heard.
+            if close or stop in ('sentence', 'end') or added and stop == 'frontier':
+                covered = card.words[card.covered:upto]
+                card.covered, card.tried = upto, None
+                if stop == 'sentence' and card.out:
+                    card.end_mark = result.end_mark
+            else:
+                card.tried = (len(card.words), upto)
+            lags = [round(max(0., now - w['end'] / RATE), 3) for w in covered]
+            self.timings = self.timings[-19:] + [(max(1, len(covered)), time.monotonic() - began)]
+            self.mt_counter += 1
+            if added or close:
+                self.publish(card, lag=max(lags) if lags else 0.)
+            if close:
+                if card.covered > card.base or card.out[card.base_out:]:
+                    self.pairs.append((' '.join(w['text'] for w in card.words[card.base:]),
+                                       ' '.join(card.out[card.base_out:])))
                 self.close(card)
-        self.log.event('append_chunk', part=settings.part, segment=card.sid, words=len(words),
-                       seconds=round(time.monotonic() - began, 3), capped=capped, lags=lags)
+        self.log.event('append_chunk', part=settings.part, segment=card.sid, why=why, stop=stop,
+                       words=len(covered), added=len(added), seconds=round(time.monotonic() - began, 3),
+                       capped=stop == 'cap', lags=lags)
         if days:
             self.log.event('weekday_check', part=settings.part, segment=card.sid, stage='append', issues=days)
 
-    def _weekdays(self, card, words, out, settings):
-        """The chunk's translation with a weekday the Hebrew does not name replaced (weekday_guard).
-        The card's Hebrew up to this chunk is the context («ביום» may end the chunk before); only
-        the new chunk can change, the shown translation stays."""
+    def _weekdays(self, card, upto, shown, out, settings):
+        """The call's new words with a weekday the Hebrew does not name replaced (weekday_guard).
+        The card's Hebrew up to `upto` is the context («ביום» may end the words before); only the
+        new words can change, the shown translation stays."""
         if os.environ.get('HEBREW_LIVE_WEEKDAY_CHECK', '1') == '0' or not out:
             return out, []
         from .languages import split_direction
         if split_direction(settings.direction) != ('he', 'ru'):
             return out, []
         from .weekday_guard import fix
-        end = card.words.index(words[-1]) + 1 if words[-1] in card.words else len(card.words)
-        source = ' '.join(w['text'] for w in card.words[:end])
-        shown = ' '.join(t for t in card.translations if t)
+        source = ' '.join(w['text'] for w in card.words[:upto])
         frozen = len(shown) + 1 if shown else 0
         fixed, issues = fix(source, (shown + ' ' + out) if shown else out, frozen)
         new = fixed[frozen:] if shown else fixed
-        chunk = ' '.join(w['text'] for w in words)
-        # Only what this chunk brought: earlier chunks were checked when they came.
+        new_hebrew = ' '.join(w['text'] for w in card.words[card.covered:upto])
         issues = [item._asdict() for item in issues if item.kind == 'fixed'
-                  or item.kind == 'extra' and item.ru in new or item.kind == 'missing' and item.he in chunk]
+                  or item.kind == 'extra' and item.ru in new or item.kind == 'missing' and item.he in new_hebrew]
         return new, issues
 
     # ---- the feed interface ----------------------------------------------------------
@@ -323,10 +555,10 @@ class AppendProcessor:
             self.collect(decoded, final=True, reason=reason)
         self.drain_mt()
         with self.lock:
-            if self.card is not None and not self.card.closed:
-                self.card.closing = True
-                self.card.reason = self.card.reason or reason
-                self.close(self.card)
+            for card in list(self.cards):   # a call that failed to come: close what is shown
+                card.closing = True
+                card.reason = card.reason or reason
+                self.close(card)
             self.card = None
         if reason in ('settings', 'direction', 'models'):
             self.pairs = []
@@ -336,5 +568,6 @@ class AppendProcessor:
         self.flush(reason)
 
     def shutdown_mt(self):
+        self.stopped.set()
         self.jobs.put(None)
         self.worker.join(timeout=5)

@@ -5,7 +5,10 @@ audio grows and never rewrites what it has written (experiments/streaming-asr/RE
 Whisper still recognises the closed group once; only the drafts come from here, so the GPU is
 left to the translator while a phrase is open.
 
-    HEBREW_LIVE_HYBRID=1  HEBREW_LIVE_HYBRID_MODEL=/path/to/zipformer2-66m-streaming-he
+    HEBREW_LIVE_HYBRID=1  [HEBREW_LIVE_HYBRID_MODEL=/path/to/zipformer2-66m-streaming-he]
+
+The macOS app bundles the model (streaming_asr_manifest.json); the append-only screen
+(append_live.py) uses it by default.
 
 The folder holds sherpa-onnx/{encoder,decoder,joiner}.int8.onnx and tokens.txt (or those files
 directly). When sherpa-onnx or the model is missing, `load` returns None and Whisper keeps
@@ -19,6 +22,11 @@ import numpy as np
 
 RATE = 16000
 FILES = ('encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt')
+
+
+def bundled_model():
+    """The model the macOS app packager copied beside this module (streaming_asr_manifest.json)."""
+    return model_folder(Path(__file__).parent / 'bundled_models' / 'streaming-asr')
 
 
 def model_folder(path):
@@ -67,12 +75,13 @@ class StreamingDraft:
         return result.text.strip()
 
 
-def load(log=None, flag='HEBREW_LIVE_HYBRID'):
-    """The streaming draft when `flag` is on and its model is available, else None."""
-    if os.environ.get(flag, '0') != '1':
+def load(log=None, flag='HEBREW_LIVE_HYBRID', default='0'):
+    """The streaming draft when `flag` is on and its model is available, else None. The model is
+    HEBREW_LIVE_HYBRID_MODEL, else the one bundled with the app."""
+    if os.environ.get(flag, default) != '1':
         return None
     path = os.environ.get('HEBREW_LIVE_HYBRID_MODEL', '')
-    folder = model_folder(path) if path else None
+    folder = model_folder(path) if path else bundled_model()
     try:
         if folder is None:
             raise FileNotFoundError('streaming model files not found')

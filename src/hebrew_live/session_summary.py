@@ -209,6 +209,9 @@ def summarize(events):
         append=dict(
             hebrew_word_lag=stats(lag for e in get('append_words') for lag in e.get('lags') or ()),
             translation_word_lag=stats(lag for e in get('append_chunk') for lag in e.get('lags') or ()),
+            translation_within=(lambda lags: {f'{k}s': round(sum(v <= k for v in lags) / len(lags), 3)
+                                               for k in (2, 3, 4, 5)} if lags else None)(
+                [lag for e in get('append_chunk') for lag in e.get('lags') or ()]),
             chunks=count('append_chunk'), capped=sum(1 for e in get('append_chunk') if e.get('capped')),
             failed=count('append_failed')) if get('append_words') else None,
         errors=count('error'), number_mismatches=count('number_mismatch'), weekday_checks=count('weekday_check'),
