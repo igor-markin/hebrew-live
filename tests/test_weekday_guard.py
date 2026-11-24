@@ -12,10 +12,27 @@ from hebrew_live.cli import Fragment
 from hebrew_live.retranslation import RetranslationProcessor
 from hebrew_live.stream import Settings
 
-from hebrew_live.weekday_guard import fix, hebrew_days
+from hebrew_live.weekday_guard import fix, hebrew_days, relative_days, unheard
 
 
 class WeekdayGuard(unittest.TestCase):
+    def test_a_new_weekday_the_hebrew_has_not_said_is_found(self):
+        self.assertEqual(unheard('אני רוצה לקבוע תור', 'Я хочу записаться', ['на', 'вторник']), 1)
+        self.assertEqual(unheard('תור ביום שלישי', 'Запись во вторник', ['—', 'на', 'четверг']), 2)
+        # one day heard, one day named: a wrong one is for fix, not for holding back
+        self.assertIsNone(unheard('תור ביום שלישי', 'Запись', ['в', 'четверг']))
+
+    def test_a_relative_day_the_hebrew_has_not_said_is_found(self):
+        self.assertEqual(unheard('אני רוצה לקבוע תור', 'Я хочу записаться', ['на', 'сегодня.']), 1)
+        self.assertIsNone(unheard('ומחר נדבר', '', ['Завтра', 'поговорим']))
+        self.assertIsNone(unheard('להיום בערב', '', ['На', 'сегодня']))
+        self.assertEqual([word for _, word in relative_days('נדבר', 'вчера и завтра')], ['вчера', 'завтра'])
+
+    def test_environment_is_not_wednesday(self):
+        self.assertIsNone(unheard('סביבה אידיאלית', '', ['идеальная', 'среда']))
+        self.assertIsNone(unheard('סביבה', '', ['в', 'среде']))
+        self.assertEqual(unheard('נדבר', '', ['в', 'среду']), 1)
+
     # Translations as MiLMMT gave them on the 23.11.2026 recordings.
     def test_wrong_day_after_yom_is_replaced_in_the_same_case(self):
         text, issues = fix('אני רוצה לקבוע תור לרופא שיניים ביום שלישי בשעה עשר בבוקר',

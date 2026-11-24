@@ -8,6 +8,7 @@ two»), so a word counts as a day only next to «יום/ימים» or in a range
 not support is only reported.
 
     fix(source, translation)   -> (translation with wrong days replaced, issues)
+    unheard(source, shown, new) -> index of the first new word naming a day not heard yet
 
 A replacement is made only when the Hebrew days and the Russian days pair up one to one in
 order; the replacement keeps the case of the word it replaces («с понедельника» -> «с
@@ -53,6 +54,20 @@ for _day, _forms in _RU_FORMS.items():
         _RU_LOOKUP.setdefault(_form, (_day, []))[1].append(_case)
 _RU_WORD = re.compile(r'[А-Яа-яЁё]+')
 _ACCUSATIVE = {'в', 'во', 'на', 'про', 'через', 'за', 'по'}   # «по четверг» is «up to Thursday»
+
+
+# «Среда» is also «environment»: a weekday only after these words.
+_WEDNESDAY_AFTER = {'в', 'на', 'по', 'до', 'с', 'со', 'к', 'от', 'про', 'за', 'следующую', 'прошлую', 'эту', 'каждую'}
+
+# Relative days: the Russian word and the Hebrew words that can say it (a prefix may stand before them).
+_RELATIVE = {
+    'сегодня': ('היום', 'הערב', 'הלילה', 'הבוקר', 'הצהריים', 'כיום', 'בימינו', 'עכשיו', 'כרגע'),
+    'завтра': ('מחר', 'למחרת', 'מחרת'),
+    'послезавтра': ('מחרתיים',),
+    'вчера': ('אתמול', 'אמש'),
+    'позавчера': ('שלשום',),
+}
+_RELATIVE_PREFIXES = 'ובלמכש'
 
 
 class Issue(NamedTuple):
@@ -185,3 +200,59 @@ def fix(source, translation, frozen=0):
         if day not in supported:
             issues.append(Issue('extra', '', match.group(), ''))
     return translation, issues
+
+
+def _says(source, words):
+    for token in _HE_TOKEN.findall(source):
+        bare = _bare(token)
+        for i in range(min(3, len(bare))):
+            if all(c in _RELATIVE_PREFIXES for c in bare[:i]) and bare[i:] in words:
+                return True
+    return False
+
+
+def relative_days(source, translation):
+    """[(offset, word)] of «сегодня», «завтра» and the like in the translation that the Hebrew
+    does not say."""
+    found = []
+    for match in _RU_WORD.finditer(translation):
+        word = match.group().lower()
+        if word in _RELATIVE and not _says(source, _RELATIVE[word]):
+            found.append((match.start(), match.group()))
+    return found
+
+
+def _is_wednesday(translation, match):
+    """False when «среда», «среде» and so on may well be «environment»."""
+    before = translation[:match.start()].split()
+    previous = before[-1].lower().strip('«(,') if before else ''
+    if match.group().lower() == 'среде':
+        return previous in ('к', 'по')
+    return previous in _WEDNESDAY_AFTER
+
+
+def unheard(source, shown, new):
+    """Index of the first of the `new` words (a call's output, continuing the `shown` translation
+    of `source`) that names a weekday or a relative day the source has not said yet, or None.
+
+    Weekdays are counted: the second one needs the source to name two, so a wrong day in place of
+    a heard one is left to `fix`. This is for stopping a live translation, not for an alarm."""
+    if not new:
+        return None
+    start = len(shown) + 1 if shown else 0
+    text = (shown + ' ' + ' '.join(new)) if shown else ' '.join(new)
+    starts, at = [], start
+    for word in new:
+        starts.append(at)
+        at += len(word) + 1
+    heard, named, offsets = len(hebrew_days(source)), 0, []
+    for day, _, match in _russian_days(text):
+        if day == 'wed' and not _is_wednesday(text, match):
+            continue
+        named += 1
+        if named > heard and match.start() >= start:
+            offsets.append(match.start())
+    offsets += [offset for offset, _ in relative_days(source, text) if offset >= start]
+    if not offsets:
+        return None
+    return max(i for i, begin in enumerate(starts) if begin <= min(offsets))
