@@ -41,6 +41,8 @@ _HE.update({word: ('f', value) for word, value in (('שעתיים', 2), ('יומ
                                                    ('תריסר', 12), ('עשור', 10))})
 _HE_PREFIXES = 'ובלהמכש'
 _HE_HALF, _HE_QUARTER = ('חצי', 'מחצית'), ('רבע',)
+# The streaming recognizer also writes «twelve» without its yod: «לשתם עשרה» for «לשתים עשרה».
+_HE_TWELVE = re.compile(r'(שת|שנ)ם(?=\s+עשרה?\b)')
 
 _EN = {}
 for _value, _word in enumerate('zero one two three four five six seven eight nine'.split()):
@@ -120,6 +122,8 @@ class _Side:
     """Digit figures of one text, plus every number its words could stand for."""
 
     def __init__(self, text, language, thousands=True):
+        if language == 'he':
+            text = _HE_TWELVE.sub(r'\1ים', text)
         found = list(_TOKEN.finditer(_THOUSANDS.sub('', text) if thousands else text))
         tokens = [match.group() for match in found]
         self.mentions = []         # (value, digits or None, character offset), every number in reading order

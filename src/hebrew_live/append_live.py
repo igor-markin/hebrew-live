@@ -18,7 +18,9 @@ the Hebrew goes on with, the Russian sentence ends there and the rest starts a n
 A live call also stops before a number or a day (weekday, «сегодня») the Hebrew has not said.
 When a card closes with a number or a day that does not match its Hebrew, the sentence is
 translated once more as a whole and, if that matches better, added after the shown translation
-as «(Уточнение: …)»; HEBREW_LIVE_CLOSE_RECHECK=0 switches this off.
+as «(Уточнение: …)» with the words that changed. Every sentence of the card is checked, also one
+that ended before the card closed. A translation that was cut short or still does not match is not
+shown. HEBREW_LIVE_CLOSE_RECHECK=0 switches this off.
 HEBREW_LIVE_APPEND_MIN_PROB (default 0) also stops at a token the model is less sure of.
 Whisper is not used.
 
@@ -45,9 +47,53 @@ PUNCTUATION_WORD = re.compile(r'[.,?!…:;»"”)\]]+')   # not a dash: «— 80
 PAUSE_TAIL = .8      # seconds of silence fed at a pause so the last words come out
 GAP_LIMIT = .5       # silence fed for a gap between speech pieces
 CONTEXT = 4          # previous chunks given to the translator
+_EDGE = '.,?!…:;«»"”()[]—–-'
 SAFETY = .3          # seconds kept in reserve before the deadline
 QUIET = 1.           # seconds without a newer word after which the last word may be translated
 TICK = .1            # how often waiting chunks are checked against their deadline
+
+
+def _facts(words, language):
+    """The numbers (figures or words) and days named in these translation words."""
+    from .number_guard import _classify
+    from .weekday_guard import _RELATIVE, _russian_days
+    found = []
+    for word in words:
+        bare = word.strip(_EDGE).lower()
+        number, days = _classify(bare, language), _russian_days(bare)
+        if any(c.isdigit() for c in bare) or bare in _RELATIVE:
+            found.append(bare)
+        elif number:
+            found.append(str(number[1]))
+        elif days:
+            found.append(days[0][0])
+    return sorted(found)
+
+
+def _days(words):
+    from .weekday_guard import _RELATIVE, _russian_days
+    return any(w.strip(_EDGE).lower() in _RELATIVE or _russian_days(w) for w in words)
+
+
+def changed_piece(shown, again, language='ru', context=2):
+    """The words of `again` that changed where a number or a day is named, with `context` words
+    around them; '' when the numbers and days are the same. Several places are joined with «… »."""
+    import difflib
+    a, b = shown.split(), again.split()
+    keys = [[w.strip(_EDGE).lower() for w in words] for words in (a, b)]
+    spans = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, *keys, autojunk=False).get_opcodes():
+        if tag == 'equal' or _facts(a[i1:i2], language) == _facts(b[j1:j2], language):
+            continue
+        if i1 == i2 == len(a) and not any(c.isdigit() for w in b[j1:j2] for c in w) and not _days(b[j1:j2]):
+            continue   # words of the next sentence («Стоимость первого посещения»), not a change
+        start, end = max(0, j1 - context), min(len(b), j2 + context)
+        if spans and start <= spans[-1][1] + 1:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    pieces = [('… ' if start else '') + ' '.join(b[start:end]) + (' …' if end < len(b) else '') for start, end in spans]
+    return ' '.join(pieces).replace('… …', '…')
 
 
 def enabled():
@@ -158,6 +204,7 @@ class Card:
         self.words, self.out = [], []   # Hebrew words (dicts), translation words shown
         self.covered = 0       # Hebrew words the shown translation covers
         self.base = self.base_out = 0   # where the open sentence starts in words / out
+        self.notes = []        # (start, end) of the «(Уточнение: …)» in out
         self.tried = None      # (words heard, upto) of a call that added nothing: not again
         self.end_mark = None   # the sentence end the model wanted after the shown words
         self.closing = self.closed = False
@@ -455,9 +502,12 @@ class AppendProcessor:
         sentence end heard): end the translation's sentence there and go on with the rest of the
         Hebrew as a new sentence, the finished pair as context. Keeps prompts short and aligned."""
         card.out[-1] += card.end_mark
-        self.pairs.append((' '.join(w['text'] for w in card.words[card.base:card.covered]),
-                           ' '.join(card.out[card.base_out:])))
+        hebrew = ' '.join(w['text'] for w in card.words[card.base:card.covered])
+        shown = ' '.join(card.out[card.base_out:])
+        before = tuple(self.pairs[-CONTEXT:])
+        self.pairs.append((hebrew, shown))
         card.base, card.base_out, card.end_mark = card.covered, len(card.out), None
+        return hebrew, shown, before
 
     def _translate(self, card, upto, why, settings):
         e = self.engine
@@ -465,9 +515,19 @@ class AppendProcessor:
         began = time.monotonic()
         close = why == 'close'
         with self.lock:
+            ended = None
             if card.end_mark and card.out and card.covered > card.base:
-                self._split(card)
+                ended = self._split(card)
             card.end_mark = None
+        if ended:
+            hebrew, shown, before = ended
+            better, piece = self._recheck(card, hebrew, shown, before, settings, 'split')
+            if piece:
+                with self.lock:
+                    self._note(card, piece, settings)
+                    self.pairs[-1] = (hebrew, better)
+                    self.publish(card, lag=0.)
+        with self.lock:
             words = card.words[card.base:]
             text = ' '.join(w['text'] for w in words)
             forced = ' '.join(card.out[card.base_out:])
@@ -506,7 +566,7 @@ class AppendProcessor:
                 cut = self._unheard_day(card, added, settings)
                 if cut is not None:
                     added, stop = added[:cut], 'day'
-            new, days = self._weekdays(card, upto, ' '.join(card.out), ' '.join(added), settings)
+            new, days = self._weekdays(card, upto, self._plain(card), ' '.join(added), settings)
             added = new.split()
             card.out.extend(added)
             now = self.audio_now()
@@ -525,14 +585,13 @@ class AppendProcessor:
             if added or close:
                 self.publish(card, lag=max(lags) if lags else 0.)
         if close:
-            better = self._recheck(card, text, pairs, settings)
+            shown = ' '.join(card.out[card.base_out:])
+            better, piece = self._recheck(card, text, shown, pairs, settings, 'close')
             with self.lock:
-                if better:
-                    label = 'Уточнение' if settings.direction.endswith('ru') else 'Correction'
-                    card.out.extend(f'({label}: {better})'.split())
-                if card.covered > card.base or card.out[card.base_out:]:
-                    self.pairs.append((' '.join(w['text'] for w in card.words[card.base:]),
-                                       better or ' '.join(card.out[card.base_out:])))
+                if card.covered > card.base or shown:
+                    self.pairs.append((' '.join(w['text'] for w in card.words[card.base:]), better or shown))
+                if piece:
+                    self._note(card, piece, settings)
                 self.close(card)
         self.log.event('append_chunk', part=settings.part, segment=card.sid, why=why, stop=stop,
                        words=len(covered), added=len(added), seconds=round(time.monotonic() - began, 3),
@@ -579,28 +638,41 @@ class AppendProcessor:
             found += [f'extra {word}' for _, word in relative_days(hebrew, translation)]
         return found
 
-    def _recheck(self, card, text, pairs, settings):
-        """The closed sentence translated once more as a whole, when the shown translation has a
-        number or a day its Hebrew does not and the new one has fewer; else ''."""
-        if os.environ.get('HEBREW_LIVE_CLOSE_RECHECK', '1') == '0' or not text or self.cancel.is_set():
-            return ''
-        shown = ' '.join(card.out[card.base_out:])
+    def _recheck(self, card, text, shown, pairs, settings, stage):
+        """(translation, changed words) of a sentence translated once more as a whole, when the
+        shown translation has a number or a day its Hebrew does not, and the new one has none and
+        was not cut short; else ('', '')."""
+        if os.environ.get('HEBREW_LIVE_CLOSE_RECHECK', '1') == '0' or not text or not shown or self.cancel.is_set():
+            return '', ''
         issues = self._mismatches(text, shown, settings)
         if not issues:
-            return ''
+            return '', ''
+        from .languages import split_direction
         began = time.monotonic()
-        words = len(text.split())
-        whole = card.reason == 'sentence'
-        result = self.generator.generate(text, '', pairs, settings.direction, upto=None if whole else words,
-                                         close=whole, max_new=None if whole else new_words_cap(words))
+        result = self.generator.generate(text, '', pairs, settings.direction, close=True)
         again = ' '.join(result.words)
         if settings.direction == 'he-ru':
             from .weekday_guard import fix
             again, _ = fix(text, again)
-        better = bool(again) and len(self._mismatches(text, again, settings)) < len(issues)
-        self.log.event('close_recheck', part=settings.part, segment=card.sid, issues=issues, better=better,
+        left = self._mismatches(text, again, settings) if again else ['empty']
+        why = 'cut' if result.stop != 'end' or len(again.split()) < .6 * len(shown.split()) else 'mismatch' if left else ''
+        piece = '' if why else changed_piece(shown, again, split_direction(settings.direction)[1])
+        self.log.event('close_recheck', part=settings.part, segment=card.sid, stage=stage, issues=issues,
+                       better=bool(piece), rejected=why or (None if piece else 'same'),
                        seconds=round(time.monotonic() - began, 3))
-        return again if better else ''
+        return (again, piece) if piece else ('', '')
+
+    def _note(self, card, piece, settings):
+        """The changed words, after the shown translation; the next sentence starts after them."""
+        label = 'Уточнение' if settings.direction.endswith('ru') else 'Correction'
+        start = len(card.out)
+        card.out.extend(f'({label}: {piece})'.split())
+        card.notes.append((start, len(card.out)))
+        card.base_out = len(card.out)
+
+    def _plain(self, card):
+        """The shown translation without the notes."""
+        return ' '.join(w for i, w in enumerate(card.out) if not any(a <= i < b for a, b in card.notes))
 
     def _weekdays(self, card, upto, shown, out, settings):
         """The call's new words with a weekday the Hebrew does not name replaced (weekday_guard).

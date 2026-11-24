@@ -16,6 +16,12 @@ class NumberGuardTests(unittest.TestCase):
         self.assertEqual(check('הפגישה ב-27 במאי', 'Встреча 17 мая'), [Issue('missing', '27'), Issue('extra', '17')])
         self.assertEqual(check('הפגישה ב-27 במאי', 'Встреча 27 мая'), [])
 
+    def test_twelve_without_its_yod_as_the_streaming_recognizer_writes_it(self):
+        self.assertEqual(check('ביום שישי בין שמונה לשתם עשרה בצהריים', 'в пятницу с 8 до 12'), [])
+        self.assertEqual(check('בשעה שנם עשר', 'в 12 часов'), [])
+        # only before «ten»: «שתם» alone is not a number
+        self.assertEqual(check('הוא שתם את החור', 'Он закрыл 2 дыры'), [Issue('extra', '2')])
+
     def test_digits_spelled_out_in_the_translation_are_accepted(self):
         self.assertEqual(check('הפגישה ב-27 במאי', 'Встреча двадцать седьмого мая'), [])
         self.assertEqual(check('בשנת 1996', 'В тысяча девятьсот девяносто шестом году'), [])
