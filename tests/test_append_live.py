@@ -235,24 +235,39 @@ class Append(unittest.TestCase):
         self.assertEqual(self.publications()[-1]['current']['translation'], 'Запись на')
         self.assertIn('day', [e['stop'] for n, e in self.events if n == 'append_chunk'])
 
-    def recheck(self, whole, direction_words=('Запись', 'на', 'сегодня.')):
+    def recheck(self, whole, direction_words=('Запись', 'на', 'сегодня.'), stop='end'):
         class Twice(FakeGenerator):
             def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
                 self.calls.append(dict(text=text, forced=forced, close=close))
-                return Result(list(direction_words) if len(self.calls) == 1 else whole, 'end')
+                return Result(list(direction_words), 'end') if len(self.calls) == 1 else Result(whole, stop)
         processor = self.make([(' תור', .2), (' ביום', .5), (' שלישי', .9), ('.', 1.)], generator=Twice())
         self.feed(processor, 1.6, final=True, reason='pause')
         self.finish(processor)
         return self.publications()[-1]['current']['translation']
 
-    def test_a_closed_card_with_a_wrong_day_gets_the_better_whole_translation_after_the_shown_one(self):
+    def rechecks(self):
+        return [v for n, v in self.events if n == 'close_recheck']
+
+    def test_a_closed_card_with_a_wrong_day_gets_the_changed_words_after_the_shown_ones(self):
         shown = self.recheck(['Запись', 'во', 'вторник.'])
         self.assertEqual(shown, 'Запись на сегодня. (Уточнение: Запись во вторник.)')
         self.assertEqual(self.generator.calls[1]['forced'], '')   # the whole sentence, nothing forced
-        self.assertEqual([v['better'] for n, v in self.events if n == 'close_recheck'], [True])
+        self.assertEqual([v['better'] for v in self.rechecks()], [True])
 
-    def test_a_whole_translation_that_is_not_better_is_not_shown(self):
+    def test_a_whole_translation_that_still_does_not_match_is_not_shown(self):
         self.assertEqual(self.recheck(['Запись', 'на', 'завтра.']), 'Запись на сегодня.')
+        self.assertEqual(self.rechecks()[0]['rejected'], 'mismatch')
+
+    def test_a_whole_translation_cut_short_is_not_shown(self):
+        for stop in ('cap', 'cancel', 'sentence'):
+            self.events.clear()
+            self.assertEqual(self.recheck(['Запись', 'во', 'вторник.'], stop=stop), 'Запись на сегодня.', stop)
+            self.assertEqual(self.rechecks()[0]['rejected'], 'cut')
+
+    def test_a_whole_translation_much_shorter_than_the_shown_one_is_not_shown(self):
+        words = ('Я', 'хочу', 'записаться', 'на', 'сегодня,', 'если', 'это', 'возможно.')
+        self.assertNotIn('Уточнение', self.recheck(['Во', 'вторник.'], words))
+        self.assertEqual(self.rechecks()[0]['rejected'], 'cut')
 
     def test_a_card_that_matches_its_hebrew_is_not_translated_again(self):
         self.recheck([], ('Запись', 'во', 'вторник.'))
@@ -261,6 +276,53 @@ class Append(unittest.TestCase):
     def test_the_recheck_can_be_switched_off(self):
         with mock.patch.dict(os.environ, HEBREW_LIVE_CLOSE_RECHECK='0'):
             self.assertEqual(self.recheck(['Запись', 'во', 'вторник.']), 'Запись на сегодня.')
+
+    def test_a_sentence_that_ended_before_the_card_closed_is_checked_too(self):
+        class Scripted(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, close=close, pairs=pairs))
+                if len(self.calls) == 1:
+                    return Result(['Запись', 'на', '17'], 'sentence', '.')
+                if close:
+                    return Result(['Запись', 'без', 'числа.'], 'end')
+                return Result(['ru:' + w for w in text.split()], 'end')
+        script = [(' תור', .2), (',', .25), (' ועוד', .5), (',', .55), (' מחר', .8)]
+        processor = self.make(script, generator=Scripted())
+        with mock.patch.dict(os.environ, HEBREW_LIVE_NUMBER_WAIT='0'):
+            for seconds in (1.1, 1.4):
+                self.feed(processor, seconds)
+            self.feed(processor, 2., final=True, reason='pause')
+            self.finish(processor)
+        shown = self.publications()[-1]['current']['translation']
+        self.assertEqual([v['stage'] for v in self.rechecks() if v['better']], ['split'])
+        self.assertTrue(shown.startswith('Запись на 17. (Уточнение: Запись без числа.) '), shown)
+        # the corrected sentence is the context of the next call
+        self.assertEqual(self.generator.calls[2]['pairs'][-1], ('תור,', 'Запись без числа.'))
+
+    def test_the_note_has_the_changed_words_only(self):
+        from hebrew_live.append_live import changed_piece
+        shown = 'Мы работаем с понедельника по четверг с 8 утра, приходите в любое время, будем рады вас видеть.'
+        again = 'Мы работаем с воскресенья по четверг с 8 утра, приходите в любое время, будем рады вас видеть.'
+        self.assertEqual(changed_piece(shown, again), '… работаем с воскресенья по четверг …')
+        self.assertEqual(changed_piece(shown, shown), '')
+        # a rewording that keeps the number is left out, also when the number is in the changed words
+        self.assertEqual(changed_piece('Во вторник мы открыты, а первое посещение стоит дорого.',
+                                       'В среду мы открыты, а первый приём стоит дорого.'), 'В среду мы открыты, …')
+        # the beginning of the next sentence is not a change; a number the shown one lost is
+        self.assertEqual(changed_piece('с понедельника по четверг.', 'с воскресенья по четверг. Стоимость первого посещения'),
+                         'с воскресенья по четверг. …')
+        self.assertEqual(changed_piece('Приходите завтра', 'Приходите завтра в 10'), 'Приходите завтра в 10')
+        # a rewording without a number or a day is not a correction
+        self.assertEqual(changed_piece('Мы рады вас видеть', 'Мы очень рады вас принять'), '')
+
+    def test_the_days_of_a_note_do_not_count_in_the_next_weekday_check(self):
+        from hebrew_live.append_live import Card
+        processor = self.make([])
+        card = Card(1, Settings(direction='he-ru'), 0)
+        card.out = ['Запись', 'в', 'четверг.']
+        processor._note(card, 'во вторник', Settings(direction='he-ru'))
+        self.assertEqual(processor._plain(card), 'Запись в четверг.')
+        self.assertEqual(card.base_out, len(card.out))
 
 
 class Router(unittest.TestCase):
