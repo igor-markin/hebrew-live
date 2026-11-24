@@ -36,9 +36,9 @@ SCRIPT_FILES += ('desktop_bundle_policy.py',)
 FRONTEND_FILES=(
     'README.md','package.json','package-lock.json','tsconfig.json','vite.config.ts','index.html','live.html',
     'src/App.tsx','src/Live.tsx','src/i18n.ts','src/live.css','src/liveMain.tsx','src/liveState.ts','src/liveStream.ts',
-    'src/main.tsx','src/policy.ts','src/styles.css','src/useFollowLatest.ts',
+    'src/main.tsx','src/policy.ts','src/styles.css','src/uiLog.ts','src/useFollowLatest.ts',
     'src/data/public-cases.json','tests/followGrowth.test.ts','tests/i18n.test.ts','tests/liveContract.test.ts',
-    'tests/liveState.test.ts','tests/liveStream.test.ts','tests/policy.test.ts','public/licenses/Noto-Sans-Hebrew-OFL.txt',
+    'tests/liveState.test.ts','tests/liveStream.test.ts','tests/policy.test.ts','tests/uiLog.test.ts','public/licenses/Noto-Sans-Hebrew-OFL.txt',
     'public/licenses/Noto-Sans-OFL.txt',
 )
 ELECTRON_FILES=(
