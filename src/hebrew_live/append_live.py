@@ -15,6 +15,7 @@ end, when the first untranslated word would otherwise miss HEBREW_LIVE_APPEND_DE
 (the call time is estimated from the calls so far), up to all but the last word. A sentence end
 or a pause closes the card with a call that translates the rest. When the model ends a sentence
 the Hebrew goes on with, the Russian sentence ends there and the rest starts a new one.
+A live call also stops before a number or a day (weekday, «сегодня») the Hebrew has not said.
 HEBREW_LIVE_APPEND_MIN_PROB (default 0) also stops at a token the model is less sure of.
 Whisper is not used.
 
@@ -499,6 +500,9 @@ class AppendProcessor:
                 cut = self._numbers(card, added, settings)
                 if cut is not None:
                     added, stop = added[:cut], 'number'
+                cut = self._unheard_day(card, added, settings)
+                if cut is not None:
+                    added, stop = added[:cut], 'day'
             new, days = self._weekdays(card, upto, ' '.join(card.out), ' '.join(added), settings)
             added = new.split()
             card.out.extend(added)
@@ -541,6 +545,18 @@ class AppendProcessor:
         from .number_guard import unheard
         hebrew = ' '.join(w['text'] for w in card.words[card.base:])
         return unheard(hebrew, ' '.join(card.out[card.base_out:]), added, 'he', target)
+
+    def _unheard_day(self, card, added, settings):
+        """Index of the first new word with a weekday or «сегодня», «завтра» the open sentence's
+        Hebrew has not said (weekday_guard.unheard), or None. Held like a number."""
+        if os.environ.get('HEBREW_LIVE_WEEKDAY_CHECK', '1') == '0' or not added:
+            return None
+        from .languages import split_direction
+        if split_direction(settings.direction) != ('he', 'ru'):
+            return None
+        from .weekday_guard import unheard
+        hebrew = ' '.join(w['text'] for w in card.words[card.base:])
+        return unheard(hebrew, ' '.join(card.out[card.base_out:]), added)
 
     def _weekdays(self, card, upto, shown, out, settings):
         """The call's new words with a weekday the Hebrew does not name replaced (weekday_guard).

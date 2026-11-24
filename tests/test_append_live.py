@@ -221,6 +221,18 @@ class Append(unittest.TestCase):
         self.finish(processor)
         self.assertEqual(self.publications()[-1]['current']['translation'], 'Для жилья нажмите 2.')
 
+    def test_a_live_call_stops_before_a_day_the_hebrew_has_not_said(self):
+        class Days(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, close=close))
+                return Result(['Запись', 'на', 'сегодня'][len(forced.split()):], 'end')
+        script = [(' אני', .2), (' רוצה', .5), (' תור', .8), (' ביום', 3.6), ('.', 3.7)]
+        processor = self.make(script, deadline=1.5, generator=Days())
+        for step in range(5, 30, 3):
+            self.feed(processor, step / 10)
+        self.assertEqual(self.publications()[-1]['current']['translation'], 'Запись на')
+        self.assertIn('day', [e['stop'] for n, e in self.events if n == 'append_chunk'])
+
 
 class Router(unittest.TestCase):
     def make(self, append=None):
