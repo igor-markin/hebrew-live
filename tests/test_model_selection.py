@@ -14,7 +14,7 @@ class ModelSelectionTests(unittest.TestCase):
    path=Path(tmp)/'preferences.json'
    path.write_text(__import__('json').dumps(dict(schema_version=3,timing=as_dict(DEFAULTS),mode='phrases',models=dict(asr='multilingual',translation='7b'))))
    original=path.read_bytes();before=read(tmp);self.assertEqual(before['mode'],'phrases');self.assertEqual(before['timing'],as_dict(DEFAULTS))
-   self.assertEqual(before['models'],dict(asr='turbo',translation='milmmt'))
+   self.assertEqual(before['models'],dict(asr='streaming',translation='milmmt'))
    self.assertIn('no longer supported',before['preference_notices'][0]);self.assertEqual(path.read_bytes(),original)
    with patch('hebrew_live.preferences.os.replace',side_effect=OSError('disk')):
     with self.assertRaises(OSError):save(tmp,models=dict(asr='turbo',translation='milmmt'))

@@ -105,15 +105,14 @@ def run_session(args, session, browser_ui=None):
     from .cli import VAD, Inbox, Fragment, segment, verify, validate_custom_models, preference_folder as model_preference_folder
     from .remote_engine import RemoteEngine
     from .feed import inference,RetryRequest
-    custom_models=validate_custom_models(args.models,getattr(args,'asr_model',None),
-                                         getattr(args,'translation_model',None),getattr(args,'vad_model',None),
-                                         getattr(args,'asr_backend','turbo'))
+    custom_models=validate_custom_models(args.models,getattr(args,'translation_model',None),
+                                         getattr(args,'vad_model',None))
     bridge_models = getattr(args, 'bridge_models', None)
     if bridge_models:
         from .bridge_preview import validate_bridge_models
         bridge_models = validate_bridge_models(*bridge_models)
     from .preferences import read as read_preferences,save as save_preferences
-    from .model_selection import ASR,TRANSLATION
+    from .model_selection import ASR,TRANSLATION,current_asr
     preference_folder=model_preference_folder(args.models)
     if browser_ui:browser_ui.preference_folder=preference_folder
     preferences=read_preferences(preference_folder)
@@ -123,7 +122,7 @@ def run_session(args, session, browser_ui=None):
     if preferences.get('models') and not custom_models:
         # Explicit command-line choices override saved browser selections.
         if not any(x=='--asr-backend' or x.startswith('--asr-backend=') for x in sys.argv):args.asr_backend=preferences['models']['asr']
-    asr_backend=getattr(args,'asr_backend','turbo')
+    asr_backend=args.asr_backend=current_asr(getattr(args,'asr_backend','streaming'))
     if asr_backend=='fast' and draft_limit>20.0:
         session.event('draft_limit_model_cap',requested_seconds=draft_limit,applied_seconds=20.0)
         draft_limit=20.0
@@ -137,18 +136,20 @@ def run_session(args, session, browser_ui=None):
                        if option['code'] in ('en', 'ru')] if bridge_models
                       else target_language_options())
     required=set()
-    if not custom_models.get('asr'):required.add('asr')
     if not custom_models.get('translation') and not bridge_models:required.add('translation')
     if not custom_models.get('vad'):required.add('vad')
     if required:
-        if os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED') == '1' and asr_backend == 'turbo' and not bridge_models:
-            from .desktop_download import verify_accurate_asr,verify_desktop_external
+        if os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED') == '1' and not bridge_models:
+            from .desktop_download import verify_desktop_external
             from .desktop_preflight import load_inventory
             verify_desktop_external(args.models, load_inventory())
-            if asr_backend == 'turbo':verify_accurate_asr(args.models)
+            from .streaming_asr import bundled_model,model_folder
+            override=os.environ.get('HEBREW_LIVE_HYBRID_MODEL','')
+            if (model_folder(override) if override else bundled_model()) is None:
+                raise RuntimeError('The bundled streaming speech model is missing; reinstall Hebrew Live')
         else:
             verify(args.models,required)
-    asr_label='Custom local MLX Whisper' if custom_models.get('asr') else ASR[asr_backend][0]
+    asr_label=ASR['streaming'][0]
     translation_label=('HPLT Hebrew→English + tiny English→Russian · preview'
                        if bridge_models else 'Custom local MLX-LM · MiLMMT prompt contract'
                        if custom_models.get('translation') else TRANSLATION['milmmt'][0])
@@ -162,19 +163,17 @@ def run_session(args, session, browser_ui=None):
         target_capabilities_assumed=bool(custom_models.get('translation')),
         ui_locale=preferences.get('ui_locale','en'),target_error=None,
         model_message=' '.join(preference_notices) if preference_notices else None)
-    session.event('effective_models',asr=getattr(args,'asr_backend','turbo'),
+    session.event('effective_models',asr=asr_backend,
                   translation='bridge-preview' if bridge_models else 'milmmt',
-                  custom_asr=bool(custom_models.get('asr')),custom_translation=bool(custom_models.get('translation')),
+                  custom_asr=False,custom_translation=bool(custom_models.get('translation')),
                   custom_vad=bool(custom_models.get('vad')))
     stop=threading.Event();cancel=threading.Event()
     print('Loading and warming local models…',file=sys.stderr)
     from .remote_engine import SplitRemoteEngine
-    split_workers=(os.environ.get('HEBREW_LIVE_SPLIT_WORKERS')=='1' and
-                   asr_backend=='turbo' and not bridge_models)
+    split_workers=False  # the split ASR worker ran Whisper, which is gone
     session.event('inference_pipeline',mode='split' if split_workers else 'serial')
     engine_class=SplitRemoteEngine if split_workers else RemoteEngine
     engine=engine_class(args.models,session,args.language or source_language,backend=asr_backend,
-                  asr_path=custom_models.get('asr'),
                   translation_path=custom_models.get('translation'),direction=args.direction,
                   topic=args.topic,stop=stop,cancel=cancel,bridge_models=bridge_models)
     try:
@@ -311,7 +310,7 @@ def run_session(args, session, browser_ui=None):
     if browser_ui and not custom_models and not bridge_models:
         from .model_selection import ASR,TRANSLATION
         asr_options={k:v[0] for k,v in ASR.items()
-                     if (args.models/v[1]).is_dir()}
+                     if v[1] is None or (args.models/v[1]).is_dir()}
         browser_ui.details(model_selection=dict(asr=engine.backend,translation=engine.translation_size),
                            model_options={'asr':asr_options,
                                           'translation':{k:v[0] for k,v in TRANSLATION.items()
@@ -468,7 +467,7 @@ def run_session(args, session, browser_ui=None):
                             save_preferences(preference_folder,models=value)
                             switching_models=False
                             from .model_selection import ASR,TRANSLATION
-                            if browser_ui:browser_ui.details(model_switching=False,model_selection=value,model_message='Модели готовы. Нажми «Продолжить».',models={'Распознавание':ASR[value['asr']][0],'Перевод':TRANSLATION['milmmt'][0],'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},target_languages=target_language_options())
+                            if browser_ui:browser_ui.details(model_switching=False,model_selection=value,model_message='Модели готовы. Нажми «Продолжить».',models={'Распознавание':ASR[current_asr(value['asr'])][0],'Перевод':TRANSLATION['milmmt'][0],'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},target_languages=target_language_options())
                             continue
                         if kind=='done':done=True;continue
                         if kind=='retry_done':

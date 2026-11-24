@@ -14,6 +14,7 @@ The folder holds sherpa-onnx/{encoder,decoder,joiner}.int8.onnx and tokens.txt (
 directly). When sherpa-onnx or the model is missing, `load` returns None and Whisper keeps
 writing the drafts.
 """
+import json
 import os
 import time
 from pathlib import Path
@@ -21,6 +22,8 @@ from pathlib import Path
 import numpy as np
 
 RATE = 16000
+# Source, revision, license and file hashes of the bundled model (logged with each session).
+MANIFEST = json.loads((Path(__file__).parent / 'streaming_asr_manifest.json').read_text(encoding='utf-8'))
 FILES = ('encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt')
 
 

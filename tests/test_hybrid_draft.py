@@ -110,5 +110,13 @@ class Summary(unittest.TestCase):
         self.assertEqual(backend['hebrew_word_lag']['p50'], .8)
 
 
+class Manifest(unittest.TestCase):
+    def test_bundled_model_manifest_names_its_source_for_the_session_log(self):
+        # cli.main logs these keys for every listen and benchmark session.
+        for key in ('source_repo','source_revision','license','files'):
+            self.assertIn(key,streaming_asr.MANIFEST)
+        self.assertEqual(set(streaming_asr.MANIFEST['files']),set(streaming_asr.FILES))
+
+
 if __name__ == '__main__':
     unittest.main()

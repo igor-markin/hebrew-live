@@ -40,17 +40,19 @@ TOPICS = {
 }
 
 
-RETIRED_MANIFEST_ASSETS={'translation_7b'}
-RETIRED_MODEL_DIRS={'translation-7b'}
+# Whisper ('asr', 'asr_multilingual') is gone: speech is recognized by the streaming model
+# bundled with the app. Old manifests that list it stay valid; its files are not checked.
+RETIRED_MANIFEST_ASSETS={'translation_7b','asr','asr_multilingual'}
+RETIRED_MODEL_DIRS={'translation-7b','asr','asr-multilingual'}
 
 
 def model_download_keys():
-    return ['asr','translation','vad']
+    return ['translation','vad']
 
 
 def desktop_model_download_keys():
     """Return the required desktop components prepared after first launch."""
-    return ['asr','translation','vad']
+    return ['translation','vad']
 
 
 def preference_folder(models):
@@ -72,13 +74,13 @@ def print_language_info():
     """Print model-card capabilities separately from the qualified product scope."""
     from .languages import target_languages
     print('Qualified live source language: Hebrew (he)')
-    print('Default target language: English (en)')
+    print('Target languages: Russian (ru), English (en); Hebrew to Russian and Hebrew to English are the only directions')
     print('Interface languages: English (en), Russian (ru), Hebrew (he)')
     values=target_languages()
     print(f'MiLMMT targets ({len(values)}):')
     print('  '+', '.join(f'{item.english_name} ({item.code})' for item in values))
     print(f'Overall product registry: {len(values)+1} languages including the qualified Hebrew source.')
-    print('The optional multilingual Whisper checkpoint has 99 language tokens upstream; this product does not qualify arbitrary-language live input.')
+    print('Speech in other languages is not recognized: the live recognizer is trained on Hebrew only, and the app does not qualify arbitrary-language live input.')
 
 
 def print_installed_storage(models=None, log_dir=None, uninstall=False):
@@ -106,7 +108,7 @@ def print_installed_storage(models=None, log_dir=None, uninstall=False):
         print('    explicit HF_HOME override; this path is not assumed to be app-owned and is excluded from the deletion plan')
     print(f'Python environment: {sys.prefix}')
     print(f'Command path: {Path(sys.argv[0]).expanduser().resolve()}')
-    print('Compatible --asr-model, --translation-model, and --vad-model paths are external user data and are never included in managed deletion.')
+    print('Compatible --translation-model and --vad-model paths are external user data and are never included in managed deletion.')
     if uninstall:
         print('')
         print('Dry run only; nothing was deleted.')
@@ -175,7 +177,7 @@ def asset_identity(spec,key):
 def core_spec(spec):
     """Exact legacy manifest identity; new manifests use every declared asset."""
     result={}
-    for key in LEGACY_ASSETS:
+    for key in set(LEGACY_ASSETS)&set(SPEC):
         identity=asset_identity(spec,key);identity.pop('sha256',None);result[key]=identity
     return result
 
@@ -190,9 +192,8 @@ def manifest_assets(manifest):
         if (not isinstance(assets,list) or not assets or len(assets)!=len(set(assets))
                 or any(not isinstance(key,str) or key not in known for key in assets)):
             raise ValueError('Invalid model manifest assets')
-        # Schema v2 supports both the original CLI setup (four assets) and the
-        # desktop setup (translation and VAD with ASR bundled into the app).
-        # Whisper ASR remains a valid optional CLI or explicit desktop asset.
+        # Schema v2 supports both the original CLI setup and the desktop setup
+        # (translation and VAD; speech recognition is bundled into the app).
         required={'translation','vad'}
         if not required.issubset(assets):raise ValueError('Model manifest omits required setup assets')
         for key in set(assets)&set(SPEC):
@@ -201,13 +202,11 @@ def manifest_assets(manifest):
         return set(assets)&set(SPEC),False
     if 'schema_version' in manifest:raise ValueError('Unsupported model manifest schema')
     if core_spec(spec)!=core_spec(SPEC):raise ValueError('Legacy model revisions changed')
-    return set(LEGACY_ASSETS),True
+    return set(LEGACY_ASSETS)&set(SPEC),True
 
 
 def required_model_files(asset):
     folder=SPEC.get(asset,{}).get('folder',asset)
-    if asset in ('asr','asr_multilingual'):
-        return ({f'{folder}/config.json',f'{folder}/weights.safetensors'},())
     if asset=='translation':
         return ({f'{folder}/config.json',f'{folder}/model.safetensors'},
                 (f'{folder}/tokenizer.json',f'{folder}/tokenizer.model'))
@@ -246,11 +245,11 @@ def verify(folder,required_assets=()):
             raise RuntimeError('Model integrity check failed; run setup')
 
 
-def validate_custom_models(models,asr=None,translation=None,vad=None,asr_backend='turbo'):
+def validate_custom_models(models,translation=None,vad=None):
     """Validate supported local model layouts without treating them as setup assets."""
     managed=models.resolve()
     values={}
-    for name,value,kind in (('ASR',asr,'directory'),('translation',translation,'directory'),('VAD',vad,'file')):
+    for name,value,kind in (('translation',translation,'directory'),('VAD',vad,'file')):
         if value is None:continue
         path=value.expanduser().resolve()
         if path==managed or path.is_relative_to(managed):
@@ -258,11 +257,6 @@ def validate_custom_models(models,asr=None,translation=None,vad=None,asr_backend
         if kind=='directory' and not path.is_dir():raise ValueError(f'Custom {name} model directory does not exist')
         if kind=='file' and not path.is_file():raise ValueError(f'Custom {name} model file does not exist')
         values[name.lower()]=path
-    if asr is not None:
-        if asr_backend != 'turbo':
-            raise ValueError('Only Whisper Turbo is supported')
-        if not (values['asr']/'config.json').is_file() or not (values['asr']/'weights.safetensors').is_file():
-            raise ValueError('Custom ASR model must be an MLX Whisper directory with config.json and weights.safetensors')
     if translation is not None:
         path=values['translation']
         has_tokenizer=(path/'tokenizer.json').is_file() or (path/'tokenizer.model').is_file()
@@ -276,7 +270,7 @@ def validate_custom_models(models,asr=None,translation=None,vad=None,asr_backend
 def bug_report(models):
     """Return a shareable metadata report without captions, audio, tokens or paths."""
     packages={}
-    for name in ('hebrew-live-cli','mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soundfile','soxr'):
+    for name in ('hebrew-live-cli','mlx','mlx-lm','onnxruntime','sherpa-onnx','sounddevice','soundfile','soxr'):
         try:packages[name]=importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:packages[name]=None
     manifest_status={'present':False,'readable':False,'spec_matches':False,'file_count':0}
@@ -293,7 +287,7 @@ def bug_report(models):
             except (KeyError,ValueError,TypeError):pass
         except (OSError,ValueError,TypeError):pass
     choices={
-        'asr':{key:(models/folder).is_dir() for key,(_,folder) in __import__('hebrew_live.model_selection',fromlist=['ASR']).ASR.items()},
+        'asr':{'streaming':__import__('hebrew_live.streaming_asr',fromlist=['bundled_model']).bundled_model() is not None},
         'translation':{key:(models/folder).is_dir() for key,(_,folder) in __import__('hebrew_live.model_selection',fromlist=['TRANSLATION']).TRANSLATION.items()},
     }
     return {
@@ -363,48 +357,19 @@ def translation_loop(text,source):
     return repeat_run(text)>repeat_run(source)
 
 
-LOOP_RETRY_TEMPERATURE=.3
-# Longest text a decode may be forced to start with; the rest of the 448-token context is
-# the vocabulary prompt (up to 200) and the new words.
-CONTINUED_TOKENS=180
-def loop_trim_enabled():
-    # Off by default until measured against main on saved recordings.
-    return os.environ.get('HEBREW_LIVE_LOOP_TRIM','0')=='1'
-
-
-def trim_loop(text):
-    """Text before the first runaway loop, keeping one copy of a repeated phrase."""
-    cut=len(text)
-    letters=re.search(r"([^\W\d_])\1{11,}",text,re.IGNORECASE)
-    if letters:
-        cut=text.rfind(' ',0,letters.start())+1
-    spans=[m.span() for m in re.finditer(r"\w+",text)]
-    words=[text[a:b].lower() for a,b in spans]
-    for start in range(len(words)):
-        if spans[start][0]>=cut:break
-        for size in range(3,min(16,(len(words)-start)//3)+1):
-            if words[start:start+size]==words[start+size:start+size*2]==words[start+size*2:start+size*3]:
-                cut=min(cut,spans[start+size][0]);break
-        else:continue
-        break
-    kept=text[:cut].rstrip(' ,')
-    return '' if repetition_loop(kept) else kept
-
-
 class Engine:
-    def __init__(self, folder, log, language='he', backend='turbo',
+    def __init__(self, folder, log, language='he', backend='streaming',
                  asr_path=None, translation_path=None, role='both'):
         if role not in ('both', 'asr', 'mt'):
             raise ValueError('Unknown inference role')
         self.role=role
-        if backend!='turbo':raise ValueError('Only Whisper Turbo is supported')
-        self.encoder_reuse=True
-        self.early_reject=os.environ.get('HEBREW_LIVE_EARLY_REJECT','1')!='0'
-        self.loop_stop=os.environ.get('HEBREW_LIVE_LOOP_STOP','1')!='0'
+        from .model_selection import current_asr
+        backend=current_asr(backend)
+        if backend!='streaming':raise ValueError('Speech is recognized by the bundled streaming model only')
         self.backend=backend
         self.translation_size='milmmt'
         self.language=language
-        self.direction="he-en"
+        self.direction="he-ru"
         self.topic="none"
         import mlx.core as mx
         from transformers.utils import logging as transformer_logging
@@ -413,25 +378,18 @@ class Engine:
         self.mx=mx;self.log=log
         from .mlx_runtime import describe
         self.log.event('mlx_runtime',**describe(mx))
-        self.custom_models=asr_path is not None or translation_path is not None
-        self.asr=None;self.model=None;self.tokenizer=None
+        if asr_path is not None:raise ValueError('Custom speech recognition models are no longer supported')
+        self.custom_models=translation_path is not None
+        self.model=None;self.tokenizer=None
         from . import vocabulary
         # The owner's words: recognition gets their spelling, translation their meaning. The file
         # is watched, so words edited in the window reach the next translation.
         self.vocabulary_file=vocabulary.Watched() if vocabulary.enabled() else None
         self.vocabulary=self.vocabulary_file.current() if self.vocabulary_file else []
         self.log.event('vocabulary_loaded',entries=len(self.vocabulary),reason='start')
-        self.asr_path=str(asr_path or folder/'asr')
+        self.asr_path=None
         from .model_selection import TRANSLATION, validate
         validate(dict(asr=backend,translation='milmmt'))
-        if role!='mt':
-            import mlx_whisper
-            self.asr=mlx_whisper
-            if asr_path is None and not (folder/'asr').is_dir():
-                raise ValueError('Model not installed')
-            self.log.event('asr_early_reject_config',enabled=self.early_reject,loop_stop=self.loop_stop,
-                           scope='phrases/he-source/he/turbo')
-            self.prepare_asr_prompt()
         if role!='asr':
             if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
                 raise ValueError('Model not installed')
@@ -447,10 +405,6 @@ class Engine:
         """Release native model state before Python starts tearing down MLX locks."""
         import gc,importlib
         self.mx.synchronize()
-        if getattr(self,'role','both')!='mt':
-            holder=importlib.import_module('mlx_whisper.transcribe').ModelHolder
-            holder.model=None;holder.model_path=None
-        self.asr=None
         self.model=None;self.tokenizer=None
         gc.collect();self.mx.synchronize();self.mx.clear_cache()
 
@@ -462,10 +416,6 @@ class Engine:
         direction,topic=self.direction,self.topic
         self.log.event('model_load_start',**values)
         self.mx.synchronize()
-        if getattr(self,'role','both')!='mt':
-            holder=importlib.import_module('mlx_whisper.transcribe').ModelHolder
-            holder.model=None;holder.model_path=None
-        self.asr=None
         self.model=None;self.tokenizer=None
         gc.collect();self.mx.clear_cache()
         # Runs only in the inference worker, after all preceding final jobs.
@@ -474,119 +424,13 @@ class Engine:
         self.warmup()
         self.log.event('model_load_complete',**values)
 
-    def prepare_asr_prompt(self):
-        """The owner's words become the text Whisper believes preceded the audio."""
-        from . import vocabulary
-        self.asr_prompt=None
-        entries=self.vocabulary if vocabulary.asr_enabled() else []
-        if not entries:return
-        text,used=vocabulary.asr_prompt(entries,self.asr_tokens)
-        self.asr_prompt=text or None
-        self.log.event('vocabulary',entries=len(entries),used=len(used),prompt_tokens=self.asr_tokens(text) if text else 0)
-
-    def asr_tokens(self, text):
-        """How many tokens Whisper spends on `text`."""
-        if getattr(self,'_asr_encode',None) is None:
-            from mlx_whisper.tokenizer import get_tokenizer
-            self._asr_encode=get_tokenizer(True,num_languages=100,language='he',task='transcribe').encode
-        return len(self._asr_encode(' '+text.strip()))
-
     def can_continue(self, text):
-        """Whether a decode may be forced to start with `text` (see `recognize(continues=)`).
-        Whisper's context holds 448 tokens: the vocabulary prompt, this text and the new words."""
-        from .whisper_reuse import compatible
-        return bool(text.strip()) and compatible() and self.asr_tokens(text)<=CONTINUED_TOKENS
+        """Whisper's forced-start decode is gone: nothing can be continued."""
+        return False
 
-    def recognize(self, audio, prefix=0, *, preliminary=False, mode=None, align_words=True, until=None, continues=''):
-        """`prefix` and `until` (seconds) bound the words kept from a window that also holds
-        neighbouring audio for context. `continues` is text already accepted for the start of
-        this audio: the decoder begins with it and only what follows is recognized and returned."""
-        if getattr(self,'role','both')=='mt':raise RuntimeError('MT worker cannot recognize audio')
-        self.recognition_status='empty'
-        self.recognition_issue=None
-        self.raw_recognition=''
-        self.recognition_words=[]
-        from .languages import split_direction
-        source_language, _ = split_direction(self.direction)
-        loop_stop=getattr(self,'loop_stop',False)
-        early=((preliminary or loop_stop) and mode=='phrases' and getattr(self,'early_reject',False)
-               and getattr(self,'backend',None)=='turbo' and self.language=='he'
-               and source_language=='he')
-        word_timestamps = align_words or prefix > 0 or until is not None
-        if continues and word_timestamps:
-            # Alignment would spread the new words over the whole window, the forced start included.
-            raise ValueError('A continued decode has no word times')
-        from .whisper_reuse import reuse_alignment
-        from .whisper_repetition import reject_repeated_decode, RepeatedDecode
-        prompt=getattr(self,'asr_prompt',None) if self.language=='he' and source_language=='he' else None
-        extra={}   # no vocabulary and no forced start: the call is unchanged
-        if prompt:extra['initial_prompt']=prompt
-        # A continued decode runs without timestamp tokens: with them it added errors
-        # (experiments/tail-only). A whole decode keeps them: without them Whisper invents
-        # words on silence and noise (41 words against 4 on eleven synthetic signals).
-        if continues:extra.update(prefix=continues,without_timestamps=True)
-        def decode(temperature):
-            with reject_repeated_decode(early,self.log.event,loop_stop):
-                with reuse_alignment(getattr(self,'encoder_reuse',False) and word_timestamps,self.log.event):
-                    return self.asr.transcribe(audio,path_or_hf_repo=self.asr_path,language=None if self.language=='auto' else self.language,task='transcribe',
-                        temperature=temperature,word_timestamps=word_timestamps,condition_on_previous_text=False,verbose=None,**extra)
-        trimmed=None
-        try:
-            result=decode(0.0)
-        except RepeatedDecode as exc:
-            self.recognition_issue='early repeated recognition'
-            self.log.event('recognition_early_repetition',reason=self.recognition_issue,
-                           raw_text=exc.text,tokens=exc.tokens)
-            if not loop_trim_enabled():
-                self.recognition_status='rejected';self.recognition_words=[]
-                self.raw_recognition=exc.text
-                return ''
-            # Whisper often loops only after correct words. Keep those words instead of
-            # losing the whole window. Trimmed text has no word times, so a prefix
-            # (context) window cannot be split and stays rejected.
-            trimmed=trim_loop(exc.text) if prefix==0 and until is None else ''
-            result=None
-            if not preliminary and prefix==0 and until is None:
-                # The closing decode decides what stays on screen: one sampled retry.
-                try:result=decode(LOOP_RETRY_TEMPERATURE)
-                except RepeatedDecode as retry:
-                    again=trim_loop(retry.text)
-                    if len(again.split())>len(trimmed.split()):trimmed=again
-                self.log.event('recognition_loop_retry',accepted=result is not None)
-            if result is None:
-                if len(trimmed.split())<2:
-                    self.recognition_status='rejected';self.recognition_words=[]
-                    self.raw_recognition=exc.text
-                    return ''
-                self.log.event('recognition_loop_trimmed',text=trimmed)
-        if result is not None:
-            self.recognition_issue=None
-            self.log.event('recognition_quality',language=result.get('language'),segments=[{k:s.get(k) for k in ('avg_logprob','compression_ratio','no_speech_prob')} for s in result.get('segments',[])])
-            words=([w for s in result.get('segments',[]) for w in s.get('words',[])
-                    if prefix<=(w['start']+w['end'])/2 and (until is None or (w['start']+w['end'])/2<until)]
-                   if word_timestamps else [])
-            text=(''.join(w['word'] for w in words) if word_timestamps else
-                  ''.join(s.get('text','') for s in result.get('segments',[]))).strip()
-        else:
-            words,text=[],trimmed
-        self.recognition_words=words
-        self.raw_recognition=text
-        from .script_filter import clearly_non_hebrew
-        if self.language=='he' and source_language=='he' and clearly_non_hebrew(text):
-            self.recognition_status='rejected';self.recognition_words=[]
-            self.recognition_issue='non-Hebrew transcript'
-            self.log.event('recognition_script_filtered',requested_language='he',reason=self.recognition_issue)
-            return ''
-        if self.language == 'ru' and len(re.findall(r'[א-ת]',text)) > len(re.findall(r'[А-Яа-яЁё]',text)):
-            self.recognition_status='rejected';self.recognition_words=[]
-            self.recognition_issue='ASR returned Hebrew instead of Russian'
-            self.log.event('recognition_script_mismatch',requested_language='ru')
-            return ''
-        if repetition_loop(text):
-            self.recognition_status='rejected';self.recognition_words=[]
-            self.log.event('recognition_repetition');self.recognition_issue='repeated recognition';return ''
-        self.recognition_status='accepted' if text else 'empty'
-        return text
+    def recognize(self, *args, **kwargs):
+        """Whisper was removed: speech is recognized by the streaming model (append_live)."""
+        raise RuntimeError('Whisper speech recognition was removed; the live screen uses the streaming model')
     accepts_hint=accepts_context=True
     def translate(self, text, hint='', context=()):
         """Stream the translation; `hint` is the previous translation of the same growing phrase,
@@ -645,13 +489,6 @@ class Engine:
     def warmup(self):
         import numpy as np
         t=time.monotonic()
-        silence=np.zeros(16000,dtype=np.float32)
-        if getattr(self,'role','both')!='mt':
-            self.asr.transcribe(silence,path_or_hf_repo=self.asr_path,language=self.language,
-                               temperature=0.,word_timestamps=True,condition_on_previous_text=False,verbose=None)
-            from . import whisper_speed
-            if whisper_speed.enabled():
-                whisper_speed.prepare(importlib.import_module('mlx_whisper.transcribe').ModelHolder.model,self.log.event)
         if getattr(self,'role','both')!='asr':list(self.translate('שלום.'))
         self.log.event('warmup_finished',role=getattr(self,'role','both'),seconds=time.monotonic()-t,
                        peak_memory=self.mx.get_peak_memory())
@@ -873,7 +710,7 @@ def run(args, log):
         from .browser_ui import BrowserUI
         with BrowserUI(open_browser=not getattr(args,'no_open_browser',False),live=getattr(args,'publication',None) in ('revisable','draft')) as browser:
             from .model_selection import ASR,TRANSLATION
-            asr_label='Custom local MLX Whisper' if getattr(args,'asr_model',None) else ASR[args.asr_backend][0]
+            asr_label=ASR['streaming'][0]
             translation_label=('Custom local MLX-LM' if getattr(args,'translation_model',None)
                                else TRANSLATION['milmmt'][0])
             browser.details(direction=args.direction,models={'Распознавание':asr_label,
@@ -928,21 +765,20 @@ def main():
     listen.add_argument('--phone',action='store_true',help="Take the other side of a phone call from an Android phone over USB (needs scrcpy and USB debugging) instead of the microphone")
     bench=sub.add_parser('benchmark');bench.add_argument('file',type=Path)
     for command in (doctor,listen,bench):
-        command.add_argument('--asr-model',type=Path,help='Compatible local Whisper Turbo MLX directory outside the managed models folder')
         command.add_argument('--translation-model',type=Path,help='Compatible local MLX-LM directory outside the managed models folder')
         command.add_argument('--vad-model',type=Path,help='Compatible local Silero VAD ONNX file outside the managed models folder')
-    doctor.add_argument('--asr-backend',choices=('turbo',),default='turbo',help='Recognition contract for the selected ASR model')
+    doctor.add_argument('--asr-backend',choices=('streaming','turbo'),default='streaming',help="Speech recognition: the bundled streaming model ('turbo' is its old name)")
     for command in (listen,bench):
         command.add_argument('--publication',choices=('draft',),default=None)
         command.add_argument('--start-paused',action='store_true')
         command.add_argument('--no-open-browser',action='store_true')
         command.add_argument('--translation-mode',choices=('phrases',),default=None)
-        command.add_argument('--asr-backend',choices=('turbo',),default='turbo')
+        command.add_argument('--asr-backend',choices=('streaming','turbo'),default='streaming')
         command.add_argument('--ui',choices=('auto','browser','terminal','plain'),default='auto')
         command.add_argument('--language',choices=('he','en','ru'),default=None)
         from .languages import target_languages
-        directions=tuple(['he-'+item.code for item in target_languages()]+['ru-he'])
-        command.add_argument('--direction',choices=directions,default='he-en')
+        directions=tuple('he-'+item.code for item in target_languages())
+        command.add_argument('--direction',choices=directions,default='he-ru')
         command.add_argument('--topic',choices=tuple(TOPICS),default='none')
         command.add_argument('--save-raw-audio',action=argparse.BooleanOptionalAction,default=None,
                              help='Persist source WAV files in the session archive (default: saved preference or enabled)')
@@ -970,7 +806,9 @@ def main():
     except RuntimeError as exc:parser.error(str(exc))
     custom_models={}
     if args.command in ('doctor','listen','benchmark'):
-        try:custom_models=validate_custom_models(args.models,args.asr_model,args.translation_model,args.vad_model,args.asr_backend)
+        from .model_selection import current_asr
+        args.asr_backend=current_asr(args.asr_backend)
+        try:custom_models=validate_custom_models(args.models,args.translation_model,args.vad_model)
         except ValueError as exc:parser.error(str(exc))
     if args.command in ('listen','benchmark'):
         args.bridge_models=None
@@ -980,7 +818,7 @@ def main():
         if args.save_raw_audio is None:args.save_raw_audio=saved_preferences.get('save_raw_audio',True)
         saved=saved_preferences.get('models',{})
         if saved and not custom_models:
-            if not any(x=='--asr-backend' or x.startswith('--asr-backend=') for x in sys.argv):args.asr_backend=saved['asr']
+            if not any(x=='--asr-backend' or x.startswith('--asr-backend=') for x in sys.argv):args.asr_backend=current_asr(saved['asr'])
         for notice in saved_preferences.get('preference_notices',()):print('Preference notice: '+notice,file=sys.stderr)
         if (saved_preferences.get('target_language') and
                 not any(x=='--direction' or x.startswith('--direction=') for x in sys.argv)):
@@ -990,12 +828,13 @@ def main():
         from .languages import validate_direction
         try:validate_direction(args.direction)
         except ValueError as exc:parser.error(str(exc))
-    active_models={'asr':dict(SPEC['asr']),'translation':dict(SPEC['translation'])}
-    if custom_models.get('asr'):active_models['asr']={'source':'custom local MLX Whisper','contract':getattr(args,'asr_backend','turbo')}
+    from .streaming_asr import MANIFEST as STREAMING_ASR
+    active_models={'asr':{key:STREAMING_ASR[key] for key in ('source_repo','source_revision','license')},
+                   'translation':dict(SPEC['translation'])}
     if custom_models.get('translation'):active_models['translation']={'source':'custom local MLX-LM','contract':'milmmt'}
-    metadata=dict(asr_backend=getattr(args,'asr_backend','turbo'),models=active_models, python=sys.version,
+    metadata=dict(asr_backend=getattr(args,'asr_backend','streaming'),models=active_models, python=sys.version,
                   code_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.iterdir() if p.suffix in ('.py','.html','.js','.css')},
-                  versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')})
+                  versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-lm','onnxruntime','sherpa-onnx','sounddevice','soxr')})
     log = (Session(args.log_dir,args.direction,dict(metadata,topic=args.topic,language=args.language or args.direction[:2]),
                    save_audio=getattr(args,'save_raw_audio',True))
            if args.command in ('listen','benchmark') else Log(args.log_dir,args.debug_text))
@@ -1006,7 +845,7 @@ def main():
     try:
         from .mlx_runtime import wheel_tags
         log.event('start',command=args.command,models=active_models,debug_text=args.debug_text,python=sys.version,
-            versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-whisper','mlx-lm','onnxruntime','sounddevice','soxr')},
+            versions={p:importlib.metadata.version(p) for p in ('mlx','mlx-lm','onnxruntime','sherpa-onnx','sounddevice','soxr')},
             mlx_wheel_tags=wheel_tags())
         if args.command=='setup':setup(args.models)
         else:
@@ -1016,11 +855,10 @@ def main():
                 print(sd.query_devices())
             elif args.command=='doctor':
                 required=set()
-                if not custom_models.get('asr'):required.add('asr')
                 if not custom_models.get('translation'):required.add('translation')
                 if not custom_models.get('vad'):required.add('vad')
                 if required:verify(args.models,required)
-                engine=Engine(args.models,log,backend=args.asr_backend,asr_path=custom_models.get('asr'),
+                engine=Engine(args.models,log,backend=args.asr_backend,
                               translation_path=custom_models.get('translation'))
                 engine.warmup();vad=VAD(custom_models.get('vad',args.models/'silero.onnx'))
                 import numpy as np

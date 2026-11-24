@@ -76,7 +76,7 @@ class TranslationScreen:
         self.generation = 0
         self.contexts = {}
         self.top = None
-        self.direction = 'he-en'
+        self.direction = 'he-ru'
         self.topic = 'none'
         self._line_cache = (None, None)
 
@@ -408,7 +408,7 @@ class Terminal:
                 self.put(row,left+cell_len(plain[:begin]),plain[begin:finish],attr)
         if h>=5:
             self.put(h-2,0,f'{top+1}–{min(total,top+height)}/{total} · End: latest')
-            self.put(h-1,0,'Space: pause · ^L: clear · ^T: direction · Q: stop')
+            self.put(h-1,0,'Space: pause · ^L: clear · Q: stop')
         # Native BiDi paints outside curses' logical cell bookkeeping. A diff
         # against that bookkeeping leaves ghosts and shifted punctuation.
         # In Apple Terminal, redraw only when the visible body/geometry changes;

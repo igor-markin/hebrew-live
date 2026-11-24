@@ -2,7 +2,7 @@ export const PROTOCOL_VERSION = 1;
 export const AGREEMENT_VERSION = "2026-10-05";
 
 export type UiLocale = "en" | "ru";
-export type RecognitionMode = "turbo";
+export type RecognitionMode = "streaming";
 
 export interface DesktopPreferences {
   schemaVersion: 1;

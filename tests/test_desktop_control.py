@@ -9,16 +9,18 @@ from hebrew_live.desktop_control import DesktopController, ProtocolError, Protoc
 
 
 class DesktopControlTests(unittest.TestCase):
-    def test_desktop_whisper_is_fixed_and_rejects_other_backends(self):
+    def test_desktop_streaming_recognition_is_fixed_and_rejects_other_backends(self):
         with tempfile.TemporaryDirectory() as tmp:
             models = Path(tmp) / "models"
-            self.assertEqual(desktop_asr_backend(models), "turbo")
+            self.assertEqual(desktop_asr_backend(models), "streaming")
+            # A shell from an earlier release still names Whisper Turbo.
+            self.assertEqual(desktop_asr_backend(models, "turbo"), "streaming")
             with self.assertRaisesRegex(Exception, "Unsupported recognition mode"):
                 desktop_asr_backend(models, "fast")
             from hebrew_live.preferences import save
             save(models.parent / ".local-settings",
                  models={"asr": "turbo", "translation": "milmmt"})
-            self.assertEqual(desktop_asr_backend(models), "turbo")
+            self.assertEqual(desktop_asr_backend(models), "streaming")
 
     def test_desktop_inventory_uses_all_bundled_components(self):
         components = [

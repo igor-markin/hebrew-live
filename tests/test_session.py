@@ -133,31 +133,27 @@ class SessionTests(unittest.TestCase):
             control.accept(np.full(4800,.1,dtype=np.float32),time.monotonic())
             self.assertTrue(control.key(' ',1))
             self.assertFalse(control.accept(np.full(4800,.9,dtype=np.float32),time.monotonic()))
-            self.assertTrue(control.key('\x14',2)) # Direction while paused.
+            self.assertFalse(control.key('\x14',2)) # Hebrew to Russian is the only direction.
             self.assertTrue(control.key(' ',3))
             control.accept(np.full(4800,.2,dtype=np.float32),time.monotonic())
             self.assertTrue(control.key('\x0c',4))
             control.accept(np.full(4800,.3,dtype=np.float32),time.monotonic())
-            self.assertTrue(control.key('\x14',5))
+            self.assertFalse(control.key('\x14',5))
             control.accept(np.full(4800,.4,dtype=np.float32),time.monotonic())
             control.queue.put(None)
             for t in (writer,consumer,infer):t.join(5);self.assertFalse(t.is_alive())
             self.assertTrue(errors.empty(), list(errors.queue))
             folder=session.path;session.close()
-            self.assertEqual(len(list(folder.iterdir())),14)  # + summary.json
-            for number,expected in ((1,[.1]),(2,[.2,.3]),(3,[.4])):
-                wav=next(folder.glob(f'{number:03d}-*.wav'))
-                data,rate=sf.read(wav)
-                self.assertEqual(rate,48000)
-                np.testing.assert_allclose(data,np.repeat(expected,4800),atol=1e-6)
-                self.assertEqual(os.stat(wav).st_mode & 0o777,0o600)
+            self.assertEqual(sorted(path.name for path in folder.glob('*.wav')),['001-he-ru.audio.wav'])
+            data,rate=sf.read(folder/'001-he-ru.audio.wav')
+            self.assertEqual(rate,48000)
+            np.testing.assert_allclose(data,np.repeat([.1,.2,.3,.4],4800),atol=1e-6)  # the paused audio is gone
+            self.assertEqual(os.stat(folder/'001-he-ru.audio.wav').st_mode & 0o777,0o600)
             self.assertEqual(os.stat(folder).st_mode & 0o777,0o700)
-            source=(folder/'002-ru-he.transcript.txt').read_text()
-            self.assertEqual(source.count('Привет'),2)
-            self.assertIn('0.000–0.100s',source)
-            self.assertIn('0.100–0.200s',source)
-            self.assertEqual(calls,[('he','he-ru'),('ru','ru-he'),('ru','ru-he'),('he','he-ru')])
-            self.assertIn('שלום.',(folder/'002-ru-he.translation.txt').read_text())
+            source=(folder/'001-he-ru.transcript.txt').read_text()
+            self.assertIn('שלום',source);self.assertNotIn('Привет',source)
+            self.assertTrue(calls);self.assertEqual(set(calls),{('he','he-ru')})
+            self.assertIn('Привет.',(folder/'001-he-ru.translation.txt').read_text())
 
     def test_failed_translation_keeps_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -209,8 +205,8 @@ class ControlTests(unittest.TestCase):
     def test_full_queue_does_not_commit_switch(self):
         control=Control(Settings(),threading.Event())
         for i in range(300):control.queue.put(i)
-        with self.assertRaises(queue.Full):control.key('\x14')
-        self.assertEqual(control.settings.direction,'he-ru')
+        with self.assertRaises(queue.Full):control.key(' ')
+        self.assertFalse(control.paused)
 
     def test_clear_rejects_late_result_without_clearing_persistence(self):
         screen=TranslationScreen();screen.update('context',1,Settings())
@@ -254,30 +250,6 @@ class ScriptAndDisplayTests(unittest.TestCase):
         yellow=''.join(visual.plain[s.start:s.end] for s in visual.spans if str(s.style)=='yellow')
         self.assertEqual(yellow,'Привет')
         self.assertEqual(logical.plain,'שלום 12 Привет')
-
-    def test_wrong_script_rejected_and_not_translated(self):
-        from hebrew_live.cli import Engine
-        with tempfile.TemporaryDirectory() as tmp:
-            session=Session(Path(tmp),'ru-he',{})
-            engine=Engine.__new__(Engine)
-            from unittest.mock import Mock
-            engine.language_guard=Mock();engine.language_guard.reject.return_value=None
-            engine.language='ru';engine.asr_path='fake';engine.log=session
-            class ASR:
-                @staticmethod
-                def transcribe(*a,**kw):
-                    assert kw['language']=='ru'
-                    return {'language':'ru','segments':[{'words':[{'start':0,'end':.1,'word':' שלום'}]}]}
-            engine.asr=ASR()
-            box=Inbox();box.put(Fragment(1,1,np.ones(3200),0,time.monotonic(),True,Settings(direction='ru-he',language='ru'),.2));box.finish()
-            errors=queue.Queue();updates=queue.Queue()
-            inference(box,engine,updates,threading.Event(),errors,session)
-            folder=session.path;session.close()
-            self.assertTrue(errors.empty(),list(errors.queue))
-            self.assertIn('Речь не распознана',(folder/'001-ru-he.transcript.txt').read_text())
-            self.assertIn('שלום',engine.raw_recognition)
-            self.assertIn('ASR returned Hebrew',(folder/'001-ru-he.diagnostics.jsonl').read_text())
-            self.assertIn('Речь не распознана',(folder/'001-ru-he.translation.txt').read_text())
 
     def test_library_diagnostics_share_fourth_file_without_arbitrary_text(self):
         import logging

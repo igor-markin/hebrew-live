@@ -19,12 +19,3 @@ class AcceptanceTests(unittest.TestCase):
   b=PhraseBuffer();b.update(self.words(),0,2,1);b.update([],0,3,1,True,'empty')
   b.update(self.words(),0,4,1,True,'accepted');u=b.take(4,quiet=.6,final=True)
   self.assertFalse(u[0].unconfirmed)
- def test_real_recognize_rejection_never_translated_in_phrase_mode(self):
-  for language,text in [('he','א'+'ה'*30),('ru','שלום')]:
-   log=SimpleNamespace(event=lambda *a,**kw:None)
-   e=Engine.__new__(Engine);e.language=language;e.asr_path='fake';e.log=log;e.language_check='off'
-   e.asr=SimpleNamespace(transcribe=lambda *a,**k:dict(segments=[dict(words=[dict(word=text,start=0,end=1)])]))
-   e.translate=lambda *a:(_ for _ in ()).throw(AssertionError('Rejected words translated'))
-   pp=PhraseProcessor(e,queue.Queue(),log,threading.Event())
-   pp.process(Fragment(1,1,np.zeros(32000),0,time.monotonic(),True,Settings(language=language,mode='phrases'),2,0))
-   self.assertEqual(e.recognition_status,'rejected');self.assertEqual(e.recognition_words,[]);self.assertEqual(e.raw_recognition,text)

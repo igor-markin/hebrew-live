@@ -59,44 +59,6 @@ class RecognizerPromptTests(unittest.TestCase):
         self.assertEqual(asr_prompt([], words), ('', []))
         self.assertEqual(asr_prompt(entries, words, budget=0), ('', []))
 
-    def engine(self, calls):
-        engine = Engine.__new__(Engine)
-        engine.language = 'he'; engine.direction = 'he-ru'; engine.early_reject = False; engine.encoder_reuse = False
-        engine.asr_path = 'fake'; engine.log = SimpleNamespace(event=lambda *a, **kw: calls.append((a, kw)))
-        engine.asr = SimpleNamespace(transcribe=lambda *a, **kw: (calls.append(kw), dict(
-            language='he', segments=[dict(words=[dict(word='שלום', start=0, end=1)])]))[1])
-        return engine
-
-    def test_recognition_passes_the_prompt_only_when_there_is_one_and_the_source_is_hebrew(self):
-        calls = []; engine = self.engine(calls)
-        engine.recognize([])
-        self.assertNotIn('initial_prompt', calls[0])            # no vocabulary: the call is unchanged
-        engine.asr_prompt = 'תכנית, ארנונה'; calls.clear()
-        self.assertEqual(engine.recognize([]), 'שלום')
-        self.assertEqual(calls[0]['initial_prompt'], 'תכנית, ארנונה')
-        engine.direction = 'ru-he'; engine.language = 'ru'; calls.clear()
-        engine.recognize([])
-        self.assertNotIn('initial_prompt', calls[0])
-
-    def test_engine_builds_the_prompt_with_the_recognizer_tokenizer(self):
-        calls = []; engine = self.engine(calls)
-        engine.vocabulary = []
-        engine.prepare_asr_prompt()
-        self.assertIsNone(engine.asr_prompt); self.assertEqual(calls, [])
-        engine.vocabulary = [Entry(f'מילה{index}') for index in range(200)]
-        engine.prepare_asr_prompt()
-        self.assertIsNone(engine.asr_prompt)                   # off by default: a long list hurt ordinary speech
-        with mock.patch.dict('os.environ', {'HEBREW_LIVE_VOCABULARY_ASR': '1'}):
-            engine.prepare_asr_prompt()
-        (name,), event = calls[-1]
-        self.assertEqual(name, 'vocabulary'); self.assertEqual(event['entries'], 200)
-        self.assertEqual(len(engine.asr_prompt.split(', ')), event['used']); self.assertTrue(engine.asr_prompt.endswith('.'))
-        self.assertTrue(0 < event['used'] < 200)
-        self.assertTrue(vocabulary.ASR_PROMPT_TOKENS - 10 < event['prompt_tokens'] <= vocabulary.ASR_PROMPT_TOKENS)
-        with mock.patch.dict('os.environ', {'HEBREW_LIVE_VOCABULARY': '0'}):
-            self.assertFalse(vocabulary.enabled())
-
-
 class TranslatorTermsTests(unittest.TestCase):
     ENTRIES = [Entry('חיפה', 'Хайфа', 'Haifa'), Entry('גן ילדים', 'детский сад'), Entry('תכנית', en='programme'),
                Entry('רז', 'Раз')]

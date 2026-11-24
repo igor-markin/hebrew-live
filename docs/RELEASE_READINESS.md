@@ -75,7 +75,7 @@ A clean install on a second Mac remains a release gate.
 The standalone repository is
 [github.com/igor-markin/hebrew-live](https://github.com/igor-markin/hebrew-live), which
 publishes the reviewed source independently from its former private monorepository.
-The standalone CI uses GitHub's current `macos-14` arm64 label and asserts
+The standalone CI uses GitHub's current `macos-15` arm64 label and asserts
 `uname -m=arm64`; the label is listed in the official
 [runner-images table](https://github.com/actions/runner-images#available-images).
 

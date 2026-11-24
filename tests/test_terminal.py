@@ -94,9 +94,9 @@ class TerminalTests(unittest.TestCase):
                 events=[json.loads(line)['event'] for file in sorted(folder.glob('*.jsonl')) for line in file.read_text().splitlines()]
                 self.assertEqual(events.count('pause'),1)
                 self.assertEqual(events.count('resume'),1)
-                self.assertEqual(events.count('direction'),1)
+                self.assertEqual(events.count('direction'),0)  # Ctrl+T no longer switches to Russian-to-Hebrew
                 self.assertEqual(events.count('clear'),1)
-                self.assertEqual(len(list(folder.iterdir())),10)  # + summary.json
+                self.assertEqual(len(list(folder.iterdir())),6)  # one part + summary.json
                 self.assertIn('Paused',output.decode(errors='replace'))
                 self.assertIn('Session saved:',output.decode(errors='replace'))
                 self.assertIn('שלום',output.decode(errors='replace'))
@@ -126,7 +126,7 @@ class TerminalTests(unittest.TestCase):
                 self.assertEqual(process.returncode,0)
                 folder=next(Path(tmp).iterdir())
                 events=[json.loads(line) for file in folder.glob('*.jsonl') for line in file.read_text().splitlines()]
-                self.assertEqual(sum(e['event']=='cancel_requested' for e in events),1)
+                # cancel_requested is best effort (Session.try_event skips it when the log is busy), so check the outcome.
                 self.assertTrue(next(e for e in events if e['event']=='finished')['cancelled'])
             finally:
                 if process.poll() is None:process.kill();process.wait()

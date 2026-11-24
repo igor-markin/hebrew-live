@@ -3,8 +3,10 @@
 This guide contains the command-line details intentionally kept out of the main
 [desktop README](../README.md). The CLI opens the same local interface in a web browser
 and preserves compatibility with the four-component model set of earlier alphas.
-Recognition uses Whisper Turbo only: a manifest that lists the optional multilingual
-ASR model is still accepted, but that model can no longer be selected.
+Speech is recognized by the bundled streaming model (zipformer2-66m-streaming-he);
+Whisper is no longer downloaded or used. A manifest from an earlier setup that lists
+Whisper is still accepted; its files are not checked. Hebrew to Russian is the only
+translation direction.
 
 ## Supported platform
 
@@ -55,26 +57,22 @@ Later prepared launches use the frozen environment and can run without network a
 Useful recording options follow the subcommand:
 
 ```sh
-./run.sh listen --direction he-en
-./run.sh listen --direction he-ru --device 2 --start-paused
+./run.sh listen
+./run.sh listen --device 2 --start-paused
 ```
 
 Run `./run.sh listen --help` or `./run.sh benchmark --help` for the complete option
-list. The default input contract is Hebrew and the default target is English.
+list. The input is Hebrew speech and the translation is Russian.
 
 ## Language controls
 
-The Settings menu can change the translation target while recording. Audio already in
-the ordered pipeline keeps its original target; newly captured audio starts a new
-session part. Existing cards, files, retries, and archive metadata are never relabelled.
+The translation target is Russian (default) or English. Archived sessions recorded with other targets keep
+their original labels and still open.
 
 Interface language is a separate saved preference. Browser mode supports English,
 Russian, and Hebrew/RTL. The desktop app deliberately exposes English and Russian only.
 
-`./run.sh languages` prints the source-of-truth target list. The pinned MiLMMT model
-provides 45 translation targets after excluding Hebrew-to-Hebrew. The Whisper
-tokenizer has a wider upstream vocabulary, but that does not expand Hebrew Live's
-qualified live-input contract.
+`./run.sh languages` prints the source-of-truth target list: Russian and English.
 
 ## Compatible local models
 
@@ -82,18 +80,15 @@ The CLI accepts explicit local model paths:
 
 ```sh
 ./run.sh doctor \
-  --asr-model /absolute/path/to/mlx-whisper \
   --translation-model /absolute/path/to/mlx-lm \
   --vad-model /absolute/path/to/silero_vad.onnx
 
 ./run.sh listen \
-  --asr-model /absolute/path/to/mlx-whisper \
   --translation-model /absolute/path/to/mlx-lm \
   --vad-model /absolute/path/to/silero_vad.onnx
 ```
 
-The ASR directory must contain compatible MLX Whisper configuration and weights. The
-translator must match the MiLMMT prompt and tokenizer contract. The ONNX file must
+The translator must match the MiLMMT prompt and tokenizer contract. The ONNX file must
 match the [Silero VAD](https://github.com/snakers4/silero-vad/blob/867c2aa692646a1f1de3e94a15c9dd9f614c0acb/src/silero_vad/data/silero_vad.onnx)
 interface used to distinguish speech from silence.
 

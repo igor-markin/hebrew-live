@@ -27,6 +27,7 @@ Prints one JSON line of numbers per recording; speech text goes only to --text-d
 """
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -54,6 +55,7 @@ QUIET = 1.   # seconds without a newer word after which the last word may be tra
 PAUSE_GATES = __import__('os').environ.get('SIM_PAUSE_GATES', '1') == '1'
 DEBUG = bool(__import__('os').environ.get('SIM_DEBUG'))
 NOISE = 0.            # --pause-noise: level of the 'silence' fed at a pause
+NUMBER_WAIT = os.environ.get('SIM_NUMBER_WAIT', '1') != '0'   # clause: a live call stops before an unheard number
 
 
 class Log:
@@ -630,6 +632,11 @@ class ClauseTranslator(AlignAttTranslator):
             added, end = self.gpu.run(now, lambda: self.generate(text, forced, 0, upto, 0))
         finally:
             self.new_words_cap = None
+        if NUMBER_WAIT and added:
+            from hebrew_live.number_guard import unheard
+            cut = unheard(text, forced, added, 'he', DIRECTION.split('-')[1])
+            if cut is not None:
+                added, self.last_stop = added[:cut], 'number'
         self.timings.append((upto - self.covered, time.perf_counter() - began))
         if DEBUG:
             print('CALL', round(now, 2), self.covered, upto, len(self.sentence), commas, self.last_stop, added, file=sys.stderr)

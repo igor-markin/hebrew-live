@@ -203,6 +203,24 @@ class Append(unittest.TestCase):
         checks = [v for n, v in self.events if n == 'weekday_check']
         self.assertEqual([i['kind'] for c in checks for i in c['issues']], ['fixed'])
 
+    def test_a_live_call_stops_before_a_number_the_hebrew_has_not_said(self):
+        class Numbers(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, close=close))
+                if close:
+                    return Result(['Для', 'жилья', 'нажмите', '2.'][len(forced.split()):], 'end')
+                return Result(['Для', 'жилья', 'нажмите', '2'][len(forced.split()):], 'end')
+        script = [(' לביטוח', .2), (' דירה', .5), (' הקישו', .8), (' שתיים', 3.6), ('.', 3.7)]
+        processor = self.make(script, deadline=1.5, generator=Numbers())
+        for step in range(5, 36, 3):
+            self.feed(processor, step / 10)
+        shown = self.publications()[-1]['current']['translation']
+        self.assertEqual(shown, 'Для жилья нажмите')          # the number is not guessed
+        self.assertIn('number', [e['stop'] for n, e in self.events if n == 'append_chunk'])
+        self.feed(processor, 4.6, final=True, reason='pause')
+        self.finish(processor)
+        self.assertEqual(self.publications()[-1]['current']['translation'], 'Для жилья нажмите 2.')
+
 
 class Router(unittest.TestCase):
     def make(self, append=None):

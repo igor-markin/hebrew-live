@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from hebrew_live.cli import SPEC
-from hebrew_live.desktop_download import DesktopDownloadError, verify_accurate_asr, verify_desktop_external, write_manifest
-from hebrew_live.desktop_preflight import accurate_inventory, load_inventory
+from hebrew_live.desktop_download import verify_desktop_external, write_manifest
+from hebrew_live.desktop_preflight import load_inventory
 from hebrew_live.desktop_locations import resolve_model_locations
 from hebrew_live.model_store import preparation_lock
 
@@ -36,59 +36,14 @@ def _tiny_inventory():
 
 
 class DesktopModelStoreTests(unittest.TestCase):
-    def test_one_required_inventory_pins_whisper_translation_and_vad(self):
+    def test_one_required_inventory_pins_translation_and_vad(self):
         selected = load_inventory()
-        self.assertEqual(accurate_inventory(), selected)
-        self.assertEqual([item["key"] for item in selected["components"]], ["asr", "translation", "vad"])
-        self.assertEqual(selected["components"][0]["revision"], SPEC["asr"]["revision"])
-        self.assertEqual(sum(item["bytes"] for item in selected["components"][0]["files"]), 1613977880)
+        self.assertEqual([item["key"] for item in selected["components"]], ["translation", "vad"])
+        self.assertEqual(selected["components"][0]["revision"], SPEC["translation"]["revision"])
+        self.assertEqual(selected["total_bytes"],
+                         sum(item["bytes"] for component in selected["components"] for item in component["files"]))
 
-    def test_accurate_verification_is_pinned_and_ignores_unrelated_cli_damage(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            models = Path(tmp)
-            (models / "asr").mkdir()
-            (models / "asr/config.json").write_bytes(b"config")
-            (models / "asr/weights.safetensors").write_bytes(b"weights")
-            optional = {"schema_version": 1, "total_bytes": 13, "components": [
-                {"key": "asr", "label": "Whisper", "folder": "asr", "files": [
-                    {"path": "config.json", "bytes": 6, "sha256": _digest(b"config")},
-                    {"path": "weights.safetensors", "bytes": 7, "sha256": _digest(b"weights")},
-                ]},
-            ]}
-            (models / "manifest.json").write_text(json.dumps({
-                "schema_version": 2, "assets": ["translation", "vad", "asr", "asr_multilingual"], "spec": SPEC,
-                "files": {"asr/config.json": _digest(b"config"),
-                          "asr/weights.safetensors": _digest(b"weights"),
-                          "asr-multilingual/broken.safetensors": _digest(b"missing")},
-            }))
-            with patch("hebrew_live.desktop_preflight.accurate_inventory", return_value=optional):
-                verify_accurate_asr(models)
-                (models / "asr/weights.safetensors").write_bytes(b"corrupt")
-                with self.assertRaises(DesktopDownloadError):
-                    verify_accurate_asr(models)
-
-    def test_accurate_manifest_adds_only_verified_optional_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            models = Path(tmp)
-            inventory = _tiny_inventory()
-            inventory["components"].append({"key": "asr", "label": "Whisper", "folder": "asr", "files": [
-                {"path": "config.json", "bytes": 1, "sha256": _digest(b"x")},
-                {"path": "weights.safetensors", "bytes": 1, "sha256": _digest(b"y")},
-            ]})
-            for name, value in (("milmmt-4b-4bit/config.json", b"a"),
-                                ("milmmt-4b-4bit/model.safetensors", b"b"),
-                                ("silero.onnx", b"cd"), ("asr/config.json", b"x"),
-                                ("asr/weights.safetensors", b"y")):
-                target = models / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(value)
-            with preparation_lock(models):
-                write_manifest(models, inventory)
-            saved = json.loads((models / "manifest.json").read_text())
-            self.assertEqual(saved["assets"], ["translation", "vad", "asr"])
-            self.assertEqual(saved["files"]["asr/weights.safetensors"], _digest(b"y"))
-
-    def test_manifest_keeps_valid_cli_asr_and_ignores_corrupt_optional_asr(self):
+    def test_manifest_drops_whisper_listed_by_an_older_release(self):
         with tempfile.TemporaryDirectory() as tmp:
             models = Path(tmp)
             for name, value in (("milmmt-4b-4bit/config.json", b"a"),
@@ -106,18 +61,11 @@ class DesktopModelStoreTests(unittest.TestCase):
             with preparation_lock(models):
                 write_manifest(models, _tiny_inventory())
             merged = json.loads((models / "manifest.json").read_text())
-            self.assertIn("asr", merged["assets"])
-            self.assertEqual(merged["files"]["asr/weights.safetensors"], _digest(b"f"))
+            self.assertEqual(merged["assets"], ["translation", "vad"])
+            self.assertFalse(any(name.startswith("asr/") for name in merged["files"]))
             verify_desktop_external(models, _tiny_inventory())
-
-            (models / "asr/weights.safetensors").write_bytes(b"broken")
-            with preparation_lock(models):
-                write_manifest(models, _tiny_inventory())
-            merged = json.loads((models / "manifest.json").read_text())
-            self.assertNotIn("asr", merged["assets"])
-            self.assertNotIn("asr/weights.safetensors", merged["files"])
-            self.assertEqual((models / "asr/weights.safetensors").read_bytes(), b"broken")
-            verify_desktop_external(models, _tiny_inventory())
+            # The old files are left for the user; they are not deleted here.
+            self.assertEqual((models / "asr/weights.safetensors").read_bytes(), b"f")
 
     def test_incompatible_shared_root_selects_persisted_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:

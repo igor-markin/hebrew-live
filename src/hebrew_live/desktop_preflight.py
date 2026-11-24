@@ -55,11 +55,6 @@ def load_inventory(path: Path | None = None) -> dict[str, Any]:
     return value
 
 
-def accurate_inventory() -> dict[str, Any]:
-    """The release has one pinned recognition/translation inventory."""
-    return load_inventory()
-
-
 def _requirements(inventory: dict[str, Any]) -> Iterable[tuple[str, Path, dict[str, Any]]]:
     for component in inventory["components"]:
         folder = component.get("folder")

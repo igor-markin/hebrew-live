@@ -121,7 +121,7 @@ class BrowserUI:
         self.actions=queue.Queue(maxsize=32)
         self.lock=threading.Lock()
         self.state=_State({'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
-                    'status_code':'loading_models','direction':'he-en','target_language':'en',
+                    'status_code':'loading_models','direction':'he-ru','target_language':'ru',
                     'target_languages':[],'target_error':None,'target_error_code':None,
                     'ui_locale':'en','paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
