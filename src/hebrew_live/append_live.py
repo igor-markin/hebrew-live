@@ -16,6 +16,9 @@ end, when the first untranslated word would otherwise miss HEBREW_LIVE_APPEND_DE
 or a pause closes the card with a call that translates the rest. When the model ends a sentence
 the Hebrew goes on with, the Russian sentence ends there and the rest starts a new one.
 A live call also stops before a number or a day (weekday, «сегодня») the Hebrew has not said.
+When a card closes with a number or a day that does not match its Hebrew, the sentence is
+translated once more as a whole and, if that matches better, added after the shown translation
+as «(Уточнение: …)»; HEBREW_LIVE_CLOSE_RECHECK=0 switches this off.
 HEBREW_LIVE_APPEND_MIN_PROB (default 0) also stops at a token the model is less sure of.
 Whisper is not used.
 
@@ -521,10 +524,15 @@ class AppendProcessor:
             self.mt_counter += 1
             if added or close:
                 self.publish(card, lag=max(lags) if lags else 0.)
-            if close:
+        if close:
+            better = self._recheck(card, text, pairs, settings)
+            with self.lock:
+                if better:
+                    label = 'Уточнение' if settings.direction.endswith('ru') else 'Correction'
+                    card.out.extend(f'({label}: {better})'.split())
                 if card.covered > card.base or card.out[card.base_out:]:
                     self.pairs.append((' '.join(w['text'] for w in card.words[card.base:]),
-                                       ' '.join(card.out[card.base_out:])))
+                                       better or ' '.join(card.out[card.base_out:])))
                 self.close(card)
         self.log.event('append_chunk', part=settings.part, segment=card.sid, why=why, stop=stop,
                        words=len(covered), added=len(added), seconds=round(time.monotonic() - began, 3),
@@ -557,6 +565,42 @@ class AppendProcessor:
         from .weekday_guard import unheard
         hebrew = ' '.join(w['text'] for w in card.words[card.base:])
         return unheard(hebrew, ' '.join(card.out[card.base_out:]), added)
+
+    def _mismatches(self, hebrew, translation, settings):
+        """Numbers and days that differ between a sentence and its translation."""
+        from .languages import split_direction
+        from .number_guard import check
+        source, target = split_direction(settings.direction)
+        found = [f'{issue.kind} {issue.number}' for issue in check(hebrew, translation, source, target)]
+        if (source, target) == ('he', 'ru'):
+            from .weekday_guard import fix, relative_days
+            _, days = fix(hebrew, translation, len(translation) + 1)   # nothing replaced, all reported
+            found += [f'{issue.kind} {issue.ru or issue.he}' for issue in days]
+            found += [f'extra {word}' for _, word in relative_days(hebrew, translation)]
+        return found
+
+    def _recheck(self, card, text, pairs, settings):
+        """The closed sentence translated once more as a whole, when the shown translation has a
+        number or a day its Hebrew does not and the new one has fewer; else ''."""
+        if os.environ.get('HEBREW_LIVE_CLOSE_RECHECK', '1') == '0' or not text or self.cancel.is_set():
+            return ''
+        shown = ' '.join(card.out[card.base_out:])
+        issues = self._mismatches(text, shown, settings)
+        if not issues:
+            return ''
+        began = time.monotonic()
+        words = len(text.split())
+        whole = card.reason == 'sentence'
+        result = self.generator.generate(text, '', pairs, settings.direction, upto=None if whole else words,
+                                         close=whole, max_new=None if whole else new_words_cap(words))
+        again = ' '.join(result.words)
+        if settings.direction == 'he-ru':
+            from .weekday_guard import fix
+            again, _ = fix(text, again)
+        better = bool(again) and len(self._mismatches(text, again, settings)) < len(issues)
+        self.log.event('close_recheck', part=settings.part, segment=card.sid, issues=issues, better=better,
+                       seconds=round(time.monotonic() - began, 3))
+        return again if better else ''
 
     def _weekdays(self, card, upto, shown, out, settings):
         """The call's new words with a weekday the Hebrew does not name replaced (weekday_guard).

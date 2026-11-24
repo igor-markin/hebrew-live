@@ -1,8 +1,10 @@
+import os
 import queue
 import threading
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
@@ -232,6 +234,33 @@ class Append(unittest.TestCase):
             self.feed(processor, step / 10)
         self.assertEqual(self.publications()[-1]['current']['translation'], 'Запись на')
         self.assertIn('day', [e['stop'] for n, e in self.events if n == 'append_chunk'])
+
+    def recheck(self, whole, direction_words=('Запись', 'на', 'сегодня.')):
+        class Twice(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, close=close))
+                return Result(list(direction_words) if len(self.calls) == 1 else whole, 'end')
+        processor = self.make([(' תור', .2), (' ביום', .5), (' שלישי', .9), ('.', 1.)], generator=Twice())
+        self.feed(processor, 1.6, final=True, reason='pause')
+        self.finish(processor)
+        return self.publications()[-1]['current']['translation']
+
+    def test_a_closed_card_with_a_wrong_day_gets_the_better_whole_translation_after_the_shown_one(self):
+        shown = self.recheck(['Запись', 'во', 'вторник.'])
+        self.assertEqual(shown, 'Запись на сегодня. (Уточнение: Запись во вторник.)')
+        self.assertEqual(self.generator.calls[1]['forced'], '')   # the whole sentence, nothing forced
+        self.assertEqual([v['better'] for n, v in self.events if n == 'close_recheck'], [True])
+
+    def test_a_whole_translation_that_is_not_better_is_not_shown(self):
+        self.assertEqual(self.recheck(['Запись', 'на', 'завтра.']), 'Запись на сегодня.')
+
+    def test_a_card_that_matches_its_hebrew_is_not_translated_again(self):
+        self.recheck([], ('Запись', 'во', 'вторник.'))
+        self.assertEqual(len(self.generator.calls), 1)
+
+    def test_the_recheck_can_be_switched_off(self):
+        with mock.patch.dict(os.environ, HEBREW_LIVE_CLOSE_RECHECK='0'):
+            self.assertEqual(self.recheck(['Запись', 'во', 'вторник.']), 'Запись на сегодня.')
 
 
 class Router(unittest.TestCase):
