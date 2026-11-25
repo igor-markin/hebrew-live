@@ -65,3 +65,8 @@ def button(words):
         return any(_core(word) not in ('אנא', 'יש', 'נא') for word in said[:-2])
     joined = re.fullmatch(r'הקישו-(\S+)', _core(said[-1]))
     return bool(joined and _number(joined[1]) and len(said) >= 2)
+
+
+def number_awaited(text):
+    """Whether this Hebrew ends right before a button number («…, אנא הקישו»)."""
+    return _core(fix(text).split(' ')[-1]) in ('הקישו', 'להקיש')

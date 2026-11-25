@@ -3,6 +3,7 @@ from unittest import mock
 
 from hebrew_live.menu_words import button, fix
 import test_append_live
+from test_append_live import FakeGenerator
 
 
 class Words(unittest.TestCase):
@@ -49,6 +50,18 @@ class Screen(unittest.TestCase):
         closed = self.run_menu([*self.MENU[:3], (',', 1.1), *self.MENU[3:]])
         self.assertEqual(closed[0]['source'], 'לשירות קישו 2,')
         self.assertEqual(self.generator.calls[0]['text'], 'לשירות הקישו 2.')
+
+    def test_a_sentence_end_before_the_number_is_not_taken(self):
+        processor = self.make([(' לשירות', .2), (' לקוחות', .5), (' קישו', .8), (' 4', 3.)], deadline=1.,
+                              generator=FakeGenerator(['sentence']))
+        self.feed(processor, 4.)
+        self.assertEqual([(c['text'], c['close']) for c in self.generator.calls], [('לשירות לקוחות הקישו', False)])
+        self.feed(processor, 5., final=True, reason='silence')
+        self.finish(processor)
+        closed = [p['current'] for p in self.publications() if p['stage'] == 'closed']
+        self.assertEqual((self.generator.calls[-1]['text'], self.generator.calls[-1]['forced']),
+                         ('לשירות לקוחות הקישו 4.', 'ru:לשירות ru:לקוחות'))
+        self.assertEqual(closed[0]['translation'], 'ru:לשירות ru:לקוחות ru:הקישו ru:4.')
 
     def test_it_can_be_switched_off(self):
         with mock.patch.dict('os.environ', HEBREW_LIVE_MENU='0'):

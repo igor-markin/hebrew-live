@@ -645,7 +645,9 @@ class AppendProcessor:
                     upto = self._with_its_number(card, upto, card.base + len(words), settings)
                 covered = card.words[card.covered:upto]
                 card.covered, card.tried = upto, None
-                if stop == 'sentence' and card.out:
+                # «нажмите» with the number still to come is not the end of the sentence
+                if stop == 'sentence' and card.out and not (
+                        menu_words.enabled() and hebrew_source(settings) and menu_words.number_awaited(text)):
                     card.end_mark = result.end_mark
             else:
                 card.tried = (len(card.words), upto)
