@@ -86,6 +86,30 @@ class Append(unittest.TestCase):
         processor.drain_mt()
         processor.shutdown_mt()
 
+    def test_sound_cut_without_a_pause_gives_the_last_word_whole(self):
+        # «דיוויד»: the cut word's last letter needs 1.5 s of silence to come out (Maccabi call, 25.11)
+        script = [(' שמונה', .2), (' דיווי', .7), ('ד', 1.9)]
+        for reason, cards in (('eof', ['שמונה דיוויד']), ('stop', ['שמונה דיוויד'])):
+            processor = self.make(script)
+            self.feed(processor, 1.)
+            self.feed(processor, 1.2, final=True, reason=reason)
+            processor.flush(reason)
+            self.finish(processor)
+            closed = [v['current']['source'] for v in self.publications() if v['stage'] == 'closed']
+            self.assertEqual(closed, cards)
+            self.updates.queue.clear()
+
+    def test_a_pause_feeds_little_silence_and_the_end_completes_it(self):
+        processor = self.make([(' שלום', .2)])
+        fed = []
+        feed = processor._feed
+        processor._feed = lambda samples, absolute=None: (fed.append((len(samples), absolute)), feed(samples, absolute))[1]
+        self.feed(processor, 1., final=True, reason='silence')
+        processor.flush('eof')
+        processor.flush('eof')
+        self.finish(processor)
+        self.assertEqual([n for n, absolute in fed if absolute is None], [int(.8 * RATE), int(1.2 * RATE)])
+
     def warmed(self, already=False, generator=None):
         processor = self.make([(' שלום', .2), (' לך', .5), ('.', .6)], generator=generator)
         started = threading.Event()

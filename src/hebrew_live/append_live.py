@@ -46,6 +46,7 @@ SENTENCE = re.compile(r'[.?!…]["»”)]*$')
 PUNCTUATION = re.compile(r'[.,?!…:;]+')
 PUNCTUATION_WORD = re.compile(r'[.,?!…:;»"”)\]]+')   # not a dash: «— 80» starts a word group
 PAUSE_TAIL = .8      # seconds of silence fed at a pause so the last words come out
+END_TAIL = 2.        # the same when the sound is cut without a pause (Stop, end of the file): less loses the last word
 BACKGROUND_QUIET = 2.  # seconds without a newer word, between speech segments, that end a card
 GAP_LIMIT = .5       # silence fed for a gap between speech pieces
 CONTEXT = 4          # previous chunks given to the translator
@@ -260,6 +261,7 @@ class AppendProcessor:
         self.stream = self.recognizer.create_stream()
         self.fed = None          # absolute sample fed up to
         self.stream_samples = 0
+        self.tail = 0            # samples of silence fed since the last real audio
         self.mapping = []        # (stream sample, absolute sample) where a run of real audio starts
         self.seen = 0
         self.current = None
@@ -273,10 +275,20 @@ class AppendProcessor:
             self.mapping.append((self.stream_samples, absolute))
         self.stream.accept_waveform(RATE, np.asarray(samples, dtype=np.float32))
         self.stream_samples += len(samples)
+        self.tail = 0
         decoded = False
         while self.recognizer.is_ready(self.stream):
             self.recognizer.decode_stream(self.stream)
             decoded = True
+        return decoded
+
+    def _feed_tail(self, seconds):
+        """Silence up to `seconds` after the last real audio."""
+        fed, samples = self.tail, int(seconds * RATE) - self.tail
+        if samples <= 0:
+            return False
+        decoded = self._feed(np.zeros(samples, np.float32))
+        self.tail = fed + samples
         return decoded
 
     def _absolute(self, seconds):
@@ -307,7 +319,7 @@ class AppendProcessor:
             self.fed = end
         closing = f.final and f.reason != 'window'
         if closing:
-            decoded |= self._feed(np.zeros(int(PAUSE_TAIL * RATE), np.float32))
+            decoded |= self._feed_tail(PAUSE_TAIL if f.reason == 'silence' else END_TAIL)
         self.collect(decoded, final=closing, reason=f.reason if closing else None)
         if f.reason == 'background':
             self.end_quiet_card(end)
@@ -774,7 +786,7 @@ class AppendProcessor:
 
     def flush(self, reason='eof'):
         if self.settings is not None and self.fed is not None:
-            decoded = self._feed(np.zeros(int(PAUSE_TAIL * RATE), np.float32))
+            decoded = self._feed_tail(END_TAIL)
             self.collect(decoded, final=True, reason=reason)
         self.drain_mt()
         with self.lock:
