@@ -37,7 +37,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from . import streaming_asr
+from . import menu_words, streaming_asr
 
 RATE = 16000
 WARM = object()      # a job of the translation thread: one discarded call (warm_on)
@@ -216,6 +216,16 @@ class Card:
         self.end_mark = None   # the sentence end the model wanted after the shown words
         self.closing = self.closed = False
         self.reason = None
+        self.button = False    # it ends with the number of a menu button (menu_words)
+
+    def hebrew(self, start=0, end=None):
+        """The Hebrew words from `start` to `end` as the translator and the checks get them."""
+        text = ' '.join(w['text'] for w in self.words[start:end])
+        if not text or not menu_words.enabled() or not hebrew_source(self.settings):
+            return text
+        text = menu_words.fix(text)
+        whole = end is None or end >= len(self.words)
+        return text.rstrip(',;:') + '.' if self.button and whole and not SENTENCE.search(text) else text
 
 
 class AppendProcessor:
@@ -370,9 +380,12 @@ class AppendProcessor:
                 self.card.words.append(word)
                 if self.card not in touched:
                     touched.append(self.card)
-                if SENTENCE.search(word['text']):
-                    self.card.closing = True
-                    self.card.reason = 'sentence'
+                card = self.card
+                card.button = (menu_words.enabled() and hebrew_source(card.settings)
+                               and menu_words.button([w['text'] for w in card.words]))
+                if card.button or SENTENCE.search(word['text']):
+                    card.closing = True
+                    card.reason = 'sentence'
             for card in touched:
                 if not card.closed:
                     self.publish(card, lag=max(0., now - card.words[-1]['end'] / RATE))
@@ -557,7 +570,7 @@ class AppendProcessor:
         sentence end heard): end the translation's sentence there and go on with the rest of the
         Hebrew as a new sentence, the finished pair as context. Keeps prompts short and aligned."""
         card.out[-1] += card.end_mark
-        hebrew = ' '.join(w['text'] for w in card.words[card.base:card.covered])
+        hebrew = card.hebrew(card.base, card.covered)
         shown = ' '.join(card.out[card.base_out:])
         before = tuple(self.pairs[-CONTEXT:])
         self.pairs.append((hebrew, shown))
@@ -584,7 +597,7 @@ class AppendProcessor:
                     self.publish(card, lag=0.)
         with self.lock:
             words = card.words[card.base:]
-            text = ' '.join(w['text'] for w in words)
+            text = card.hebrew(card.base)
             forced = ' '.join(card.out[card.base_out:])
             pairs = tuple(self.pairs[-CONTEXT:])
         result = None
@@ -646,7 +659,7 @@ class AppendProcessor:
             better, piece = self._recheck(card, text, shown, pairs, settings, 'close')
             with self.lock:
                 if card.covered > card.base or shown:
-                    self.pairs.append((' '.join(w['text'] for w in card.words[card.base:]), better or shown))
+                    self.pairs.append((card.hebrew(card.base), better or shown))
                 if piece:
                     self._note(card, piece, settings)
                 self.close(card)
@@ -667,7 +680,7 @@ class AppendProcessor:
         if source != 'he':
             return None
         from .number_guard import unheard
-        hebrew = ' '.join(w['text'] for w in card.words[card.base:])
+        hebrew = card.hebrew(card.base)
         return unheard(hebrew, ' '.join(card.out[card.base_out:]), added, 'he', target)
 
     def _unheard_day(self, card, added, settings):
@@ -679,7 +692,7 @@ class AppendProcessor:
         if split_direction(settings.direction) != ('he', 'ru'):
             return None
         from .weekday_guard import unheard
-        hebrew = ' '.join(w['text'] for w in card.words[card.base:])
+        hebrew = card.hebrew(card.base)
         return unheard(hebrew, ' '.join(card.out[card.base_out:]), added)
 
     def _with_its_number(self, card, upto, heard, settings):
@@ -687,7 +700,7 @@ class AppendProcessor:
         when the shown translation already has the number said there («הקישו | 2,» - «нажмите 2.»).
         Cut before it, the sentence is checked without its number and the next one gets it again."""
         def issues(end):
-            hebrew = ' '.join(w['text'] for w in card.words[card.base:end])
+            hebrew = card.hebrew(card.base, end)
             return set(self._mismatches(hebrew, ' '.join(card.out[card.base_out:]), settings))
         now = issues(upto)
         if any(issue.startswith('extra ') for issue in now):
