@@ -86,6 +86,55 @@ class Append(unittest.TestCase):
         processor.drain_mt()
         processor.shutdown_mt()
 
+    def warmed(self, already=False, generator=None):
+        processor = self.make([(' שלום', .2), (' לך', .5), ('.', .6)], generator=generator)
+        started = threading.Event()
+        if already:
+            started.set()
+        processor.warm_on(started)
+        return processor, started
+
+    def test_start_warms_the_translator_once_and_shows_nothing(self):
+        processor, started = self.warmed()
+        processor.warm_if_started()
+        self.assertEqual(self.generator.calls, [])   # waiting for Start
+        started.set()
+        for _ in range(3):
+            processor.warm_if_started()
+            processor.jobs.join()
+        self.assertEqual([(c['close'], c['max_new'], c['pairs']) for c in self.generator.calls], [(True, 1, ())])
+        self.assertEqual((self.publications(), processor.pairs, processor.timings), ([], [], []))
+        self.assertEqual([n for n, _ in self.events], ['mt_prewarm'])
+        started.clear()                              # the start was refused (no phone)
+        processor.warm_if_started()
+        started.set()
+        processor.warm_if_started()
+        processor.jobs.join()
+        self.assertEqual(len(self.generator.calls), 2)
+        self.finish(processor)
+
+    def test_a_session_already_started_is_not_warmed(self):
+        processor, _ = self.warmed(already=True)
+        processor.warm_if_started()
+        processor.jobs.join()
+        self.assertEqual(self.generator.calls, [])
+        self.finish(processor)
+
+    def test_a_failed_warming_does_not_stop_the_translation(self):
+        class Failing(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                if max_new == 1 and close:
+                    raise RuntimeError('no')
+                return super().generate(text, forced, pairs, direction, upto, close, max_new)
+        processor, started = self.warmed(generator=Failing())
+        started.set()
+        processor.warm_if_started()
+        processor.jobs.join()
+        self.feed(processor, 1.6, final=True, reason='pause')
+        self.finish(processor)
+        self.assertEqual(self.publications()[-1]['current']['translation'], 'ru:שלום ru:לך.')
+        self.assertIn('append_failed', [n for n, _ in self.events])
+
     def test_text_is_only_appended_and_a_clause_is_translated_once_a_word_follows_it(self):
         script = [(' שלום', .2), (',', .3), (' אני', .6), (' רוצה', .9), (' לק', 1.2), ('בוע', 1.3), (' תור', 1.6), ('.', 1.7)]
         processor = self.make(script)

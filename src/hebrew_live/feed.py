@@ -15,7 +15,7 @@ def lexical(text):
 def changed(source,target,final_source,final_target):
     return lexical(source)!=lexical(final_source) or lexical(target)!=lexical(final_target)
 
-def inference(inbox, engine, updates, stop, errors, log, cancel=None):
+def inference(inbox, engine, updates, stop, errors, log, cancel=None, started=None):
     cancel = cancel or threading.Event()
     f = None
     from .phrase_inference import PhraseProcessor
@@ -27,6 +27,7 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
     # HEBREW_LIVE_APPEND=0 or a missing streaming model keeps the retranslating screen.
     draft=append_live.DraftRouter(engine,updates,log,cancel)
     draft.catchup_inbox=inbox
+    if started is not None and draft.append is not None:draft.append.warm_on(started)
     phrases.deadline_barrier=getattr(inbox,"deadline_blocked",lambda:False)
     age_scheduler=getattr(engine,'phrase_scheduler','batch')=='age'
     try:
