@@ -1,6 +1,7 @@
 """The owner's own words: terms and names with the translations he wants.
 
-Translation is told about the entries that occur in the phrase. Recognition can take the
+Translation is told about the entries that occur in the phrase; the append-only screen's
+translator gets them as finished sentences before the open one. Recognition can take the
 words as the text that came just before the audio (`HEBREW_LIVE_VOCABULARY_ASR=1`), but that
 is off: a list of 29 terms raised word errors on speech without those words from 947 to 1184
 (eval-d1) and from 1585 to 1889 (eval-whatsapp), see experiments/tail-only. Whisper reads only
@@ -16,6 +17,7 @@ from .paths import data_root
 
 ASR_PROMPT_TOKENS = 200      # Whisper keeps the last n_ctx // 2 - 1 = 223 prompt tokens
 TRANSLATOR_TERMS = 8         # terms of one phrase handed to the translator
+SPLIT = 4                    # words the recognizer may have split one entry into
 PREFIXES = 'ובלהמכש'         # "and", "in", "to", "the", "from", "as", "that" are glued to the word
 FILE = 'vocabulary.json'
 
@@ -138,6 +140,38 @@ def relevant(entries, text, language, limit=TRANSLATOR_TERMS):
                 found.append((entry.he, target))
                 break
     return found
+
+
+def heard(entries, text, language, limit=TRANSLATOR_TERMS):
+    """(Hebrew as it stands in `text`, translation) of the entries that occur in `text`, for the
+    live translation. Unlike `relevant`, the recognizer's split of a name does not matter
+    («מכבי דנט», «מכבי-דנט» and «מכבידנט» are one entry), and a word said once serves one
+    entry: the one higher in the list."""
+    words = [_bare(word) for word in text.split()]
+    solid = [word.replace('-', '').replace('־', '').replace('"', '').replace('״', '') for word in words]
+    used, found = set(), []
+    for entry in entries:
+        target = getattr(entry, language, '') if language in ('ru', 'en') else ''
+        goal = entry.he.replace(' ', '').replace('-', '').replace('־', '').replace('"', '').replace('״', '')
+        if not target or not goal or len(found) == limit:
+            continue
+        for start in range(len(words)):
+            span = next((range(start, end) for end in range(start + 1, min(start + SPLIT, len(words)) + 1)
+                         if _glued(''.join(solid[start:end]), goal, solid[start])), None)
+            if span and used.isdisjoint(span):
+                used.update(span)
+                prefix = len(''.join(solid[start:span.stop])) - len(goal)
+                found.append((' '.join(words[start:span.stop])[prefix:], target))
+                break
+    return found
+
+
+def _glued(word, goal, first):
+    """`word` is `goal`, or `goal` with one or two glued prefix letters inside its first word."""
+    if not word.endswith(goal):
+        return False
+    prefix = word[:len(word) - len(goal)]
+    return len(prefix) <= 2 and len(prefix) < len(first) and all(letter in PREFIXES for letter in prefix)
 
 
 def asr_prompt(entries, count, budget=ASR_PROMPT_TOKENS):

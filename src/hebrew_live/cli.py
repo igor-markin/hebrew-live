@@ -475,6 +475,12 @@ class Engine:
                            proposed=stats.get('proposed',0),accepted_drafts=stats.get('accepted_drafts',0),
                            first_token_seconds=stats.get('first_token_seconds'),
                            seconds=time.monotonic()-began,finish_reason=reason,completed=finished)
+    def _live_terms(self, text, direction):
+        from . import vocabulary
+        from .languages import split_direction
+        watched=getattr(self,'vocabulary_file',None)
+        source,target=split_direction(direction)
+        return vocabulary.heard(watched.current(),text,target) if watched and source=='he' else []
     def clause_generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None, min_prob=0.):
         """One call of the append-only screen's translator (clause_mt) where the model lives;
         returns plain values so it can cross the worker process boundary."""
@@ -483,6 +489,7 @@ class Engine:
         if generator is None or generator.min_prob!=min_prob:
             generator=self._clause_generator=ClauseGenerator(self,min_prob=min_prob)
         began=time.monotonic()
+        pairs=[(he+'.',target+'.') for he,target in self._live_terms(text,direction)]+list(pairs)
         result=generator.generate(text,forced,tuple(tuple(p) for p in pairs),direction,upto=upto,close=close,max_new=max_new)
         return dict(words=result.words,stop=result.stop,end_mark=result.end_mark,tokens=result.tokens,
                     seconds=time.monotonic()-began)
