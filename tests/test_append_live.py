@@ -439,6 +439,11 @@ class WordsCutShort(unittest.TestCase):
         result = self.generate(True, pieces)
         self.assertEqual((result.stop, result.words), ('cap', [f'слово{i}' for i in range(7)]))
 
+    def test_a_word_without_end_is_cut_by_its_tokens(self):
+        # one Hebrew word: 6 words, so 6 * 6 + 24 tokens, though it never comes to a second word
+        result = self.generate(True, [' м'] + ['а'] * 500)
+        self.assertEqual((result.stop, result.words, result.tokens), ('cap', [], 60))
+
     def test_a_finished_translation_keeps_its_last_word(self):
         result = self.generate(True, [' на', 'жмите', ' 5', '.'])
         self.assertEqual((result.stop, result.words), ('end', ['нажмите', '5.']))

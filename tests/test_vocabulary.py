@@ -83,9 +83,46 @@ class TranslatorTermsTests(unittest.TestCase):
                          'Use these translations of names and terms:\nחיפה = Хайфа\n' + plain)
         self.assertEqual(prompt(tokenizer, 'milmmt', 'בחיפה', 'he-ru', terms=[]), plain)
 
+    CLINIC = [Entry('מכבידנט כרמיאל', 'Маккабидент Кармиэль'), Entry('מכבידנט', 'Маккабидент'), Entry('מכבי', 'Маккаби')]
+
+    def test_live_terms_are_found_however_the_recognizer_split_them(self):
+        heard = lambda text: vocabulary.heard(self.CLINIC, text, 'ru')
+        self.assertEqual(heard('ברוכים הבאים למכבי דנט, מיד'), [('מכבי דנט', 'Маккабидент')])
+        self.assertEqual(heard('במכבי-דנט כרמיאל.'), [('מכבי-דנט כרמיאל', 'Маккабидент Кармиэль')])
+        self.assertEqual(heard('מכבידנט מבית מכבי שירותי בריאות'), [('מכבידנט', 'Маккабидент'), ('מכבי', 'Маккаби')])
+        self.assertEqual(heard('שלום לכולם'), [])
+        self.assertEqual(vocabulary.heard(self.CLINIC, 'מכבי', 'en'), [])         # no translation into it
+
+    def test_live_terms_do_not_match_inside_another_word(self):
+        self.assertEqual(vocabulary.heard(self.ENTRIES, 'זה ארז ולא מרזה', 'ru'), [])
+        self.assertEqual(vocabulary.heard(self.ENTRIES, 'ולרז יש זמן', 'ru'), [('רז', 'Раз')])
+        self.assertEqual(vocabulary.heard([Entry("רז", "Раз")] + [Entry(f'מילה{i}', 'x') for i in range(9)],
+                                          'רז ' + ' '.join(f'מילה{i}' for i in range(9)), 'ru')[-1], ('מילה6', 'x'))
+
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LiveTranslationTests(unittest.TestCase):
+    def pairs(self, direction, text, entries, pairs=()):
+        from hebrew_live.clause_mt import Result
+        engine = object.__new__(Engine)
+        if entries is not None: engine.vocabulary_file = SimpleNamespace(current=lambda: entries)
+        seen = []
+        engine._clause_generator = SimpleNamespace(min_prob=0., generate=lambda text, forced, given, *a, **k:
+                                                   (seen.append(given), Result(['ок'], 'end'))[1])
+        engine.clause_generate(text, '', pairs, direction)
+        return seen[0]
+
+    def test_terms_said_come_before_the_context_as_finished_sentences(self):
+        entries = [Entry('מכבידנט', 'Маккабидент')]
+        self.assertEqual(self.pairs('he-ru', 'למכבי דנט שלום', entries, [['כן.', 'Да.']]),
+                         (('מכבי דנט.', 'Маккабидент.'), ('כן.', 'Да.')))
+        self.assertEqual(self.pairs('he-ru', 'שלום', entries, [['כן.', 'Да.']]), (('כן.', 'Да.'),))
+        self.assertEqual(self.pairs('he-en', 'למכבי דנט', entries), ())
+        self.assertEqual(self.pairs('he-ru', 'למכבי דנט', None), ())      # an engine built without a vocabulary
+        self.assertEqual(self.pairs('ru-he', 'מכבידנט', entries), ())
 
 
 class EngineTranslationTests(unittest.TestCase):
