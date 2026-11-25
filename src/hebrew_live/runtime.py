@@ -102,7 +102,7 @@ def persist_target_preference(folder, target, save, session):
 def run_session(args, session, browser_ui=None):
     import sounddevice as sd
     import soundfile as sf
-    from .cli import VAD, Inbox, Fragment, segment, verify, validate_custom_models, preference_folder as model_preference_folder
+    from .cli import VAD, Inbox, Fragment, all_audio, segment, verify, validate_custom_models, preference_folder as model_preference_folder
     from .remote_engine import RemoteEngine
     from .feed import inference,RetryRequest
     custom_models=validate_custom_models(args.models,getattr(args,'translation_model',None),
@@ -202,7 +202,7 @@ def run_session(args, session, browser_ui=None):
             with threads_lock:threads.append(thread)
         def started_threads():
             with threads_lock:return tuple(threads)
-        segmenter=threading.Thread(target=segment,args=(raw,inbox,vad,stop,session,errors),name='segment',daemon=True)
+        segmenter=threading.Thread(target=segment,args=(raw,inbox,vad,stop,session,errors,all_audio()),name='segment',daemon=True)
         worker=threading.Thread(target=inference,args=(inbox,engine,updates,stop,errors,session,cancel),name='inference',daemon=True)
         segmenter.start();register(segmenter);worker.start();register(worker)
     except BaseException:

@@ -45,6 +45,7 @@ SENTENCE = re.compile(r'[.?!…]["»”)]*$')
 PUNCTUATION = re.compile(r'[.,?!…:;]+')
 PUNCTUATION_WORD = re.compile(r'[.,?!…:;»"”)\]]+')   # not a dash: «— 80» starts a word group
 PAUSE_TAIL = .8      # seconds of silence fed at a pause so the last words come out
+BACKGROUND_QUIET = 2.  # seconds without a newer word, between speech segments, that end a card
 GAP_LIMIT = .5       # silence fed for a gap between speech pieces
 CONTEXT = 4          # previous chunks given to the translator
 _EDGE = '.,?!…:;«»"”()[]—–-'
@@ -138,6 +139,10 @@ class DraftRouter:
             for name in self.COUNTERS:
                 setattr(wanted, name, max(getattr(wanted, name), getattr(self.active, name)))
             self.active = wanted
+
+    def hears_background(self, settings):
+        """Whether audio between speech segments is of use: only the streaming recognizer hears it."""
+        return self.append is not None and hebrew_source(settings)
 
     def process(self, f):
         self._pick(f.settings)
@@ -285,18 +290,31 @@ class AppendProcessor:
         self.settings = f.settings
         self.clock = f.end - f.offset
         end = round(f.offset * RATE)
-        start = end - len(f.audio)
+        audio = np.asarray(f.audio)
+        if f.lead is not None:
+            audio = np.concatenate([f.lead, audio])
+        start = end - len(audio)
         decoded = False
         if self.fed is None or end > self.fed:
             begin = start if self.fed is None else max(self.fed, start)
             if self.fed is not None and start > self.fed:
                 decoded |= self._feed(np.zeros(min(start - self.fed, int(GAP_LIMIT * RATE)), np.float32))
-            decoded |= self._feed(np.asarray(f.audio)[begin - start:], absolute=begin)
+            decoded |= self._feed(audio[begin - start:], absolute=begin)
             self.fed = end
         closing = f.final and f.reason != 'window'
         if closing:
             decoded |= self._feed(np.zeros(int(PAUSE_TAIL * RATE), np.float32))
         self.collect(decoded, final=closing, reason=f.reason if closing else None)
+        if f.reason == 'background':
+            self.end_quiet_card(end)
+
+    def end_quiet_card(self, heard):
+        """Words the VAD took for no speech have no pause event: the card ends after a quiet."""
+        card = self.card
+        open_card = card is not None and not card.closing and card.words
+        last = self.current or (card.words[-1] if open_card else None)
+        if last is not None and heard - last['end'] >= BACKGROUND_QUIET * RATE:
+            self.collect(False, final=True, reason='silence')
 
     def collect(self, decoded, final=False, reason=None):
         result = self.recognizer.get_result_all(self.stream)

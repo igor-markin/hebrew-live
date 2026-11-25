@@ -504,7 +504,8 @@ class Fragment:
     settings: object = None
     offset: float = 0.
     quiet: float = 0.
-    reason: str = ""
+    reason: str = ""    # 'background': audio between speech segments, for the streaming recognizer only
+    lead: object = None  # audio right before `audio` that no segment holds (all-audio recognition)
 
 class Inbox:
     TIMEOUT=object()
@@ -537,6 +538,8 @@ class Inbox:
         return True
     def put_boundary(self, boundary):
         with self.condition:
+            # Audio of the old settings must not be processed after their boundary.
+            if self.preview and self.preview.reason=='background':self.preview=None
             self.finals.append(boundary);self.condition.notify()
 
     def put_model_change(self, change):
@@ -611,9 +614,21 @@ class Inbox:
 VAD_INPUT_GAIN=6.
 
 
-def segment(raw, inbox, vad, stop, log, errors):
+# Audio between speech segments kept for the streaming recognizer, in VAD frames (8 s).
+SKIPPED_FRAMES=250
+
+
+def all_audio():
+    import os
+    return os.environ.get('HEBREW_LIVE_ALL_AUDIO','1')!='0'
+
+
+def segment(raw, inbox, vad, stop, log, errors, background=False):
+    """`background`: also pass on the audio between speech segments (the streaming recognizer
+    hears quiet speech the VAD rejects); the VAD keeps deciding where a phrase ends."""
     import numpy as np
     pending=np.empty(0,dtype=np.float32);history=deque(maxlen=6)
+    skipped=deque(maxlen=SKIPPED_FRAMES);waiting=0;lead=None
     frames=[];active=False;quiet=0;sid=0;rev=0;prefix=0.;last=0
     end=time.monotonic();offset=0.;settings=None;group_timing=None;group_mode='phrases'
 
@@ -623,12 +638,20 @@ def segment(raw, inbox, vad, stop, log, errors):
         audio = np.concatenate(frames)
         from dataclasses import replace
         frozen=replace(settings,timing=group_timing,mode=group_mode) if settings is not None else None
-        inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason))
+        inbox.put(Fragment(sid,rev,audio,prefix,end,final,frozen,offset,quiet*.032,reason,lead))
         last = len(frames)*.032
         log.event('fragment',segment=sid,revision=rev,seconds=len(audio)/16000,new_seconds=len(audio)/16000-prefix,context_seconds=prefix,final=final)
 
+    def publish_background():
+        nonlocal rev, waiting
+        waiting=0
+        if not background or settings is None or not skipped:return
+        rev += 1
+        inbox.put(Fragment(sid,rev,np.concatenate(skipped),0.,end,False,settings,offset,0.,'background'))
+
     def flush(reason="eof"):
         nonlocal frames, pending, end, offset
+        if reason=='eof' and not active:publish_background()
         # Preserve the sub-VAD-frame audio tail at pause/switch/EOF.
         if active and len(pending):
             frames.append(pending);end += len(pending)/16000;offset += len(pending)/16000
@@ -645,6 +668,7 @@ def segment(raw, inbox, vad, stop, log, errors):
                 flush(item.reason)
                 inbox.put_boundary(item)
                 frames=[];history.clear();active=False;quiet=0;prefix=0.;last=0
+                skipped.clear();waiting=0;lead=None
                 settings=item.settings
                 if item.reason=='models':
                     from .model_selection import ModelChange
@@ -662,7 +686,16 @@ def segment(raw, inbox, vad, stop, log, errors):
                 end=block_end-len(pending)/16000;offset=block_offset-len(pending)/16000
                 speech=vad(np.clip(frame*VAD_INPUT_GAIN,-1.,1.))>=.5
                 if not active:
-                    if not speech:history.append(frame);continue
+                    if not speech:
+                        history.append(frame)
+                        if background:
+                            skipped.append(frame);waiting+=1
+                            if waiting*.032>=(settings.timing[1] if getattr(settings,'timing',None) else 1.):publish_background()
+                        continue
+                    # The pre-roll holds the newest skipped frames; the older ones lead it.
+                    before=list(skipped)[:-len(history)] if len(skipped)>len(history) else []
+                    lead=np.concatenate(before) if before else None
+                    skipped.clear();waiting=0
                     active=True;frames=list(history);history.clear();sid+=1;rev=0;last=0;prefix=0
                     group_timing=getattr(settings,'timing',None)
                     group_mode=getattr(settings,'mode','phrases')
@@ -678,13 +711,13 @@ def segment(raw, inbox, vad, stop, log, errors):
                 if final or (length-prefix>=first and length-last>=snapshot):publish(final,'silence' if quiet*.032>=(group_timing[4] if group_timing else 1.28) else 'window' if final else '')
                 if final:
                     if quiet*.032 >= (group_timing[4] if group_timing else 1.28):
-                        active=False;history.extend(frames[-6:]);frames=[];quiet=0
+                        active=False;history.extend(frames[-6:]);frames=[];quiet=0;lead=None
                     else:
                         # Retain acoustic context, but assign only NEW audio to the next group.
                         next_timing=getattr(settings,'timing',None)
                         next_limit=10. if group_mode=='phrases' else next_timing[3] if next_timing else (30 if group_mode=='pauses' else 10)
                         context_frames=max(16,int(min(8.,max(0.,30.-next_limit))/.032))
-                        frames=frames[-context_frames:];prefix=len(frames)*.032;sid+=1;rev=0;last=prefix
+                        frames=frames[-context_frames:];prefix=len(frames)*.032;sid+=1;rev=0;last=prefix;lead=None
                         group_timing=getattr(settings,'timing',None)
                         group_mode=getattr(settings,'mode','phrases')
                     # A technical window must keep the accumulated quiet time.

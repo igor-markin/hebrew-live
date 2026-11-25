@@ -325,6 +325,43 @@ class Append(unittest.TestCase):
         self.assertEqual(card.base_out, len(card.out))
 
 
+class AllAudio(unittest.TestCase):
+    """Audio between speech segments ('background') and the audio that leads a segment."""
+    setUp, make, feed, publications, finish = (Append.setUp, Append.make, Append.feed, Append.publications, Append.finish)
+
+    def background(self, processor, start, end, lead=None):
+        audio = np.zeros(int((end - start) * RATE), np.float32)
+        processor.process(Fragment(0, 1, audio, 0, time.monotonic(), False, Settings(publication='draft'), end, 0,
+                                   'background', lead))
+        processor.drain_mt()
+
+    def test_words_the_vad_took_for_no_speech_are_shown_and_end_after_a_quiet(self):
+        processor = self.make([(' שלום', .5), (' לך', .8)], deadline=100.)
+        self.background(processor, 0., 2.)
+        self.assertEqual([c.closing for c in processor.cards], [False])
+        self.background(processor, 0., 3.6)
+        processor.drain_mt()
+        self.finish(processor)
+        closed = [p for p in self.publications() if p['stage'] == 'closed']
+        self.assertEqual([p['current']['source'] for p in closed], ['שלום לך'])
+
+    def test_background_audio_is_fed_once_and_only_what_was_not_fed(self):
+        processor = self.make([], deadline=100.)
+        self.background(processor, 0., 1.)
+        self.background(processor, 0., 1.6)
+        self.assertEqual(processor.stream_samples, int(1.6 * RATE))
+        self.finish(processor)
+
+    def test_the_lead_of_a_segment_is_fed_instead_of_silence(self):
+        processor = self.make([], deadline=100.)
+        self.feed(processor, 1.)
+        audio = np.ones(int(.5 * RATE), np.float32)
+        lead = np.ones(int(1.5 * RATE), np.float32)
+        processor.process(Fragment(2, 1, audio, 0, time.monotonic(), False, Settings(publication='draft'), 3., 0, '', lead))
+        self.assertEqual(processor.stream_samples, 3 * RATE)
+        self.finish(processor)
+
+
 class Router(unittest.TestCase):
     def make(self, append=None):
         from hebrew_live.append_live import DraftRouter
@@ -351,6 +388,13 @@ class Router(unittest.TestCase):
         router.process(SimpleNamespace(settings=Settings(direction='ru-he')))
         self.assertEqual(seen, [('append', 'he-ru'), ('flush', 'direction'), ('retranslation', 'ru-he')])
         self.assertEqual(router.counter, 5)   # group numbers go on from the append screen's
+
+    def test_only_the_streaming_recognizer_hears_background_audio(self):
+        router = self.make(SimpleNamespace())
+        self.assertTrue(router.hears_background(Settings(direction='he-ru')))
+        self.assertFalse(router.hears_background(Settings(direction='ru-he')))
+        with mock.patch.dict(os.environ, {'HEBREW_LIVE_HYBRID_MODEL': '/nonexistent'}):
+            self.assertFalse(self.make().hears_background(Settings(direction='he-ru')))
 
 
 if __name__ == '__main__':
