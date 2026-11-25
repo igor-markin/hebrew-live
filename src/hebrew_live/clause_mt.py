@@ -20,7 +20,6 @@ import numpy as np
 # Translation heads of MiLMMT-46-4B from AlignAtt4LLM (data/alignatt_heads, MIT): the heads ranked
 # high for cs-en, en-de, en-it and en-zh; there is no he-ru calibration, this is their union by rank.
 HEADS = [(11, 2), (11, 3), (6, 4), (4, 2)]
-TOKENS_PER_WORD = 6
 SENTENCE_END = re.compile(r'[.?!…]')
 
 
@@ -155,6 +154,7 @@ class ClauseGenerator:
         limit = 3 * len(text.split()) + 3 - len(forced.split())
         if max_new is not None:
             limit = min(limit, max_new)
+        token_limit = 6 * max(1, limit) + 24   # a «word» without spaces never reaches the word limit
         cache = make_prompt_cache(model)
         tokens, history, stop, end_mark, ended_once = [], [], None, None, False
         capture.active = not close and accessible < len(positions)
@@ -192,8 +192,7 @@ class ClauseGenerator:
                     if aligned >= frontier and mass >= self.min_mass:
                         return Result(self._whole_words(tokens, token), 'frontier', None, len(tokens))
                 tokens.append(token)
-                # A «word» without spaces never reaches the word limit: tokens are limited too.
-                if len(tokens) >= TOKENS_PER_WORD * max(1, limit) + 24 or len(tokenizer.decode(tokens).split()) > limit + 1:
+                if len(tokens) >= token_limit or len(tokenizer.decode(tokens).split()) > limit + 1:
                     stop = 'cap'
                     break
                 capture.forward()
