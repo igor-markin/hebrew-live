@@ -55,14 +55,27 @@ class PhoneStatusTests(unittest.TestCase):
         for output, expected in cases.items():
             self.assertEqual(phone_audio.status(adb(output)), expected, output)
 
-    def test_adb_is_asked_once_with_a_deadline_and_failures_are_named(self):
+    def test_adb_is_started_then_asked_with_deadlines_and_failures_are_named(self):
         run = adb('List of devices attached\n')
         phone_audio.status(run)
-        (arguments, options), = run.calls
+        (started, start_options), (arguments, options) = run.calls
+        self.assertEqual(started, ['/opt/homebrew/bin/adb', 'start-server'])
+        self.assertEqual(start_options['timeout'], phone_audio.START_SECONDS); self.assertEqual(start_options['stdout'], subprocess.DEVNULL)
         self.assertEqual(arguments, ['/opt/homebrew/bin/adb', 'devices']); self.assertEqual(options['timeout'], 3.)
         self.assertEqual(phone_audio.status(adb(error=subprocess.TimeoutExpired('adb', 3))), 'timeout')
         self.assertEqual(phone_audio.status(adb(error=FileNotFoundError())), 'adb_failed')
         self.assertEqual(phone_audio.status(adb(code=1)), 'adb_failed')
+
+    def test_a_cold_service_that_keeps_its_output_open_does_not_hold_up_the_check(self):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / 'adb'
+            script.write_text('#!/bin/sh\nif [ "$1" = start-server ]; then (sleep 4) & exit 0; fi\n'
+                              'printf "List of devices attached\\nX\\tdevice\\n"\n')
+            script.chmod(0o755)
+            with mock.patch.object(phone_audio, 'find_adb', return_value=str(script)):
+                began = time.monotonic()
+                self.assertEqual(phone_audio.status(), 'ready')
+                self.assertLess(time.monotonic() - began, 3.)
 
     def test_missing_tools_are_named_before_adb_runs(self):
         run = adb('List of devices attached\nX\tdevice\n')
