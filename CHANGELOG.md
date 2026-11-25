@@ -4,6 +4,7 @@
 
 ### Changed
 
+- the translation worker keeps at most 256 MB of freed MLX buffers instead of as much as MLX allows (`mlx_cache_limit` event): on one 88 s replay the worker grew from 3.3 to 14 GB, with the limit it stays under 3.2 GB, with the same Russian text and the same delays;
 - Hebrew to Russian and Hebrew to English are the only translation directions: the target list holds Russian and English, another target saved by an earlier release reads as Russian with a notice, Ctrl+T no longer switches the CLI to Russian-to-Hebrew, and `--direction` accepts `he-ru` and `he-en` only;
 - Whisper is removed from the app and the build: speech is recognized only by the bundled streaming model, first preparation downloads MiLMMT alone (2.22 GB instead of 3.83 GB), `mlx-whisper` and its dependencies (torch, numba, scipy, tiktoken) leave the lock, and `--asr-model` is gone; a manifest that lists Whisper still verifies without its files, and the app stops with a clear error if the bundled streaming model is missing;
 - the streaming recognizer also hears the audio between the speech segments the VAD finds (only the recognizer: the VAD still decides where a phrase ends, and nothing else reads that audio), so quiet speech the VAD rejects is not lost; a card with such words closes after 2 s without a new word (`HEBREW_LIVE_ALL_AUDIO=0` restores the VAD-only feed);

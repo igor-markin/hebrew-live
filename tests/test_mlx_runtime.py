@@ -1,6 +1,10 @@
 import importlib.metadata
+import sys
+import tempfile
+import types
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from hebrew_live import mlx_runtime
 
@@ -36,6 +40,29 @@ class MlxRuntimeTests(unittest.TestCase):
         self.assertEqual(mlx_runtime.device_info(object()),{})
         info=mlx_runtime.describe(Mx)
         self.assertIn('wheel_tags',info);self.assertIn('neural_accelerator_wheel',info)
+
+    def test_freed_buffers_are_limited_to_256_mb(self):
+        mx=Mock();self.assertEqual(mlx_runtime.limit_cache(mx),256*1024*1024)
+        mx.set_cache_limit.assert_called_once_with(256*1024*1024)
+
+
+class EngineCacheLimitTests(unittest.TestCase):
+    def engine(self,role):
+        from hebrew_live.cli import Engine
+        order=[];core=Mock();core.set_cache_limit.side_effect=lambda n:order.append(('limit',n))
+        core.device_info.return_value={}
+        load=lambda path:order.append(('load',path)) or (Mock(),Mock())
+        modules={'mlx':types.SimpleNamespace(core=core),'mlx.core':core,'mlx_lm':types.SimpleNamespace(load=load),
+                 'transformers':Mock(),'transformers.utils':types.SimpleNamespace(logging=Mock())}
+        with tempfile.TemporaryDirectory() as folder, patch.dict(sys.modules,modules), \
+             patch('hebrew_live.translation.configure'):
+            Engine(Path(folder),Mock(),translation_path=Path(folder),role=role)
+        return [name for name,_ in order],[value for name,value in order if name=='limit']
+    def test_the_translation_worker_sets_the_limit_before_the_model_loads(self):
+        for role in ('mt','both'):
+            with self.subTest(role):self.assertEqual(self.engine(role),(['limit','load'],[256*1024*1024]))
+    def test_the_recognition_worker_leaves_mlx_alone(self):
+        self.assertEqual(self.engine('asr'),([],[]))
 
 
 if __name__=='__main__':unittest.main()
