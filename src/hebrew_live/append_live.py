@@ -40,6 +40,7 @@ import numpy as np
 from . import streaming_asr
 
 RATE = 16000
+WARM = object()      # a job of the translation thread: one discarded call (warm_on)
 CLAUSE = re.compile(r'[.,?!…:;]["»”)]*$')
 SENTENCE = re.compile(r'[.?!…]["»”)]*$')
 PUNCTUATION = re.compile(r'[.,?!…:;]+')
@@ -246,6 +247,8 @@ class AppendProcessor:
         self.clock = None
         self.card = None
         self.new_stream()
+        self.started = None      # set while recording is asked for (Start), see warm_on
+        self.start_seen = False
         self.stopped = threading.Event()
         self.worker = threading.Thread(target=self._translate_loop, name='append-translation', daemon=True)
         self.worker.start()
@@ -449,9 +452,37 @@ class AppendProcessor:
 
     def _tick_loop(self):
         while not self.stopped.wait(TICK):
+            self.warm_if_started()
             if self.clock is not None and not self.cancel.is_set():
                 with self.lock:
                     self.schedule()
+
+    def warm_on(self, started):
+        """Warm the translator each time the event `started` is set from now on. One already set
+        now is not waited for: the models were warmed a moment ago, when they were loaded."""
+        self.start_seen = started.is_set()
+        self.started = started
+
+    def warm_if_started(self):
+        """Start was pressed: while the window waited for it, macOS may have moved the model's
+        memory to disk, and the first translation would wait for all of it to come back. One
+        discarded call brings it back while the first words are still being said."""
+        if self.started is None or self.cancel.is_set():
+            return
+        pressed = self.started.is_set()
+        if pressed and not self.start_seen:
+            with self.lock:
+                if not self.busy:
+                    self.busy = True
+                    self.jobs.put(WARM)
+        self.start_seen = pressed
+
+    def _warm(self):
+        began = time.monotonic()
+        # Not in self.timings: a slow one would make every call after it look due too early.
+        self.generator.generate('שלום.', '', (), getattr(self.engine, 'direction', None) or 'he-ru',
+                                close=True, max_new=1)
+        self.log.event('mt_prewarm', seconds=round(time.monotonic() - began, 3))
 
     def publish(self, card, lag, stage='open'):
         source = ' '.join(w['text'] for w in card.words)
@@ -494,7 +525,10 @@ class AppendProcessor:
                 if job is None:
                     return
                 try:
-                    self._translate(*job)
+                    if job is WARM:
+                        self._warm()
+                    else:
+                        self._translate(*job)
                 except Exception as error:  # a failed call must not stop the screen
                     try:
                         import traceback
@@ -503,6 +537,8 @@ class AppendProcessor:
                                        where=f'{os.path.basename(where.filename)}:{where.lineno}')
                     except Exception:
                         pass
+                    if job is WARM:
+                        continue
                     with self.lock:
                         card = job[0]
                         if job[2] == 'close' and not card.closed:

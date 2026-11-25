@@ -203,7 +203,7 @@ def run_session(args, session, browser_ui=None):
         def started_threads():
             with threads_lock:return tuple(threads)
         segmenter=threading.Thread(target=segment,args=(raw,inbox,vad,stop,session,errors,all_audio()),name='segment',daemon=True)
-        worker=threading.Thread(target=inference,args=(inbox,engine,updates,stop,errors,session,cancel),name='inference',daemon=True)
+        worker=threading.Thread(target=inference,args=(inbox,engine,updates,stop,errors,session,cancel,capture_requested),name='inference',daemon=True)
         segmenter.start();register(segmenter);worker.start();register(worker)
     except BaseException:
         stop.set()
