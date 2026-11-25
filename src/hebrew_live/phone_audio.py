@@ -65,14 +65,27 @@ def parse_devices(output):
     return found
 
 
-def status(run=subprocess.run, timeout=3.):
-    """Whether a call can be taken now, without starting capture: one of STATUSES."""
+START_SECONDS = 15.          # a cold adb service first scans the USB ports
+
+
+def status(run=subprocess.run, timeout=3., start_timeout=START_SECONDS):
+    """Whether a call can be taken now, without starting capture: one of STATUSES.
+
+    With the adb service down, `adb devices` starts it itself and can need more than the three
+    seconds it has here (the likely cause of three failed window checks on 25.11.2026, not
+    reproduced). The service is started first, with its own longer limit and its output not
+    captured (a service that keeps an inherited pipe open would hold up the check).
+    """
     if not find_scrcpy():
         return 'no_scrcpy'
     adb = find_adb()
     if not adb:
         return 'no_adb'
     try:
+        started = run([adb, 'start-server'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                      stdin=subprocess.DEVNULL, timeout=start_timeout)
+        if started.returncode:
+            return 'adb_failed'
         result = run([adb, 'devices'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return 'timeout'
