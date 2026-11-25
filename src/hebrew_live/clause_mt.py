@@ -200,8 +200,8 @@ class ClauseGenerator:
             capture.active = False
             capture.rows = []
         words = tokenizer.decode(tokens).split()
-        # Cut short (cap, cancel) the last word may be unfinished.
-        return Result(words if close or stop == 'end' else words[:-1], stop, None, len(tokens))
+        # Cut short (cap, cancel) the last word may be unfinished, also in the last call of a card.
+        return Result(words if stop == 'end' else words[:-1], stop, None, len(tokens))
 
     def _whole_words(self, tokens, stop):
         """The words before the token generation stopped at; the last one only if `stop` starts a new word."""

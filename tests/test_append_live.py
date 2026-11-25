@@ -299,6 +299,40 @@ class Append(unittest.TestCase):
         # the corrected sentence is the context of the next call
         self.assertEqual(self.generator.calls[2]['pairs'][-1], ('תור,', 'Запись без числа.'))
 
+    def sentence_then_rest(self, first, script, rest=None):
+        class Scripted(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, close=close, pairs=pairs))
+                if len(self.calls) == 1:
+                    return Result(list(first), 'sentence', '.')
+                return Result(list(rest or ['дальше']), 'end')
+        processor = self.make(script, generator=Scripted())
+        for seconds in (1.1, 1.4):
+            self.feed(processor, seconds)
+        self.feed(processor, 2., final=True, reason='pause')
+        self.finish(processor)
+        return self.publications()[-1]['current']['translation']
+
+    def test_a_number_the_ended_sentence_already_has_stays_with_it(self):
+        script = [(' הקישו', .2), (',', .25), (' 2', .5), (',', .55), (' לעזרה', .8)]
+        shown = self.sentence_then_rest(['нажмите', '2'], script)
+        self.assertEqual(shown, 'нажмите 2. дальше')
+        self.assertEqual(self.rechecks(), [])   # no false «extra 2»
+        self.assertEqual(self.generator.calls[1]['pairs'][-1], ('הקישו, 2,', 'нажмите 2.'))
+        self.assertEqual(self.generator.calls[1]['text'], 'לעזרה')
+
+    def test_a_number_no_near_word_says_does_not_move_the_end_of_the_sentence(self):
+        script = [(' הקישו', .2), (',', .25), (' 2', .5), (',', .55), (' לעזרה', .8)]
+        with mock.patch.dict(os.environ, HEBREW_LIVE_NUMBER_WAIT='0'):
+            self.sentence_then_rest(['нажмите', '7'], script)
+        self.assertEqual([v['issues'] for v in self.rechecks() if v['stage'] == 'split'], [['extra 7']])
+        self.assertEqual(self.generator.calls[-1]['text'], '2, לעזרה')
+
+    def test_an_ended_sentence_without_a_number_takes_no_more_words(self):
+        script = [(' שלום', .2), (',', .25), (' 2', .5), (',', .55), (' לעזרה', .8)]
+        self.sentence_then_rest(['привет'], script, ['2,', 'дальше'])
+        self.assertEqual(self.generator.calls[1]['text'], '2, לעזרה')
+
     def test_the_note_has_the_changed_words_only(self):
         from hebrew_live.append_live import changed_piece
         shown = 'Мы работаем с понедельника по четверг с 8 утра, приходите в любое время, будем рады вас видеть.'
@@ -323,6 +357,42 @@ class Append(unittest.TestCase):
         processor._note(card, 'во вторник', Settings(direction='he-ru'))
         self.assertEqual(processor._plain(card), 'Запись в четверг.')
         self.assertEqual(card.base_out, len(card.out))
+
+
+class WordsCutShort(unittest.TestCase):
+    """The last word of a translation cut at its limit is not shown unfinished."""
+    def generate(self, close, pieces, **kw):
+        import mlx.core as mx
+        from hebrew_live.clause_mt import ClauseGenerator
+        EOS = len(pieces)
+        step = [0]
+
+        class Tokenizer:
+            eos_token_ids = [EOS]
+            def decode(self, tokens):
+                return ''.join(pieces[t] for t in tokens)
+
+        class Model:
+            def __call__(self, ids, cache=None):
+                row = np.zeros((1, 1, EOS + 1), np.float32)
+                row[0, 0, min(step[0], EOS)] = 1.
+                step[0] += 1
+                return mx.array(row)
+        generator = ClauseGenerator(SimpleNamespace(model=Model(), tokenizer=Tokenizer()))
+        generator._capture = lambda: SimpleNamespace(active=False, rows=[], forward=lambda: None, last=lambda: None)
+        generator.prompt = lambda *a: ([1], [(0, 0)], 1)
+        with mock.patch('mlx_lm.models.cache.make_prompt_cache', return_value=None):
+            return generator.generate('א', '', (), 'he-ru', close=close, **kw)
+
+    def test_the_last_call_of_a_card_drops_the_unfinished_word(self):
+        # one Hebrew word: the limit is 6 words, the eighth is the first over it
+        pieces = [f' слово{i}' for i in range(7)] + [' K', 'ysho', ' Five']
+        result = self.generate(True, pieces)
+        self.assertEqual((result.stop, result.words), ('cap', [f'слово{i}' for i in range(7)]))
+
+    def test_a_finished_translation_keeps_its_last_word(self):
+        result = self.generate(True, [' на', 'жмите', ' 5', '.'])
+        self.assertEqual((result.stop, result.words), ('end', ['нажмите', '5.']))
 
 
 class AllAudio(unittest.TestCase):
