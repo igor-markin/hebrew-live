@@ -1,8 +1,17 @@
-"""Which MLX wheel is installed and which Metal device it runs on (diagnostics only)."""
+"""Which MLX wheel is installed and which Metal device it runs on, and how much memory MLX may keep."""
 import importlib.metadata
 
 REQUIRED_WHEEL_PLATFORM = 'macosx_26_0'  # Neural-accelerator build; 14_0/15_0 wheels run without it.
 DISTRIBUTIONS = ('mlx', 'mlx-metal')
+# MLX keeps freed buffers for reuse, by default up to its whole memory limit. Live translation frees
+# buffers of a new size on every call, so without a limit of its own they pile up until macOS swaps.
+CACHE_LIMIT_BYTES = 256 * 1024 * 1024
+
+
+def limit_cache(mx):
+    """Return freed buffers above the limit to the system; memory in use is not limited."""
+    mx.set_cache_limit(CACHE_LIMIT_BYTES)
+    return CACHE_LIMIT_BYTES
 
 
 def wheel_tags(names=DISTRIBUTIONS):

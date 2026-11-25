@@ -393,6 +393,8 @@ class Engine:
         if role!='asr':
             if translation_path is None and not (folder/TRANSLATION['milmmt'][1]).is_dir():
                 raise ValueError('Model not installed')
+            from .mlx_runtime import limit_cache
+            self.log.event('mlx_cache_limit',bytes=limit_cache(mx))
             t=time.monotonic()
             from mlx_lm import load
             self.model,self.tokenizer=load(str(translation_path or folder/TRANSLATION['milmmt'][1]))
