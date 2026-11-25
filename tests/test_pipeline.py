@@ -96,6 +96,42 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(seen[0],.06*VAD_INPUT_GAIN,places=5)
         fragment=box.get();self.assertTrue(fragment.final)
         self.assertAlmostEqual(float(np.abs(fragment.audio).max()),.06,places=6)
+    def background_run(self, pattern, background=True):
+        """pattern: one VAD answer per 32 ms frame; frame n holds the value n."""
+        from hebrew_live.stream import AudioBlock, Settings
+        raw=queue.Queue();errors=queue.Queue();out=[]
+        class Box:
+            put=staticmethod(out.append)
+            def put_boundary(self,b):out.append(b)
+            def finish(self):pass
+        settings=Settings(publication='draft',timing=(.7,.7,0,4.,.6))
+        answers=iter(pattern)
+        data=np.repeat(np.arange(len(pattern),dtype=np.float32),512)
+        raw.put(AudioBlock(data,1.,len(data)/16000,settings));raw.put(None)
+        segment(raw,Box(),lambda f:next(answers),threading.Event(),NullLog(),errors,background)
+        self.assertTrue(errors.empty(),list(errors.queue))
+        return out
+    def test_audio_between_segments_is_passed_on_as_background_and_lead(self):
+        out=self.background_run([0]*60+[1]*10)
+        gaps=[f for f in out if f.reason=='background'];speech=[f for f in out if f.reason!='background']
+        self.assertTrue(gaps);self.assertFalse(any(f.final for f in gaps))
+        self.assertEqual(gaps[-1].audio[0],0.)
+        first=speech[0]
+        joined=np.concatenate([first.lead,first.audio])
+        # every frame once, in order: nothing is lost between the lead and the pre-roll
+        self.assertEqual(list(joined[::512][:60]),list(range(60)))
+        self.assertEqual(round(first.offset*16000)-len(joined),0)
+    def test_the_lead_does_not_repeat_after_the_segment_ends(self):
+        out=self.background_run([0]*60+[1]*10+[0]*20+[1]*10)
+        second=[f for f in out if f.reason!='background'][-1]
+        if second.lead is not None:self.assertGreaterEqual(second.lead[0],70.)
+    def test_without_background_nothing_changes(self):
+        out=self.background_run([0]*60+[1]*10,background=False)
+        self.assertFalse([f for f in out if f.reason=='background']);self.assertIsNone(out[0].lead)
+    def test_background_of_old_settings_is_dropped_at_their_boundary(self):
+        box=Inbox();box.put(Fragment(0,1,np.zeros(16),0,0,False,None,0.,0.,'background'))
+        box.put_boundary('boundary');box.finish()
+        self.assertEqual(box.get(),'boundary');self.assertIsNone(box.get())
     def test_loud_speech_is_clipped_only_for_vad(self):
         raw=queue.Queue();box=Inbox();errors=queue.Queue();seen=[]
         def vad(frame):

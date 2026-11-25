@@ -82,6 +82,11 @@ def inference(inbox, engine, updates, stop, errors, log, cancel=None):
                 continue
             if f.settings is None or f.settings.mode!='phrases':
                 raise ValueError('Only phrases mode is supported')
+            if f.reason=='background':
+                # Audio between speech segments is for the streaming recognizer only.
+                if f.settings.publication in ('revisable','draft') and draft.hears_background(f.settings):
+                    draft.process(f)
+                continue
             now=time.monotonic()
             log.event('asr_job_start',segment=f.id,
                       queue_wait=max(0.,now-getattr(f,'queued_at',now)),
