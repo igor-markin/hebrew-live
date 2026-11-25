@@ -51,6 +51,7 @@ CONTEXT = 4          # previous chunks given to the translator
 _EDGE = '.,?!…:;«»"”()[]—–-'
 SAFETY = .3          # seconds kept in reserve before the deadline
 QUIET = 1.           # seconds without a newer word after which the last word may be translated
+REACH = 3            # words after a call's Hebrew whose number its translation may already have
 TICK = .1            # how often waiting chunks are checked against their deadline
 
 
@@ -591,6 +592,8 @@ class AppendProcessor:
             covered = []
             # 'end' with nothing added: the shown translation already says what was heard.
             if close or stop in ('sentence', 'end') or added and stop == 'frontier':
+                if stop == 'sentence' and not close:
+                    upto = self._with_its_number(card, upto, card.base + len(words), settings)
                 covered = card.words[card.covered:upto]
                 card.covered, card.tried = upto, None
                 if stop == 'sentence' and card.out:
@@ -642,6 +645,20 @@ class AppendProcessor:
         from .weekday_guard import unheard
         hebrew = ' '.join(w['text'] for w in card.words[card.base:])
         return unheard(hebrew, ' '.join(card.out[card.base_out:]), added)
+
+    def _with_its_number(self, card, upto, heard, settings):
+        """Where the Hebrew of a sentence the model ended ends: `upto`, or up to REACH words later
+        when the shown translation already has the number said there («הקישו | 2,» - «нажмите 2.»).
+        Cut before it, the sentence is checked without its number and the next one gets it again."""
+        def issues(end):
+            hebrew = ' '.join(w['text'] for w in card.words[card.base:end])
+            return set(self._mismatches(hebrew, ' '.join(card.out[card.base_out:]), settings))
+        now = issues(upto)
+        if any(issue.startswith('extra ') for issue in now):
+            for end in range(upto + 1, min(upto + REACH, heard) + 1):
+                if issues(end) < now:   # an issue is gone, and no new one came
+                    return end
+        return upto
 
     def _mismatches(self, hebrew, translation, settings):
         """Numbers and days that differ between a sentence and its translation."""
