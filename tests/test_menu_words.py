@@ -35,7 +35,7 @@ class Screen(unittest.TestCase):
     MENU = [(' לשירות', .2), (' קישו', .6), (' 2', 1.), (' לאסותא', 1.4), (' קישו', 1.8), (' 3', 2.2), (' תודה', 2.6)]
 
     def run_menu(self, script=MENU):
-        processor = self.make(list(script), deadline=100.)
+        processor = self.make(list(script), deadline=100., join=0.)   # every pause closes, as before pause_join
         self.feed(processor, 4., final=True, reason='silence')
         self.finish(processor)
         return [p['current'] for p in self.publications() if p['stage'] == 'closed']

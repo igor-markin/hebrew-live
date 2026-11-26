@@ -55,6 +55,9 @@ SAFETY = .3          # seconds kept in reserve before the deadline
 QUIET = 1.           # seconds without a newer word after which the last word may be translated
 REACH = 3            # words after a call's Hebrew whose number its translation may already have
 TICK = .1            # how often waiting chunks are checked against their deadline
+PAUSE_JOIN = .5      # default of pause_join(), chosen on the cards of seven recordings (26.11)
+HOLD_LAG = 2.5       # how long after that a held card waits for such a word: recognition is late
+GLUE = 1.            # seconds after a word in which a token without a space still belongs to it
 
 
 def _facts(words, language):
@@ -181,9 +184,31 @@ def has_words(text):
 
 
 def new_words_cap(hebrew_words):
-    """New translation words allowed when nothing heard follows (a pause, a quiet): a little more
-    than the Hebrew needs, too few to finish the speaker's sentence for them."""
-    return int(1.25 * hebrew_words) + 1
+    """New translation words allowed when nothing heard follows (a pause, a quiet): what the
+    Hebrew can need, too few to finish the speaker's sentence for them. Russian often takes two
+    words for one Hebrew word with its prefixes («ונעמוד לשירותכם» → «и будем вам служить»):
+    1.25 words per word cut that card at «и будем» (Maccabi Dent call, 26.11)."""
+    return 2 * hebrew_words + 2
+
+
+def as_ended(text):
+    """A closed card's text as context for the next one, with a sentence end: after a card that
+    closed at a pause mid-sentence the translator otherwise went on with that sentence at the
+    start of the next card («כן» → «это сделать» after «в воскресенье я могу», Maccabi call 26.11)."""
+    text = text.rstrip()
+    return text if not text or SENTENCE.search(text) else text.rstrip(',;:—–- ') + '.'
+
+
+def pause_join():
+    """A pause before the Hebrew ended its sentence does not close the card at once: a word that
+    ends within this many seconds of the card's last word goes on in the same card. On seven
+    recordings (26.11) such gaps under .5 s were the rest of the same phrase («בחרדים אמר» |
+    «לי»), while at .8-1.2 s the other person answered as often as the speaker went on. 0 closes
+    the card at every pause (the earlier screen)."""
+    try:
+        return max(0., float(os.environ.get('HEBREW_LIVE_PAUSE_JOIN', str(PAUSE_JOIN))))
+    except ValueError:
+        return PAUSE_JOIN
 
 
 def min_probability():
@@ -226,6 +251,7 @@ class Card:
         self.closing = self.closed = False
         self.reason = None
         self.button = False    # it ends with the number of a menu button (menu_words)
+        self.held = False      # a pause came before its sentence ended: see pause_join()
 
     def hebrew(self, start=0, end=None):
         """The Hebrew words from `start` to `end` as the translator and the checks get them."""
@@ -243,8 +269,10 @@ class AppendProcessor:
     _mt_outstanding = 0
     catchup_inbox = None
 
-    def __init__(self, engine, updates, log, cancel, recognizer=None, deadline=None, ticker=True, generator=None):
+    def __init__(self, engine, updates, log, cancel, recognizer=None, deadline=None, ticker=True, generator=None,
+                 join=None):
         self.engine, self.updates, self.log, self.cancel = engine, updates, log, cancel
+        self.join = pause_join() if join is None else join
         if recognizer is None:
             draft = streaming_asr.load(log, flag='HEBREW_LIVE_APPEND', default='1')
             if draft is None:
@@ -338,7 +366,7 @@ class AppendProcessor:
         closing = f.final and f.reason != 'window'
         if closing:
             decoded |= self._feed_tail(PAUSE_TAIL if f.reason == 'silence' else END_TAIL)
-        self.collect(decoded, final=closing, reason=f.reason if closing else None)
+        self.collect(decoded, final=closing, reason=f.reason if closing else None, pause=True)
         if f.reason == 'background':
             self.end_quiet_card(end)
 
@@ -350,7 +378,7 @@ class AppendProcessor:
         if last is not None and heard - last['end'] >= BACKGROUND_QUIET * RATE:
             self.collect(False, final=True, reason='silence')
 
-    def collect(self, decoded, final=False, reason=None):
+    def collect(self, decoded, final=False, reason=None, pause=False):
         result = self.recognizer.get_result_all(self.stream)
         tokens, stamps = list(result.tokens), list(result.timestamps)
         fresh = len(tokens) > self.seen
@@ -366,6 +394,8 @@ class AppendProcessor:
                     done[-1]['text'] += piece
                     continue
                 self.punctuate(piece)
+                continue
+            if self.current is None and not done and not token.startswith((' ', '▁')) and self._glue(token, stamp):
                 continue
             if token.startswith((' ', '▁')) and self.current is not None:
                 done.append(self.current)
@@ -384,7 +414,24 @@ class AppendProcessor:
         done = [w for w in done if w['text']]
         if done:
             self.show(done)
-        self.chunk(final, reason)
+        self.chunk(final, reason, pause=pause)
+
+    def _glue(self, token, stamp):
+        """A token without a space right after a pause goes on the open card's last word: the pause
+        detector took the quiet end of a word for silence and the silence fed at the pause made the
+        recognizer give the word without its end («בבית הכר» and then «ם.», Maccabi call 26.11)."""
+        with self.lock:
+            card = self.card
+            if card is None or card.closing or card.closed or not card.words:
+                return False
+            word, end = card.words[-1], self._absolute(float(stamp) + .04)
+            if not 0 <= end - word['end'] <= GLUE * RATE:
+                return False
+            word['text'] += token.replace('▁', ' ').strip()
+            word['end'] = end
+            self.publish(card, lag=max(0., self.audio_now() - end / RATE))
+        self.log.event('append_glued', part=self.settings.part, segment=card.sid)
+        return True
 
     # ---- the screen ------------------------------------------------------------------
     def show(self, words):
@@ -392,12 +439,17 @@ class AppendProcessor:
         with self.lock:
             touched = []
             for word in words:
+                card = self.card
+                if card is not None and card.held and not card.closing and \
+                        word['end'] - card.words[-1]['end'] > self.join * RATE:
+                    self.release(card, 'silence')   # a word after a real pause: a card of its own
                 if self.card is None or self.card.closing:
                     self.counter += 1
                     self.card = Card(3_000_000 + self.counter, self.settings, word['end'])
                     self.cards.append(self.card)
                 word['shown'] = now
                 self.card.words.append(word)
+                self.card.held = False   # the speaker went on right after the pause: the same card
                 if self.card not in touched:
                     touched.append(self.card)
                 card = self.card
@@ -427,13 +479,33 @@ class AppendProcessor:
             self.publish(card, lag=max(0., self.audio_now() - card.words[-1]['end'] / RATE))
             return True
 
-    def chunk(self, final, reason, sentence=False, tick=False):
-        """A pause (final) closes the card; then start a translation call if one is due."""
+    def chunk(self, final, reason, sentence=False, tick=False, pause=False):
+        """A pause (final) closes the card, or holds it open when its sentence has not ended
+        (see pause_join); then start a translation call if one is due."""
         with self.lock:
-            if final and self.card is not None and not self.card.closing:
-                self.card.closing = True
-                self.card.reason = reason or 'pause'
+            card = self.card
+            if final and card is not None and not card.closing:
+                # only a pause the detector heard; a quiet of BACKGROUND_QUIET or the end closes at once
+                if pause and reason == 'silence' and self.join > 0 and card.words:
+                    card.held = True
+                else:
+                    card.closing = True
+                    card.reason = reason or 'pause'
+            self.expire()
             self.schedule()
+
+    def release(self, card, reason):
+        card.held = False
+        card.closing = True
+        card.reason = reason
+
+    def expire(self):
+        """A held card closes when no word close enough to go on in it can come any more: the
+        join time plus the recognizer's delay after its last word. Called under the lock."""
+        card = self.card
+        if card is not None and card.held and not card.closing and card.words:
+            if self.audio_now() - card.words[-1]['end'] / RATE >= self.join + HOLD_LAG:
+                self.release(card, 'silence')
 
     def estimate(self, words):
         """Seconds a call for `words` Hebrew words is expected to take: the slowest recent rate."""
@@ -450,6 +522,8 @@ class AppendProcessor:
         uncovered = words[card.covered:]
         if not uncovered:
             return None
+        if card.held:   # a pause: what was heard is due now, as at a closing pause, but the card stays open
+            return len(words), 'pause'
         clause = max((i for i, w in enumerate(uncovered[:-1]) if CLAUSE.search(w['text'])), default=None)
         if clause is not None:
             return card.covered + clause + 1, 'clause'
@@ -488,6 +562,7 @@ class AppendProcessor:
             self.warm_if_started()
             if self.clock is not None and not self.cancel.is_set():
                 with self.lock:
+                    self.expire()
                     self.schedule()
 
     def warm_on(self, started):
@@ -679,11 +754,16 @@ class AppendProcessor:
             if added or close:
                 self.publish(card, lag=max(lags) if lags else 0.)
         if close:
+            with self.lock:
+                if stop == 'cap' and card.out and not card.out[-1].endswith('…'):
+                    # cut at the limit: say so, and keep it out of the next card's context, where
+                    # the translator finished it as the start of the next card («вам служить.»)
+                    card.out[-1] += '…'
             shown = ' '.join(card.out[card.base_out:])
             better, piece = self._recheck(card, text, shown, pairs, settings, 'close')
             with self.lock:
-                if card.covered > card.base or shown:
-                    self.pairs.append((card.hebrew(card.base), better or shown))
+                if (card.covered > card.base or shown) and stop != 'cap':
+                    self.pairs.append((as_ended(card.hebrew(card.base)), as_ended(better or shown)))
                 if piece:
                     self._note(card, piece, settings)
                 self.close(card)
