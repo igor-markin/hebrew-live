@@ -199,6 +199,53 @@ def as_ended(text):
     return text if not text or SENTENCE.search(text) else text.rstrip(',;:—–- ') + '.'
 
 
+def says_something(text):
+    """True when a translation has a letter or digit: an empty one gives the next card no context."""
+    return any(ch.isalnum() for ch in text)
+
+
+def ended_early(added, hebrew_words):
+    """The model ended its sentence with far fewer words than the Hebrew it would cover: one word
+    («продуктах.») for six Hebrew words («מוצרים, עושים מור בשביל הכסף שלך ושלך.», Mor call 26.11).
+    That Hebrew is not translated yet; counted as covered it was dropped from the card and the
+    next card translated it."""
+    return hebrew_words >= 3 and 2 * len(added) < hebrew_words
+
+
+def speech(text):
+    """Two words or more, one of them of three letters or a number: words the speaker said, not a
+    fragment («לצול», «כרמי», the start of a word cut at a pause) or noise («ים ד»). Translated
+    without context, a fragment became a made-up word («Подплыть», Mor call replay 26.11)."""
+    words = text.split()
+    return len(words) >= 2 and any(sum(ch.isalpha() for ch in w) >= 3 or any(ch.isdigit() for ch in w)
+                                   for w in words)
+
+
+def balance_quotes(words):
+    """A closed card's translation with its «» paired: a quote the model opened and did not close
+    («нажмите «Согласен.») is closed before the end mark, a closing one with no opening is
+    dropped. Unpaired, the next cards' context carried it on and the next card closed it
+    («…наберите 1».», Mor call 26.11)."""
+    words, depth = list(words), 0
+    for i, word in enumerate(words):
+        kept = ''
+        for ch in word:
+            if ch == '«':
+                depth += 1
+            elif ch == '»':
+                if not depth:
+                    continue
+                depth -= 1
+            kept += ch
+        words[i] = kept
+    words = [w for w in words if w]
+    if depth and words:
+        last = words[-1]
+        body = last.rstrip('.?!…')
+        words[-1] = body + '»' * depth + last[len(body):]
+    return words
+
+
 def pause_join():
     """A pause before the Hebrew ended its sentence does not close the card at once: a word that
     ends within this many seconds of the card's last word goes on in the same card. On seven
@@ -704,6 +751,15 @@ class AppendProcessor:
                 left = len(words) - (card.covered - card.base)
                 result = self.generator.generate(text, forced, pairs, settings.direction, upto=len(words),
                                                  close=False, max_new=new_words_cap(left))
+                if result.stop == 'sentence' and ended_early(result.words, left):
+                    # it ended its sentence long before the Hebrew did: the rest is the next
+                    # sentence of this card, not of the next one
+                    first = list(result.words)
+                    more = self.generator.generate(text, ' '.join([forced] + first).strip(), pairs,
+                                                   settings.direction, upto=len(words), close=False,
+                                                   max_new=new_words_cap(left))
+                    from .clause_mt import Result
+                    result = Result(first + list(more.words), more.stop, more.end_mark)
             elif close:
                 result = self.generator.generate(text, forced, pairs, settings.direction, close=True)
             else:
@@ -712,6 +768,14 @@ class AppendProcessor:
                 cap = new_words_cap(upto - card.covered) if relative == len(words) else None
                 result = self.generator.generate(text, forced, pairs, settings.direction, upto=relative,
                                                  max_new=cap)
+            if close and result is not None and not result.words and not card.out and pairs and speech(text):
+                # Nothing at all for real words: the context made the model think them translated
+                # («или подождите», «нажмите 3» and two more cards came out empty after a context
+                # pair whose translation ran ahead of its Hebrew, Mor call replay 26.11). Without
+                # the context it translates them.
+                result = self.generator.generate(text, forced, (), settings.direction, close=True)
+                self.log.event('append_without_context', part=settings.part, segment=card.sid,
+                               words=len(result.words))
         added = list(result.words) if result else []
         stop = result.stop if result else 'empty'
         with self.lock:
@@ -737,7 +801,8 @@ class AppendProcessor:
             # 'end' with nothing added: the shown translation already says what was heard.
             # 'repetition': the words up to the loop are shown and the Hebrew counts as done, so
             # the loop is not asked for again.
-            if close or stop in ('sentence', 'end', 'repetition') or added and stop == 'frontier':
+            early = stop == 'sentence' and not close and ended_early(added, upto - card.covered)
+            if close or stop in ('sentence', 'end', 'repetition') and not early or added and stop == 'frontier':
                 if stop == 'sentence' and not close:
                     upto = self._with_its_number(card, upto, card.base + len(words), settings)
                 covered = card.words[card.covered:upto]
@@ -759,11 +824,14 @@ class AppendProcessor:
                     # cut at the limit: say so, and keep it out of the next card's context, where
                     # the translator finished it as the start of the next card («вам служить.»)
                     card.out[-1] += '…'
+                card.out[:] = balance_quotes(card.out)
             shown = ' '.join(card.out[card.base_out:])
             better, piece = self._recheck(card, text, shown, pairs, settings, 'close')
             with self.lock:
-                if (card.covered > card.base or shown) and stop != 'cap':
+                if says_something(better or shown) and stop != 'cap':
                     self.pairs.append((as_ended(card.hebrew(card.base)), as_ended(better or shown)))
+                # a sentence split off earlier in this card went to the context with its quote open
+                self.pairs[-CONTEXT:] = [(h, ' '.join(balance_quotes(t.split()))) for h, t in self.pairs[-CONTEXT:]]
                 if piece:
                     self._note(card, piece, settings)
                 self.close(card)

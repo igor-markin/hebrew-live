@@ -509,6 +509,92 @@ class Append(unittest.TestCase):
         self.assertEqual(self.generator.calls[-1]['pairs'][-1], ('אני יכול.', 'ru:אני ru:יכול.'))
         self.assertEqual(self.closed()[0]['translation'], 'ru:אני ru:יכול')   # the screen keeps its text
 
+    def test_a_sentence_ended_long_before_the_hebrew_goes_on_in_the_same_card(self):
+        # «…במגוון מוצרים, עושים מור בשביל הכסף שלך ושלך.»: the model ended at «продуктах.» and the
+        # rest was translated at the start of the next card (Mor call, 26.11)
+        class Early(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                if len(self.calls) == 1:
+                    return Result(['ru:מוצרים.'], 'sentence', '.')
+                if forced.endswith('ru:מוצרים.'):
+                    return Result(['ru:עושים', 'ru:מור', 'ru:שלך'], 'end')
+                return Result(['ru:' + w for w in text.split()[len(forced.split()):]], 'end')
+        script = [(' מוצרים', .2), (' עושים', .4), (' מור', .6), (' בשביל', .8), (' הכסף', 1.), (' שלך', 1.2),
+                  (' כן', 3.5)]
+        processor = self.make(script, join=0., generator=Early())
+        self.feed(processor, 1.7, final=True, reason='silence')
+        self.feed(processor, 4.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.closed()[0]['translation'], 'ru:מוצרים. ru:עושים ru:מור ru:שלך')
+        self.assertEqual(self.generator.calls[-1]['pairs'][-1],
+                         ('מוצרים עושים מור בשביל הכסף שלך.', 'ru:מוצרים. ru:עושים ru:מור ru:שלך.'))
+
+    def test_a_card_without_a_translation_is_kept_out_of_the_context(self):
+        # «ים ד» (noise on hold) got no translation, the next card translated it («Иам Д», Mor call, 26.11)
+        class Silent(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                return Result([] if 'ים' in text else ['ru:' + w for w in text.split()[len(forced.split()):]], 'end')
+        processor = self.make([(' ים', .2), (' דג', .5), (' כן', 2.5)], join=0., generator=Silent())
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.feed(processor, 3.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['ים דג', 'כן'])
+        self.assertEqual(self.generator.calls[-1]['pairs'], ())
+
+    def test_real_words_left_empty_by_the_context_are_translated_without_it(self):
+        class Stuck(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                if pairs and 'להמתין' in text:
+                    return Result([], 'end')
+                return Result(['ru:' + w for w in text.split()[len(forced.split()):]], 'end')
+        processor = self.make([(' להקיש', .2), (' שתיים', .5), (' או', 2.5), (' להמתין', 2.8)], join=0.,
+                              generator=Stuck())
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.feed(processor, 3.5, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.closed()[-1]['translation'], 'ru:או ru:להמתין')
+        self.assertEqual(self.generator.calls[-1]['pairs'], ())
+        self.assertIn('append_without_context', [name for name, _ in self.events])
+
+    def test_a_fragment_left_empty_is_not_translated_without_context(self):
+        from hebrew_live.append_live import speech
+        self.assertTrue(speech('או להמתין'))
+        self.assertFalse(speech('לצול'))
+        self.assertFalse(speech('ים ד'))
+        self.assertTrue(speech('הקישו 2'))
+
+    def test_a_closed_card_has_its_quotes_paired(self):
+        from hebrew_live.append_live import balance_quotes
+        self.assertEqual(balance_quotes('нажмите «Согласен.'.split()), ['нажмите', '«Согласен».'])
+        self.assertEqual(balance_quotes('Наберите 1».'.split()), ['Наберите', '1.'])
+        self.assertEqual(balance_quotes('нажмите «решётка» и «звёздочка'.split()),
+                         ['нажмите', '«решётка»', 'и', '«звёздочка»'])
+        self.assertEqual(balance_quotes(['»']), [])
+
+    def test_a_quote_left_open_is_closed_on_the_screen_and_in_the_context(self):
+        # «יש להקיש את הקוד ובסיום סולמית.» → «…нажмите «Согласен.», closed two cards later (Mor call, 26.11)
+        class Quote(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                if len(self.calls) == 1:
+                    return Result(['нажмите', '«решётку'], 'sentence', '.')
+                return Result(['ru:' + w for w in text.split()[len(forced.split()):]], 'end')
+        processor = self.make([(' ובסיום', .2), (' סולמית', .5), (' כן', 2.5)], join=0., generator=Quote())
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.feed(processor, 3.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.closed()[0]['translation'], 'нажмите «решётку»')
+        self.assertEqual(self.generator.calls[-1]['pairs'][-1][1], 'нажмите «решётку».')
+
+    def test_only_a_sentence_end_far_short_of_the_hebrew_counts_as_early(self):
+        from hebrew_live.append_live import ended_early
+        self.assertTrue(ended_early(['продуктах.'], 6))
+        self.assertFalse(ended_early(['Mor', 'работает.'], 4))
+        self.assertFalse(ended_early(['Да.'], 2))   # a short reply is not cut
+
     def test_a_card_with_only_the_tail_of_a_word_is_shown_without_a_translation(self):
         # «ם.» after «בבית הכר» cut at a pause was translated as «цеме.» (Maccabi call, 26.11)
         processor = self.make([(' ת', .2)], join=0.)
