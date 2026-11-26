@@ -568,6 +568,7 @@ export default function Live(){
   useEffect(()=>{localStorage.setItem(SESSIONS_HIDDEN_KEY,storedValue(sessionsHidden));},[sessionsHidden]);
   useEffect(()=>{if(state.menu_hidden!==undefined)setMenuHidden(state.menu_hidden);},[state.menu_hidden]);
   useEffect(()=>{if(state.sessions_hidden!==undefined)setSessionsHidden(state.sessions_hidden);},[state.sessions_hidden]);
+  useEffect(()=>{if(state.dark_theme!==undefined)setDark(state.dark_theme);},[state.dark_theme]);
   useEffect(()=>{
     if(!connectionError)return;
     setClock(Date.now());const timer=window.setInterval(()=>setClock(Date.now()),1000);
@@ -609,7 +610,7 @@ export default function Live(){
   const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const preferenceAction=['ui_locale','text_size','menu_hidden','sessions_hidden','save_raw_audio','input_source','check_phone'].includes(action);
+    const preferenceAction=['ui_locale','text_size','menu_hidden','sessions_hidden','dark_theme','save_raw_audio','input_source','check_phone'].includes(action);
     if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
@@ -633,6 +634,7 @@ export default function Live(){
   },[tx]);
   const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
   const chooseSize=useCallback((value:TextSize)=>{setSize(value);void act('text_size',value).then(saved=>{if(saved)setState(old=>({...old,text_size:value}));});},[act]);
+  const chooseDark=useCallback((value:boolean)=>{setDark(value);void act('dark_theme',value).then(saved=>{if(saved)setState(old=>({...old,dark_theme:value}));});},[act]);
   const chooseMenuHidden=useCallback((value:boolean)=>{setMenuHidden(value);void act('menu_hidden',value).then(saved=>{if(saved)setState(old=>({...old,menu_hidden:value}));});},[act]);
   const chooseSessionsHidden=useCallback((value:boolean)=>{
     setSessionsHidden(value);
@@ -674,7 +676,7 @@ export default function Live(){
     </aside>
     <main className="conversation-pane">
       {selected&&<div className="conversation-title"><div><strong>{sessions.find(item=>item.id===selected)?.label||tx('savedConversation')}</strong><small>{tx('readOnly')}</small></div><Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button></div>}
-      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} size={size} setSize={chooseSize} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}
+      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={chooseDark} size={size} setSize={chooseSize} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}
         menuHidden={menuHidden} setMenuHidden={chooseMenuHidden} sessionsButton={narrow||sessionsHidden} onSessions={narrow?()=>setSidebar(true):()=>chooseSessionsHidden(false)} sessionsRef={openSidebarRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}

@@ -5,7 +5,7 @@ from .tuning import validate as timing_validate,as_dict
 from .model_selection import validate as model_validate
 _LOCK=threading.RLock()
 TEXT_SIZES=('smallest','small','normal','large')   # conversation text size in the window
-LAYOUT_FLAGS=('menu_hidden','sessions_hidden')   # parts of the window the owner hid
+LAYOUT_FLAGS=('menu_hidden','sessions_hidden','dark_theme')   # parts of the window the owner hid, and the dark theme
 RETIRED_TRANSLATION_NOTICE='The saved retired translation-model choice is no longer supported; this session uses the installed MiLMMT model. No model files were deleted.'
 def read(folder):
  path=Path(folder)/'preferences.json'

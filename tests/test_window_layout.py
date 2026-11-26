@@ -68,5 +68,24 @@ class LayoutActionTests(unittest.TestCase):
         self.assertIs(ui.state['sessions_hidden'], False)
 
 
+class DarkThemeTests(unittest.TestCase):
+    """The dark theme lived only in the window's localStorage, which a restart empties (26.11)."""
+    window = LayoutActionTests.window
+
+    def test_the_dark_theme_is_saved_and_survives_a_restart(self):
+        ui = self.window()
+        self.assertIs(ui.state['dark_theme'], False)
+        self.assertEqual(post(ui, {'action': 'dark_theme', 'value': True}), 200)
+        self.assertIs(ui.state['dark_theme'], True)
+        self.assertIs(preferences.read(ui.preference_folder)['dark_theme'], True)
+        self.assertEqual(post(ui, {'action': 'dark_theme', 'value': 'dark'}), 400)
+        self.assertIs(preferences.read(ui.preference_folder)['dark_theme'], True)
+
+    def test_the_runtime_hands_the_saved_theme_to_a_new_window(self):
+        import inspect
+        from hebrew_live import runtime
+        self.assertIn("dark_theme=preferences.get('dark_theme',False)", inspect.getsource(runtime))
+
+
 if __name__ == '__main__':
     unittest.main()

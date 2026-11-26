@@ -47,3 +47,10 @@ test('both choices are saved with the preferences, not only in this window',()=>
   for(const action of ['menu_hidden','sessions_hidden'])assert.ok(live.includes(`act('${action}',value)`),action);
   assert.ok(live.includes("'menu_hidden','sessions_hidden'"),'allowed while recording, like the text size');
 });
+
+test('the dark theme is saved with the preferences and read back after a restart',()=>{
+  assert.ok(live.includes("act('dark_theme',value)"),'saved through the engine');
+  assert.ok(live.includes("setDark={chooseDark}"),'the theme button saves');
+  assert.ok(live.includes("if(state.dark_theme!==undefined)setDark(state.dark_theme)"),'a new window takes the saved theme');
+  assert.ok(live.includes("'sessions_hidden','dark_theme'"),'allowed while recording');
+});
