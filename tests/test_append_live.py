@@ -589,6 +589,24 @@ class Append(unittest.TestCase):
         self.assertEqual(self.closed()[0]['translation'], 'нажмите «решётку»')
         self.assertEqual(self.generator.calls[-1]['pairs'][-1][1], 'нажмите «решётку».')
 
+    def test_no_sentence_end_right_after_an_opening_quote(self):
+        # «להמשך המתנה יש להקיש שתיים» came out as «нажмите «. 2».»: the model ended its sentence
+        # after «нажмите «» on a deadline call, and the end mark went after the quote (Mor call replay, 26.11)
+        class Opening(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                if forced:
+                    return Result(['2».'], 'end')
+                return Result(['нажмите', '«'], 'sentence', '.')
+        processor = self.make([(' ללחוץ', .2), (' על', .4), (' כפתור', .6), (' שניים', 2.2)],
+                              deadline=1., generator=Opening(), join=0.)
+        for seconds in (1., 1.5, 2., 2.5):
+            self.feed(processor, seconds)
+        self.feed(processor, .3, final=True, reason='silence')
+        self.finish(processor)
+        translation = self.closed()[-1]['translation']
+        self.assertEqual(translation, 'нажмите «2».')
+
     def test_only_a_sentence_end_far_short_of_the_hebrew_counts_as_early(self):
         from hebrew_live.append_live import ended_early
         self.assertTrue(ended_early(['продуктах.'], 6))
