@@ -175,6 +175,14 @@ class DraftRouter:
         self.retranslation.shutdown_mt()
 
 
+def has_words(text):
+    """False for Hebrew with no word to translate: only single letters and marks («ת», «ם.»), the
+    tail of a word cut at a pause. The translator made up words for them («ם.» → «цеме.», «ה.» →
+    «это сделать.», Maccabi call 26.11); such a card shows its Hebrew without a translation. A
+    number alone («2») is a word."""
+    return any(sum(ch.isalpha() for ch in word) >= 2 or any(ch.isdigit() for ch in word) for word in text.split())
+
+
 def new_words_cap(hebrew_words):
     """New translation words allowed when nothing heard follows (a pause, a quiet): what the
     Hebrew can need, too few to finish the speaker's sentence for them. Russian often takes two
@@ -688,7 +696,7 @@ class AppendProcessor:
             forced = ' '.join(card.out[card.base_out:])
             pairs = tuple(self.pairs[-CONTEXT:])
         result = None
-        if text and not self.cancel.is_set():
+        if text and has_words(text) and not self.cancel.is_set():
             if close and card.reason != 'sentence':
                 # A pause is not a sentence end: the model must not finish the sentence for the
                 # speaker. Stops on, all words may be covered, and no more new words than the
@@ -727,7 +735,9 @@ class AppendProcessor:
             now = self.audio_now()
             covered = []
             # 'end' with nothing added: the shown translation already says what was heard.
-            if close or stop in ('sentence', 'end') or added and stop == 'frontier':
+            # 'repetition': the words up to the loop are shown and the Hebrew counts as done, so
+            # the loop is not asked for again.
+            if close or stop in ('sentence', 'end', 'repetition') or added and stop == 'frontier':
                 if stop == 'sentence' and not close:
                     upto = self._with_its_number(card, upto, card.base + len(words), settings)
                 covered = card.words[card.covered:upto]

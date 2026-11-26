@@ -242,7 +242,7 @@ class Append(unittest.TestCase):
             def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
                 self.calls.append(dict(close=close))
                 return Result(self.replies.pop(0) if self.replies else [], 'end')
-        script = [(' א', .2), (',', .25), (' ב', .5), (',', .55), (' ג', .8)]
+        script = [(' אב', .2), (',', .25), (' בג', .5), (',', .55), (' גד', .8)]
         processor = self.make(script, generator=Marks())
         for seconds in (1.1, 1.4):
             self.feed(processor, seconds)
@@ -251,7 +251,7 @@ class Append(unittest.TestCase):
         self.assertEqual(self.publications()[-1]['current']['translation'], 'Привет? Да')
 
     def test_a_sentence_the_model_ends_early_starts_a_new_one_with_the_pair_as_context(self):
-        script = [(' א', .2), (',', .25), (' ב', .5), (',', .55), (' ג', .8)]
+        script = [(' אב', .2), (',', .25), (' בג', .5), (',', .55), (' גד', .8)]
         processor = self.make(script, generator=FakeGenerator(stops=['sentence']))
         for seconds in (1.1, 1.4):
             self.feed(processor, seconds)
@@ -259,9 +259,9 @@ class Append(unittest.TestCase):
         self.finish(processor)
         calls = self.generator.calls
         self.assertEqual(calls[0]['forced'], '')
-        self.assertEqual(calls[1]['pairs'][-1], ('א,', 'ru:א,.'))
-        self.assertEqual(calls[1]['text'], 'ב, ג')
-        self.assertEqual(self.publications()[-1]['current']['translation'], 'ru:א,. ru:ב, ru:ג')
+        self.assertEqual(calls[1]['pairs'][-1], ('אב,', 'ru:אב,.'))
+        self.assertEqual(calls[1]['text'], 'בג, גד')
+        self.assertEqual(self.publications()[-1]['current']['translation'], 'ru:אב,. ru:בג, ru:גד')
         # a pause is not a sentence end: the last call keeps its stops and a cap on new words
         self.assertEqual((calls[-1]['close'], calls[-1]['upto'], calls[-1]['max_new']), (False, 2, 6))
 
@@ -509,6 +509,32 @@ class Append(unittest.TestCase):
         self.assertEqual(self.generator.calls[-1]['pairs'][-1], ('אני יכול.', 'ru:אני ru:יכול.'))
         self.assertEqual(self.closed()[0]['translation'], 'ru:אני ru:יכול')   # the screen keeps its text
 
+    def test_a_card_with_only_the_tail_of_a_word_is_shown_without_a_translation(self):
+        # «ם.» after «בבית הכר» cut at a pause was translated as «цеме.» (Maccabi call, 26.11)
+        processor = self.make([(' ת', .2)], join=0.)
+        self.feed(processor, 1.)
+        self.feed(processor, .3, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.generator.calls, [])
+        closed = [v for v in self.publications() if v['stage'] == 'closed']
+        self.assertEqual([(v['current']['source'], v['current']['translation']) for v in closed], [('ת', '')])
+
+    def test_a_loop_stop_shows_the_words_before_it_and_covers_the_hebrew(self):
+        class Looping(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, upto=upto, close=close))
+                return Result([] if forced else ['и', 'без', 'лишних'], 'repetition')
+        processor = self.make([(' ובלי', .2), (' פריבוד', .6), (' ואמגבירת', 1.)], deadline=1., generator=Looping(), join=0.)
+        for seconds in (1., 1.5, 2., 2.5):
+            self.feed(processor, seconds)
+        self.feed(processor, .3, final=True, reason='silence')
+        self.finish(processor)
+        chunks = [e for n, e in self.events if n == 'append_chunk']
+        self.assertEqual(chunks[0]['stop'], 'repetition')
+        self.assertGreater(chunks[0]['words'], 0)   # the Hebrew of the call counts as translated
+        closed = [v for v in self.publications() if v['stage'] == 'closed']
+        self.assertEqual(closed[-1]['current']['translation'], 'и без лишних')
+
 class WordsCutShort(unittest.TestCase):
     """The last word of a translation cut at its limit is not shown unfinished."""
     def generate(self, close, pieces, **kw):
@@ -549,6 +575,65 @@ class WordsCutShort(unittest.TestCase):
         result = self.generate(True, [' на', 'жмите', ' 5', '.'])
         self.assertEqual((result.stop, result.words), ('end', ['нажмите', '5.']))
 
+
+    def loop(self, pieces, text):
+        import mlx.core as mx
+        from hebrew_live.clause_mt import ClauseGenerator
+        EOS = len(pieces)
+        step = [0]
+
+        class Tokenizer:
+            eos_token_ids = [EOS]
+            def decode(self, tokens):
+                return ''.join(pieces[t] for t in tokens)
+
+        class Model:
+            def __call__(self, ids, cache=None):
+                row = np.zeros((1, 1, EOS + 1), np.float32)
+                row[0, 0, min(step[0], EOS)] = 1.
+                step[0] += 1
+                return mx.array(row)
+        generator = ClauseGenerator(SimpleNamespace(model=Model(), tokenizer=Tokenizer()))
+        generator._capture = lambda: SimpleNamespace(active=False, rows=[], forward=lambda: None, last=lambda: None)
+        generator.prompt = lambda *a: ([1], [(0, 0)], 1)
+        with mock.patch('mlx_lm.models.cache.make_prompt_cache', return_value=None):
+            return generator.generate(text, '', (), 'he-ru', close=True)
+
+    def test_a_runaway_loop_stops_with_the_words_before_its_second_copy(self):
+        # Russian speech the recognizer turned into Hebrew-like words (Maccabi Dent call, 26.11)
+        pieces = [' И'] + [' без', ' лишних', ' слов,'] * 6
+        result = self.loop(pieces, 'ובלי פריבוד ואמגבירת על גבריה')
+        self.assertEqual((result.stop, result.words), ('repetition', ['И', 'без', 'лишних', 'слов,']))
+
+
+class Runaway(unittest.TestCase):
+    def test_a_loop_is_cut_after_its_first_copy(self):
+        from hebrew_live.clause_mt import runaway
+        new = 'И без лишних слов, без лишних слов, без лишних слов,'.split()
+        self.assertEqual(runaway([], new, 'ובלי פריבוד ואמגבירת'), 4)
+
+    def test_the_shown_words_count_but_are_never_taken_back(self):
+        from hebrew_live.clause_mt import runaway
+        forced = 'И без лишних слов, без лишних слов,'.split()
+        self.assertEqual(runaway(forced, 'без лишних слов,'.split(), 'ובלי פריבוד'), 0)
+
+    def test_a_phrase_the_speaker_says_three_times_is_not_a_loop(self):
+        from hebrew_live.clause_mt import runaway
+        self.assertIsNone(runaway([], 'и это проблема, это проблема, это проблема'.split(), 'זה הבעיה, זה הבעיה, זה הבעיה'))
+        self.assertIsNone(runaway([], 'Нажмите 1, чтобы записаться, нажмите 2, чтобы отменить'.split(), 'הקישו'))
+
+    def test_two_copies_are_not_a_loop(self):
+        from hebrew_live.clause_mt import runaway
+        self.assertIsNone(runaway([], 'без лишних слов, без лишних слов'.split(), 'ובלי'))
+
+
+class WordlessHebrew(unittest.TestCase):
+    def test_letters_and_marks_alone_are_no_words(self):
+        from hebrew_live.append_live import has_words
+        for text in ('ת', 'ם.', 'ה.', 'ת ה'):
+            self.assertFalse(has_words(text), text)
+        for text in ('לי', '2', 'כן.', 'קישו שש'):
+            self.assertTrue(has_words(text), text)
 
 class AllAudio(unittest.TestCase):
     """Audio between speech segments ('background') and the audio that leads a segment."""

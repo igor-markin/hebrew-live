@@ -92,6 +92,34 @@ def median_filter(rows, width):
     return np.median(windows, axis=-1)
 
 
+def runaway(forced, new, source):
+    """How many of the `new` words to keep when the translation (`forced` + `new`) has run into
+    a loop: three or more copies in a row of a phrase of 3-15 words, more copies than the Hebrew
+    has of any phrase (a speaker who says a thing three times gets it three times). The new words
+    are kept up to the end of the first copy; None when there is no loop. Hebrew the recognizer
+    garbled (speech in another language) made the model repeat «без лишних слов» eleven times
+    in one card until the length cap stopped it (Maccabi Dent call, 26.11)."""
+    words = [re.sub(r'\W', '', word.lower()) for word in [*forced, *new]]
+    first = None
+    for size in range(3, min(15, len(words) // 3) + 1):
+        for start in range(len(words) - 3 * size + 1):
+            phrase = words[start:start + size]
+            if any(phrase) and phrase == words[start + size:start + 2 * size] == words[start + 2 * size:start + 3 * size]:
+                if first is None or start + size < first[0] + first[1]:
+                    first = (start, size)
+                break
+    if first is None:
+        return None
+    start, size = first
+    copies = 1
+    while words[start + size * copies:start + size * (copies + 1)] == words[start:start + size]:
+        copies += 1
+    from .cli import repeat_run
+    if copies <= repeat_run(source):
+        return None
+    return max(0, start + size - len(forced))
+
+
 class Result:
     def __init__(self, words, stop, end_mark=None, tokens=0):
         self.words, self.stop, self.end_mark, self.tokens = words, stop, end_mark, tokens
@@ -106,6 +134,7 @@ class ClauseGenerator:
     `max_new`: at most this many new words.
     `Result.stop`: 'end' (the model finished), 'frontier' (attention reached a word it may not
     cover), 'sentence' (it wanted a sentence end the Hebrew has not reached), 'unsure', 'cap',
+    'repetition' (the translation ran into a loop, see `runaway`: the words up to its first copy),
     'cancel'."""
 
     def __init__(self, engine, margin=1, width=7, min_mass=.03, min_prob=0., cancel=None):
@@ -157,6 +186,7 @@ class ClauseGenerator:
         token_limit = 6 * max(1, limit) + 24   # a «word» without spaces never reaches the word limit
         cache = make_prompt_cache(model)
         tokens, history, stop, end_mark, ended_once = [], [], None, None, False
+        shown, checked = forced.split(), 0
         capture.active = not close and accessible < len(positions)
         capture.rows = []
         try:
@@ -192,9 +222,15 @@ class ClauseGenerator:
                     if aligned >= frontier and mass >= self.min_mass:
                         return Result(self._whole_words(tokens, token), 'frontier', None, len(tokens))
                 tokens.append(token)
-                if len(tokens) >= token_limit or len(tokenizer.decode(tokens).split()) > limit + 1:
+                new = tokenizer.decode(tokens).split()
+                if len(tokens) >= token_limit or len(new) > limit + 1:
                     stop = 'cap'
                     break
+                if len(new) - 1 > checked:   # a word was finished: the last one may still grow
+                    checked = len(new) - 1
+                    keep = runaway(shown, new[:-1], text)
+                    if keep is not None:
+                        return Result(new[:keep], 'repetition', None, len(tokens))
                 capture.forward()
                 logits = model(mx.array([[token]]), cache=cache)
         finally:
