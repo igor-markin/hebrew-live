@@ -263,3 +263,29 @@ html[dir="rtl"] .session-delete {right:auto;left:6px}
 .vocabulary-list li>span {flex:1;display:flex;flex-direction:column;min-width:0}
 .vocabulary-list small {color:var(--muted);overflow-wrap:anywhere}
 @media(max-width:560px){.vocabulary-form{grid-template-columns:1fr}}
+
+/* Compact window: no page title in the live view, one menu line that never wraps, and a menu and
+   a session list the owner can hide (the choice is saved with the preferences). */
+.conversation-pane>.live-controls:first-child {margin-top:12px}
+.live-controls {padding:6px 10px;margin-bottom:12px;border-radius:12px}
+.live-toolbar {flex-wrap:nowrap;gap:6px;min-width:0}
+.live-status {min-width:0;flex:1 1 auto;gap:8px;font-size:13px}
+.live-status>span:last-child {min-width:0}
+.live-status strong,.live-status small {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live-status small {font-size:11px;font-weight:400;color:var(--muted)}
+.live-toolbar button,.live-settings summary {height:32px;min-height:32px;padding:0 10px;font-size:13px;white-space:nowrap;flex-shrink:0}
+.live-toolbar .finish-button,.session-buttons button {height:32px}
+.live-settings {margin-left:0;flex-shrink:0}
+.live-toolbar .menu-toggle,.live-toolbar .show-sessions {padding:0 8px}
+.live-controls--hidden {padding:2px 8px}
+.live-controls--hidden .menu-toggle {font-size:12px;color:var(--muted)}
+.messenger-shell .session-sidebar .close-sessions,.conversation-pane .show-sessions {display:inline-flex}
+@media(min-width:901px){
+ .messenger-shell.sessions-hidden {padding-left:24px}
+ .messenger-shell.sessions-hidden .session-sidebar {display:none}
+ html[dir="rtl"] .messenger-shell.sessions-hidden {padding:0 24px}
+}
+@media(max-width:560px){.live-toolbar{flex-wrap:wrap}}
+/* A narrow menu line keeps its words for Pause and Finish and shows the rest as icons. */
+.live-controls {container-type:inline-size}
+@container (max-width:860px){.live-toolbar .button-label{display:none}}

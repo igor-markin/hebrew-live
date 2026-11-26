@@ -8,6 +8,7 @@ import {openStateStream} from './liveStream';
 import {UiLog,clickTarget,renderRecords} from './uiLog';
 import {TEXT_SIZES,TEXT_SIZE_KEY,textSize,translationPixels} from './textSize';
 import type {TextSize} from './textSize';
+import {MENU_HIDDEN_KEY,SESSIONS_HIDDEN_KEY,storedHidden,storedValue} from './layout';
 import type {Drawn} from './uiLog';
 import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
@@ -26,7 +27,7 @@ const useI18n=()=>useContext(I18nContext);
 const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false,append:false});
 
 function Icon({kind}:{kind:string}) {
-  const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
+  const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',sidebar:'M4 4h16v16H4ZM9 4v16',up:'m6 15 6-6 6 6',expand:'m6 9 6 6 6-6',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[kind]||paths.settings}/></svg>;
 }
 
@@ -353,7 +354,7 @@ function InputSource({state,pending,onAction}:{state:LiveState;pending:boolean;o
   </div>;
 }
 
-function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,size,setSize,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;size:TextSize;setSize:(value:TextSize)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
+function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,size,setSize,locale,onLocale,settingsRef,menuHidden,setMenuHidden,sessionsButton,onSessions,sessionsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;size:TextSize;setSize:(value:TextSize)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>;menuHidden:boolean;setMenuHidden:(value:boolean)=>void;sessionsButton:boolean;onSessions:()=>void;sessionsRef:React.RefObject<HTMLButtonElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
   const busy=pending||loading||state.finished||state.stopping||state.model_switching;
@@ -366,17 +367,28 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
   const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind==='Телефон'?tx('inputPhone'):state.input_kind;
   const device=state.input_kind==='Телефон'?tx('phoneSession'):state.device;
   const choosing=!selected&&!state.finished&&!state.recording_started;
+  const sessions=sessionsButton&&<Button ref={sessionsRef} variant="tertiary" className="show-sessions" onPress={onSessions} aria-label={tx('sessions')}><Icon kind="sidebar"/></Button>;
+  const dot=<span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/>;
+  // A hidden menu leaves one thin line: what the app is doing and the way back to the menu.
+  if(menuHidden)return <section className="live-controls live-controls--hidden" aria-label={tx('recordingControls')}>
+    <div className="live-toolbar">
+      {sessions}
+      <div className="live-status" role="status">{dot}<span><strong>{localizedStatus}</strong></span></div>
+      <Button variant="tertiary" className="menu-toggle" onPress={()=>setMenuHidden(false)}><Icon kind="expand"/>{tx('showMenu')}</Button>
+    </div>
+  </section>;
   return <section className="live-controls" aria-label={tx('recordingControls')}>
     <div className="live-toolbar">
-      <div className="live-status" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localizedStatus}</strong><small>{direction}{device?' · '+device:inputKind?' · '+inputKind:''}{archiveState?' · '+archiveState:''}</small></span></div>
+      {sessions}
+      <div className="live-status" role="status">{dot}<span><strong>{localizedStatus}</strong><small>{direction}{device?' · '+device:inputKind?' · '+inputKind:''}{archiveState?' · '+archiveState:''}</small></span></div>
       {state.finished?(state.can_start_new?<Button variant="primary" isDisabled={pending} onPress={()=>onAction('start_session')}><Icon kind="play"/>{tx('newRecording')}</Button>:null):state.stopping?<Button variant="tertiary" className="cancel-processing" isDisabled={pending||state.cancelling} onPress={()=>{if(window.confirm(tx('cancelConfirm')))onAction('cancel_processing');}}><Icon kind="stop"/>{state.cancelling?tx('cancelShort'):tx('cancelRemaining')}</Button>:<div className="session-buttons" role="group" aria-label={tx('recordingControls')}>
         <Button variant="primary" className="finish-button" isDisabled={busy||phoneBlocksStart(state)} onPress={()=>onAction('pause')}><Icon kind={state.paused?'play':'pause'}/>{state.paused?(state.desktop_mode&&state.status_code==='ready_to_start'?tx('startRecording'):tx('continue')):tx('pause')}</Button>
         <Button variant="tertiary" isDisabled={busy||(state.desktop_mode&&!state.recording_started)} onPress={()=>onAction('stop')}><Icon kind="stop"/>{tx('finishRecording')}</Button>
       </div>}
-      {window.hebrewLive&&<Button variant="tertiary" onPress={()=>void window.hebrewLive?.showHelp()}><Icon kind="help"/>{tx('helpFeedback')}</Button>}
-      <Button variant="tertiary" isDisabled={pending} onPress={()=>{if(window.hebrewLive){void window.hebrewLive.requestQuit();return;}if(state.finished||window.confirm(tx('quitConfirm')))onAction('quit');}}><Icon kind="power"/>{tx('quitApp')}</Button>
+      {window.hebrewLive&&<Button variant="tertiary" onPress={()=>void window.hebrewLive?.showHelp()} aria-label={tx('helpFeedback')}><Icon kind="help"/><span className="button-label">{tx('helpFeedback')}</span></Button>}
+      <Button variant="tertiary" isDisabled={pending} onPress={()=>{if(window.hebrewLive){void window.hebrewLive.requestQuit();return;}if(state.finished||window.confirm(tx('quitConfirm')))onAction('quit');}} aria-label={tx('quitApp')}><Icon kind="power"/><span className="button-label">{tx('quitApp')}</span></Button>
       <details ref={settingsRef} className="live-settings">
-        <summary><Icon kind="settings"/>{tx('settings')}</summary>
+        <summary aria-label={tx('settings')}><Icon kind="settings"/><span className="button-label">{tx('settings')}</span></summary>
         <div className="live-settings-panel">
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
@@ -387,6 +399,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
         </div>
       </details>
+      <Button variant="tertiary" className="menu-toggle" onPress={()=>setMenuHidden(true)} aria-label={tx('hideMenu')}><Icon kind="up"/></Button>
     </div>
     {choosing&&<InputSource state={state} pending={pending} onAction={onAction}/>}
   </section>;
@@ -414,6 +427,8 @@ export default function Live(){
   const [narrow,setNarrow]=useState(()=>matchMedia('(max-width: 900px)').matches);
   const [dark,setDark]=useState(()=>localStorage.getItem('hebrew-live-theme')==='dark');
   const [size,setSize]=useState<TextSize>(()=>textSize(localStorage.getItem(TEXT_SIZE_KEY)));
+  const [menuHidden,setMenuHidden]=useState(()=>storedHidden(localStorage.getItem(MENU_HIDDEN_KEY)));
+  const [sessionsHidden,setSessionsHidden]=useState(()=>storedHidden(localStorage.getItem(SESSIONS_HIDDEN_KEY)));
   const [connectionError,setConnectionError]=useState('');
   const [actionError,setActionError]=useState('');
   const [lastSuccess,setLastSuccess]=useState<number>();
@@ -597,6 +612,10 @@ export default function Live(){
   useEffect(()=>{document.documentElement.dataset.textSize=size;localStorage.setItem(TEXT_SIZE_KEY,size);},[size]);
   // The saved preference wins: the window's address (and so its localStorage) changes every launch.
   useEffect(()=>{if(state.text_size!==undefined)setSize(textSize(state.text_size));},[state.text_size]);
+  useEffect(()=>{localStorage.setItem(MENU_HIDDEN_KEY,storedValue(menuHidden));},[menuHidden]);
+  useEffect(()=>{localStorage.setItem(SESSIONS_HIDDEN_KEY,storedValue(sessionsHidden));},[sessionsHidden]);
+  useEffect(()=>{if(state.menu_hidden!==undefined)setMenuHidden(state.menu_hidden);},[state.menu_hidden]);
+  useEffect(()=>{if(state.sessions_hidden!==undefined)setSessionsHidden(state.sessions_hidden);},[state.sessions_hidden]);
   useEffect(()=>{
     if(!connectionError)return;
     setClock(Date.now());const timer=window.setInterval(()=>setClock(Date.now()),1000);
@@ -638,7 +657,7 @@ export default function Live(){
   const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const preferenceAction=['ui_locale','text_size','save_raw_audio','input_source','check_phone'].includes(action);
+    const preferenceAction=['ui_locale','text_size','menu_hidden','sessions_hidden','save_raw_audio','input_source','check_phone'].includes(action);
     if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
@@ -662,6 +681,12 @@ export default function Live(){
   },[tx]);
   const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
   const chooseSize=useCallback((value:TextSize)=>{setSize(value);void act('text_size',value).then(saved=>{if(saved)setState(old=>({...old,text_size:value}));});},[act]);
+  const chooseMenuHidden=useCallback((value:boolean)=>{setMenuHidden(value);void act('menu_hidden',value).then(saved=>{if(saved)setState(old=>({...old,menu_hidden:value}));});},[act]);
+  const chooseSessionsHidden=useCallback((value:boolean)=>{
+    setSessionsHidden(value);
+    if(value)requestAnimationFrame(()=>openSidebarRef.current?.focus());
+    void act('sessions_hidden',value).then(saved=>{if(saved)setState(old=>({...old,sessions_hidden:value}));});
+  },[act]);
   const retryFragment=useCallback((id:string)=>{void act('retry_fragment',id);},[act]);
   const changeLocale=useCallback(async(value:UiLocale)=>{
     const request=beginLocaleRequest(locale,state.ui_locale,value,localeRequested.current);
@@ -681,9 +706,9 @@ export default function Live(){
   const query=search.trim().toLocaleLowerCase(locale);
   const filtered=sessions.filter(item=>item.id!==currentId&&(!query||[item.label,item.id,item.title||'',item.preview||''].some(value=>value.toLocaleLowerCase(locale).includes(query))));
   const loading=state.phase==='loading'||state.phase==='opening';
-  return <I18nContext.Provider value={i18n}><div className={`app-shell live-shell messenger-shell ${sidebar?'sessions-open':''}`}>
-    <aside ref={sidebarRef} className="session-sidebar" aria-label={tx('sessions')} role={narrow?'dialog':undefined} aria-modal={narrow||undefined} aria-hidden={narrow&&!sidebar||undefined}>
-      <header><h1>{tx('sessions')}</h1><Button variant="tertiary" className="close-sessions" onPress={closeSidebar} aria-label={tx('closeSessions')}>×</Button></header>
+  return <I18nContext.Provider value={i18n}><div className={`app-shell live-shell messenger-shell ${sidebar?'sessions-open':''} ${sessionsHidden&&!narrow?'sessions-hidden':''}`}>
+    <aside ref={sidebarRef} className="session-sidebar" aria-label={tx('sessions')} role={narrow?'dialog':undefined} aria-modal={narrow||undefined} aria-hidden={(narrow?!sidebar:sessionsHidden)||undefined}>
+      <header><h1>{tx('sessions')}</h1><Button variant="tertiary" className="close-sessions" onPress={narrow?closeSidebar:()=>chooseSessionsHidden(true)} aria-label={tx(narrow?'closeSessions':'hideSessions')}>×</Button></header>
       <label className="session-search"><Icon kind="folder"/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder={tx('searchPlaceholder')} aria-label={tx('searchSaved')}/></label>
       <nav aria-label={tx('savedConversations')}>
         <button className={`session-row ${!selected?'selected':''}`} onClick={()=>choose('')} aria-current={!selected?'page':undefined}><span className="session-avatar"><Icon kind="play"/></span><span><strong>{tx('currentSession')}</strong><small>{state.status_code&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session'].includes(state.status_code)?tx(state.status_code as TextKey):state.status}</small></span></button>
@@ -696,8 +721,9 @@ export default function Live(){
       {deleteError&&<p className="unavailable" role="alert">{deleteError}</p>}
     </aside>
     <main className="conversation-pane">
-      <div className="conversation-title"><Button ref={openSidebarRef} variant="tertiary" className="show-sessions" onPress={()=>setSidebar(true)}><Icon kind="folder"/>{tx('sessions')}</Button><div><strong>{selected?sessions.find(item=>item.id===selected)?.label||tx('savedConversation'):tx('liveTitle')}</strong><small>{selected?tx('readOnly'):tx('onThisMac')}</small></div>{selected&&<Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button>}</div>
-      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} size={size} setSize={chooseSize} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
+      {selected&&<div className="conversation-title"><div><strong>{sessions.find(item=>item.id===selected)?.label||tx('savedConversation')}</strong><small>{tx('readOnly')}</small></div><Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button></div>}
+      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} size={size} setSize={chooseSize} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}
+        menuHidden={menuHidden} setMenuHidden={chooseMenuHidden} sessionsButton={narrow||sessionsHidden} onSessions={narrow?()=>setSidebar(true):()=>chooseSessionsHidden(false)} sessionsRef={openSidebarRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
       {!selected&&state.input_error&&(state.input_error==='phone_stopped'||state.phone_status!=='ready')&&<p className="unavailable global-error" role="alert">{tx(state.input_error==='phone_stopped'?'phoneStopped':'phoneNotReadyAtStart',{reason:tx(phoneStatusText(state.phone_status))})}</p>}
