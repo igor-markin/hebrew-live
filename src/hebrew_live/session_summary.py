@@ -213,6 +213,7 @@ def summarize(events):
                                                for k in (2, 3, 4, 5)} if lags else None)(
                 [lag for e in get('append_chunk') for lag in e.get('lags') or ()]),
             chunks=count('append_chunk'), capped=sum(1 for e in get('append_chunk') if e.get('capped')),
+            repetitions=sum(1 for e in get('append_chunk') if e.get('stop') == 'repetition'),
             failed=count('append_failed')) if get('append_words') else None,
         errors=count('error'), number_mismatches=count('number_mismatch'), weekday_checks=count('weekday_check'),
         weekday_fixed=sum(1 for e in get('weekday_check') for item in e.get('issues') or () if item.get('kind') == 'fixed'),
