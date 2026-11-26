@@ -105,24 +105,60 @@ if __name__ == '__main__':
 
 
 class LiveTranslationTests(unittest.TestCase):
-    def pairs(self, direction, text, entries, pairs=()):
+    def calls(self, direction, text, entries, pairs=(), answers=(['ок'],)):
         from hebrew_live.clause_mt import Result
         engine = object.__new__(Engine)
+        engine.log = SimpleNamespace(event=lambda name, **values: self.events.append((name, values)))
         if entries is not None: engine.vocabulary_file = SimpleNamespace(current=lambda: entries)
-        seen = []
-        engine._clause_generator = SimpleNamespace(min_prob=0., generate=lambda text, forced, given, *a, **k:
-                                                   (seen.append(given), Result(['ок'], 'end'))[1])
-        engine.clause_generate(text, '', pairs, direction)
-        return seen[0]
+        seen, answers = [], list(answers)
+        engine._clause_generator = SimpleNamespace(min_prob=0., generate=lambda text, forced, given, *a, terms=(), **k:
+                                                   (seen.append((given, terms)), Result(answers.pop(0), 'end'))[1])
+        result = engine.clause_generate(text, '', pairs, direction)
+        return seen, result
+
+    def setUp(self):
+        self.events = []
 
     def test_terms_said_come_before_the_context_as_finished_sentences(self):
         entries = [Entry('מכבידנט', 'Маккабидент')]
-        self.assertEqual(self.pairs('he-ru', 'למכבי דנט שלום', entries, [['כן.', 'Да.']]),
-                         (('מכבי דנט.', 'Маккабидент.'), ('כן.', 'Да.')))
-        self.assertEqual(self.pairs('he-ru', 'שלום', entries, [['כן.', 'Да.']]), (('כן.', 'Да.'),))
-        self.assertEqual(self.pairs('he-en', 'למכבי דנט', entries), ())
-        self.assertEqual(self.pairs('he-ru', 'למכבי דנט', None), ())      # an engine built without a vocabulary
-        self.assertEqual(self.pairs('ru-he', 'מכבידנט', entries), ())
+        self.assertEqual(self.calls('he-ru', 'למכבי דנט שלום', entries, [['כן.', 'Да.']])[0],
+                         [((('מכבי דנט.', 'Маккабидент.'), ('כן.', 'Да.')), ())])
+        self.assertEqual(self.calls('he-ru', 'שלום', entries, [['כן.', 'Да.']])[0], [((('כן.', 'Да.'),), ())])
+        self.assertEqual(self.calls('he-en', 'למכבי דנט', entries)[0], [((), ())])
+        self.assertEqual(self.calls('he-ru', 'למכבי דנט', None)[0], [((), ())])      # an engine built without a vocabulary
+        self.assertEqual(self.calls('ru-he', 'מכבידנט', entries)[0], [((), ())])
+
+    def test_nothing_added_with_the_terms_as_sentences_is_asked_again_with_them_as_a_list(self):
+        # «...עובדת בקופת חולים בבית הכרם» came out as nothing after «завтра доктор работает»
+        entries = [Entry('קופת חולים', 'больничная касса'), Entry('בית הכרם', 'Бейт-ха-Керем')]
+        text = 'עובדת בקופת חולים בבית הכרם'
+        seen, result = self.calls('he-ru', text, entries, [['מחר.', 'Завтра.']],
+                                  answers=([], ['в', 'больничной', 'кассе', 'в', 'Бейт-ха-Кереме.']))
+        self.assertEqual(seen[1], ((('מחר.', 'Завтра.'),), (('קופת חולים', 'больничная касса'), ('בית הכרם', 'Бейт-ха-Керем'))))
+        self.assertEqual(result['words'], ['в', 'больничной', 'кассе', 'в', 'Бейт-ха-Кереме.'])
+        self.assertEqual(self.events, [('append_terms_listed', dict(terms=2, words=5, stop='end'))])
+        seen, result = self.calls('he-ru', 'שלום', entries, answers=([],))      # no terms: no second call
+        self.assertEqual((len(seen), result['words']), (1, []))
+
+    def test_the_list_stands_above_the_task_and_the_attention_still_finds_the_open_sentence(self):
+        from hebrew_live.clause_mt import ClauseGenerator
+        seen = []
+        def tokenize(content, add_special_tokens=False, return_offsets_mapping=True):   # a token per letter
+            seen.append(content)
+            return {'input_ids': list(range(len(content))), 'offset_mapping': [(i, i + 1) for i in range(len(content))]}
+        generator = ClauseGenerator(SimpleNamespace(tokenizer=SimpleNamespace(_tokenizer=tokenize)))
+        text = 'עובדת בקופת חולים'
+        ids, span, count = generator.prompt(text, 'Она работает', [('מחר.', 'Завтра.')], 'he-ru',
+                                            (('קופת חולים', 'больничная касса'),))
+        content = seen[-1]
+        self.assertTrue(content.startswith('Use these translations of names and terms:\nקופת חולים = больничная касса\nTranslate this'))
+        self.assertTrue(content.endswith('מחר. עובדת בקופת חולים\nRussian: Завтра. Она работает'))
+        self.assertEqual(count, 3)
+        self.assertEqual(''.join(content[position] for position, _ in span).replace(' ', ''), text.replace(' ', ''))
+        self.assertEqual([index for _, index in span][:5], [0] * 5)
+        plain = generator.prompt(text, '', (), 'he-ru')
+        self.assertNotIn('Use these', seen[-1])
+        self.assertEqual(plain[2], 3)
 
 
 class EngineTranslationTests(unittest.TestCase):
