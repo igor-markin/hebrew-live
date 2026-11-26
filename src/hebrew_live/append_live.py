@@ -45,6 +45,7 @@ CLAUSE = re.compile(r'[.,?!…:;]["»”)]*$')
 SENTENCE = re.compile(r'[.?!…]["»”)]*$')
 PUNCTUATION = re.compile(r'[.,?!…:;]+')
 PUNCTUATION_WORD = re.compile(r'[.,?!…:;»"”)\]]+')   # not a dash: «— 80» starts a word group
+QUOTE_DOT = re.compile(r'(?<!\.)\.(»+)(\.?)$')   # «3.» or «3.».: the full stop belongs after the quote
 PAUSE_TAIL = .8      # seconds of silence fed at a pause so the last words come out
 END_TAIL = 2.        # the same when the sound is cut without a pause (Stop, end of the file): less loses the last word
 BACKGROUND_QUIET = 2.  # seconds without a newer word, between speech segments, that end a card
@@ -233,7 +234,9 @@ def balance_quotes(words):
     """A closed card's translation with its «» paired: a quote the model opened and did not close
     («нажмите «Согласен.») is closed before the end mark, a closing one with no opening is
     dropped. Unpaired, the next cards' context carried it on and the next card closed it
-    («…наберите 1».», Mor call 26.11)."""
+    («…наберите 1».», Mor call 26.11). A sentence's full stop goes after its closing «» quote, as
+    Russian puts it: the model wrote «нажмите «3.».» (Mor call replay 26.11), now «нажмите «3».»;
+    the same at the card's end and before a capital: «Согласен.» Затем → «Согласен». Затем."""
     words, depth = list(words), 0
     for i, word in enumerate(words):
         kept = ''
@@ -251,6 +254,10 @@ def balance_quotes(words):
         last = words[-1]
         body = last.rstrip('.?!…')
         words[-1] = body + '»' * depth + last[len(body):]
+    for i, word in enumerate(words):
+        inside = QUOTE_DOT.search(word)
+        if inside and (inside.group(2) or i == len(words) - 1 or words[i + 1][:1].isupper()):
+            words[i] = word[:inside.start()] + inside.group(1) + '.'
     return words
 
 

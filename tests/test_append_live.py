@@ -574,6 +574,28 @@ class Append(unittest.TestCase):
                          ['нажмите', '«решётка»', 'и', '«звёздочка»'])
         self.assertEqual(balance_quotes(['»']), [])
 
+    def test_the_full_stop_goes_after_the_closing_quote(self):
+        # «למעבר לנציגי השירות יש להקי שלוש.» came out as «нажмите «3.».» (Mor call replay, 26.11)
+        from hebrew_live.append_live import balance_quotes
+        self.assertEqual(balance_quotes('нажмите «3.».'.split()), ['нажмите', '«3».'])
+        self.assertEqual(balance_quotes('нажмите «Согласен.»'.split()), ['нажмите', '«Согласен».'])
+        self.assertEqual(balance_quotes('нажмите «Согласен.» Затем 2.'.split()),
+                         ['нажмите', '«Согласен».', 'Затем', '2.'])
+        self.assertEqual(balance_quotes('слово «Согласен.» и всё.'.split()),
+                         ['слово', '«Согласен.»', 'и', 'всё.'])   # mid-sentence: left as it is
+        self.assertEqual(balance_quotes('нажмите «3?».'.split()), ['нажмите', '«3?».'])
+        self.assertEqual(balance_quotes('сказал «ну...».'.split()), ['сказал', '«ну...».'])
+
+    def test_a_closed_card_shows_the_full_stop_after_the_quote(self):
+        class Inside(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                return Result(['нажмите', '«3.».'], 'end')
+        processor = self.make([(' יש', .2), (' להקיש', .4), (' שלוש', .6)], join=0., generator=Inside())
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.closed()[-1]['translation'], 'нажмите «3».')
+
     def test_a_quote_left_open_is_closed_on_the_screen_and_in_the_context(self):
         # «יש להקיש את הקוד ובסיום סולמית.» → «…нажмите «Согласен.», closed two cards later (Mor call, 26.11)
         class Quote(FakeGenerator):
