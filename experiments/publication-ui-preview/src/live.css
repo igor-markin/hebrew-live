@@ -242,27 +242,12 @@ html[dir="rtl"] .session-delete {right:auto;left:6px}
 /* A figure to check under a closed bubble: a note, not a failure. */
 .live-feed .number-note {color:var(--foreground);opacity:.8}
 
-/* The owner's vocabulary in Settings. */
+/* The vocabulary in Settings: a button that opens its own window. */
 .live-settings-panel {max-height:calc(100vh - 140px);overflow-y:auto}
-.vocabulary {margin:4px 0 14px;border-top:1px solid var(--border);padding-top:10px;font-size:13px}
-.vocabulary summary {cursor:pointer;font-weight:600}
-.vocabulary-note {margin:6px 0;color:var(--muted);font-size:11px;line-height:1.4}
-.vocabulary-note--warn {color:#b3261e}
-:root[data-theme=dark] .vocabulary-note--warn {color:#f2b8b5}
-.vocabulary-error {margin:6px 0;color:#b3261e;font-size:12px}
-:root[data-theme=dark] .vocabulary-error {color:#f2b8b5}
-.vocabulary-form {display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
-.vocabulary-field {display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted);min-width:0}
-.vocabulary-field input {width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--foreground);font:inherit;font-size:13px}
-.vocabulary-buttons {grid-column:1/-1;display:flex;gap:6px}
-.vocabulary button {padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--foreground);font:inherit;font-size:12px;cursor:pointer}
-.vocabulary button:disabled {opacity:.5;cursor:default}
-.vocabulary .vocabulary-submit {background:var(--accent);border-color:var(--accent);color:var(--accent-foreground)}
-.vocabulary-list {list-style:none;margin:8px 0 0;padding:0;max-height:220px;overflow-y:auto}
-.vocabulary-list li {display:flex;align-items:center;gap:6px;padding:5px 0;border-top:1px solid var(--border)}
-.vocabulary-list li>span {flex:1;display:flex;flex-direction:column;min-width:0}
-.vocabulary-list small {color:var(--muted);overflow-wrap:anywhere}
-@media(max-width:560px){.vocabulary-form{grid-template-columns:1fr}}
+.vocabulary-launcher {display:flex;align-items:center;gap:10px;margin:4px 0 14px;border-top:1px solid var(--border);padding-top:10px;font-size:13px}
+.vocabulary-launcher>span {flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.vocabulary-launcher small {color:var(--muted);font-size:11px;line-height:1.4}
+.vocabulary-launcher button {padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--foreground);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 
 /* Compact window: no page title in the live view, one menu line that never wraps, and a menu and
    a session list the owner can hide (the choice is saved with the preferences). */

@@ -16,7 +16,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopControllerClient } from "./protocol.js";
 import { acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "./preferences.js";
-import { allowedBackendUrl, allowedExternalUrl, preferredUiLocale } from "./security.js";
+import { allowedBackendUrl, allowedExternalUrl, isVocabularyWindowUrl, preferredUiLocale } from "./security.js";
 import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type UiLocale } from "./shared.js";
 import { quitSituation, type BackendState } from "./lifecycle.js";
 import { navigateBackend } from "./backendNavigation.js";
@@ -47,6 +47,7 @@ const preferencesFile = path.join(desktopFolder, "preferences.json");
 app.setPath("userData", path.join(desktopFolder, "electron"));
 
 let mainWindow: BrowserWindow | null = null;
+let vocabularyWindow: BrowserWindow | null = null;
 let controller: DesktopControllerClient | null = null;
 let controllerStarting: Promise<void> | null = null;
 let controllerError: string | undefined;
@@ -107,6 +108,7 @@ async function loadPreparation(reason: typeof prepViewReason = "normal"): Promis
   navigationGeneration += 1;
   prepViewReason = reason;
   backendBase = null;
+  closeVocabularyWindow();   // its page belonged to the backend that is gone
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const window = mainWindow;
   await window.loadFile(prepFile());
@@ -136,6 +138,7 @@ function handleControllerEvent(event: ControllerEvent): void {
       controllerError = "invalid_backend_url";
       void loadPreparation("backend_crash");
     } else {
+      if (backendBase !== allowed.href) closeVocabularyWindow();
       backendBase = allowed.href;
       void showBackend(allowed.href);
     }
@@ -188,8 +191,33 @@ async function control(command: string, payload: Record<string, unknown> = {}):
   return controller.request(command, payload);
 }
 
+function closeVocabularyWindow(): void {
+  if (vocabularyWindow && !vocabularyWindow.isDestroyed()) vocabularyWindow.close();
+  vocabularyWindow = null;
+}
+
 function installNavigationPolicy(window: BrowserWindow): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (window === mainWindow && isVocabularyWindowUrl(url, backendBase)) {
+      // one vocabulary window beside the live one: a second request brings it forward
+      if (vocabularyWindow && !vocabularyWindow.isDestroyed()) {
+        vocabularyWindow.show();
+        vocabularyWindow.focus();
+        return { action: "deny" };
+      }
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          title: "Hebrew Live",
+          width: 1000,
+          height: 760,
+          minWidth: 560,
+          minHeight: 420,
+          backgroundColor: "#eef4ef",
+          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true },
+        },
+      };
+    }
     const external = allowedExternalUrl(url);
     if (external) void shell.openExternal(external.href);
     return { action: "deny" };
@@ -221,6 +249,13 @@ function createWindow(): BrowserWindow {
     },
   });
   installNavigationPolicy(window);
+  window.webContents.on("did-create-window", (child) => {
+    vocabularyWindow = child;
+    installNavigationPolicy(child);
+    child.on("closed", () => {
+      if (vocabularyWindow === child) vocabularyWindow = null;
+    });
+  });
   window.once("ready-to-show", () => window.show());
   window.on("close", (event) => {
     if (allowWindowClose) return;

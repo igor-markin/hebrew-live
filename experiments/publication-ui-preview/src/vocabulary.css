@@ -1,0 +1,31 @@
+/* The vocabulary window: the whole list as a table, the header and the add row always in view. */
+.vocab-window {height:100vh;display:flex;flex-direction:column;background:var(--background);color:var(--foreground);font-size:14px}
+.vocab-header {display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px 8px;border-bottom:1px solid var(--border)}
+.vocab-header h1 {margin:0;font-size:20px;font-weight:600}
+.vocab-count {color:var(--muted);font-size:13px;margin-inline-end:auto}
+.vocab-search {flex:0 1 260px;min-width:140px}
+.vocab-window input:not([type=file]) {width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--foreground);font:inherit;font-size:14px;box-sizing:border-box}
+.vocab-window input[lang=he] {font-family:'Noto Sans Hebrew',sans-serif;font-size:16px}
+.vocab-window button {padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--foreground);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.vocab-window button:disabled {opacity:.5;cursor:default}
+.vocab-window .vocab-primary {background:var(--accent);border-color:var(--accent);color:var(--accent-foreground)}
+.vocab-notes {padding:4px 16px 0}
+.vocab-notes p {margin:4px 0;color:var(--muted);font-size:12px;line-height:1.4}
+.vocab-notes .vocab-warn,.vocab-notes .vocab-error {color:#b3261e}
+:root[data-theme=dark] .vocab-notes .vocab-warn,:root[data-theme=dark] .vocab-notes .vocab-error {color:#f2b8b5}
+.vocab-notes .vocab-error {font-size:13px}
+.vocab-notes .vocab-notice {color:var(--accent);font-size:13px}
+.vocab-add {display:grid;grid-template-columns:1fr 1.4fr 1.4fr auto;gap:8px;padding:8px 16px 12px;border-bottom:1px solid var(--border)}
+.vocab-table-wrap {flex:1;overflow:auto;padding:0 16px 16px}
+.vocab-empty,.vocab-found {color:var(--muted);font-size:13px;margin:10px 0 4px}
+.vocab-table {width:100%;border-collapse:collapse;table-layout:fixed}
+.vocab-table th {position:sticky;top:0;z-index:1;background:var(--background);text-align:start;font-size:12px;font-weight:600;color:var(--muted);padding:8px 6px;border-bottom:1px solid var(--border)}
+.vocab-table td {padding:6px;border-bottom:1px solid var(--border);vertical-align:middle;overflow-wrap:anywhere}
+.vocab-table td[lang=he] {font-family:'Noto Sans Hebrew',sans-serif;font-size:16px}
+.vocab-table .vocab-number {width:3em;color:var(--muted);font-size:12px;text-align:end}
+.vocab-table th:nth-child(2) {width:24%}
+.vocab-table .vocab-actions {width:190px;text-align:end;white-space:nowrap}
+.vocab-table .vocab-actions button {margin-inline-start:6px}
+.vocab-table tr.vocab-editing td {background:var(--surface)}
+.vocab-hidden {position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (max-width:720px) {.vocab-add {grid-template-columns:1fr 1fr}.vocab-table .vocab-actions {width:150px}}

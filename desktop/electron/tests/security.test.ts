@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { allowedBackendUrl, allowedExternalUrl, preferredTargetLanguage, preferredUiLocale } from "../src/security.ts";
+import { allowedBackendUrl, allowedExternalUrl, isVocabularyWindowUrl, preferredTargetLanguage, preferredUiLocale } from "../src/security.ts";
 
 test("preferred languages follow macOS ordering and fall back to English", () => {
   assert.equal(preferredUiLocale(["fr-FR", "ru-RU", "en-US"]), "ru");
@@ -48,4 +48,14 @@ test("macOS package uses the shipped Hebrew Live icon", () => {
   assert.equal(icon.readUInt32BE(16), 1024);
   assert.equal(icon.readUInt32BE(20), 1024);
   assert.equal(icon[25], 6);
+});
+
+test("only the live page's own vocabulary address opens a second window", () => {
+  const base = "http://127.0.0.1:43111/abcdefghijklmnopqrstuvwxyzABCDEFGH/live/";
+  assert.equal(isVocabularyWindowUrl(`${base}#vocabulary`, base), true);
+  assert.equal(isVocabularyWindowUrl(`${base}#vocabulary`, null), false);
+  assert.equal(isVocabularyWindowUrl(`${base}#other`, base), false);
+  assert.equal(isVocabularyWindowUrl(`${base}?x=1#vocabulary`, base), false);
+  assert.equal(isVocabularyWindowUrl("http://127.0.0.1:43111/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/live/#vocabulary", base), false);
+  assert.equal(isVocabularyWindowUrl("https://github.com/#vocabulary", "https://github.com/"), false);
 });

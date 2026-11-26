@@ -10,6 +10,8 @@ import '@fontsource/noto-sans/latin-600.css';
 import '@fontsource/noto-sans-hebrew/hebrew-400.css';
 import './styles.css';
 import Live from './Live';
+import VocabularyWindow from './VocabularyWindow';
+import {VOCABULARY_HASH} from './vocabularyFile';
 import {translator} from './i18n';
 import type {UiLocale} from './i18n';
 
@@ -20,7 +22,10 @@ class ErrorBoundary extends Component<{children:ReactNode},{failed:boolean}>{
   render(){const locale=(['en','ru','he'].includes(document.documentElement.lang)?document.documentElement.lang:'en') as UiLocale;const tx=translator(locale);return this.state.failed?<main className="fatal-error" role="alert"><h1>{tx('renderFailed')}</h1><p>{tx('renderRecovery')}</p><button onClick={()=>location.reload()}>{tx('reload')}</button></main>:this.props.children;}
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><ErrorBoundary><Live/></ErrorBoundary></StrictMode>);
+// a browser that opens the vocabulary in the same tab only changes the hash: show the other view
+const vocabularyView=location.hash===VOCABULARY_HASH;
+window.addEventListener('hashchange',()=>{if((location.hash===VOCABULARY_HASH)!==vocabularyView)location.reload();});
+createRoot(document.getElementById('root')!).render(<StrictMode><ErrorBoundary>{vocabularyView?<VocabularyWindow/>:<Live/>}</ErrorBoundary></StrictMode>);
 
 void (async()=>{
   await Promise.all([400,500,600].flatMap(weight=>[

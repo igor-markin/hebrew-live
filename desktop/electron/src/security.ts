@@ -49,3 +49,10 @@ export function allowedBackendUrl(raw: string): URL | null {
     return null;
   }
 }
+
+/** The live page opening its vocabulary editor in a window of its own: the same backend page with
+ * the `#vocabulary` hash, nothing else. */
+export function isVocabularyWindowUrl(raw: string, backendBase: string | null): boolean {
+  if (backendBase === null || !allowedBackendUrl(backendBase)) return false;
+  return raw === `${backendBase}#vocabulary`;
+}
