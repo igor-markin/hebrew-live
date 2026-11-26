@@ -4,6 +4,8 @@
 
 ### Changed
 
+- live translation stops a runaway loop: when the translation repeats a phrase of 3-15 words three times in a row, more often than the Hebrew does, the call ends after the first copy (`append_chunk` stop `repetition`, counted as `append.repetitions` in the summary); on a Maccabi Dent replay the eleven copies of «без лишних слов» became one;
+- a card whose Hebrew has no word to translate (only single letters and marks, like «ם.» or «ת», the tail of a word cut at a pause) is shown without a translation instead of a made-up one («цеме.», «это сделать.»);
 - the window's settings have a conversation text size: smallest, small, normal or large (translation 16, 18, 20 or 23 px; Hebrew and history in proportion, controls unchanged); the choice is saved with the other preferences (`text_size`), so it survives a restart although the window's address changes every launch;
 - the translation worker keeps at most 256 MB of freed MLX buffers instead of as much as MLX allows (`mlx_cache_limit` event): on one 88 s replay the worker grew from 3.3 to 14 GB, with the limit it stays under 3.2 GB, with the same Russian text and the same delays;
 - Hebrew to Russian and Hebrew to English are the only translation directions: the target list holds Russian and English, another target saved by an earlier release reads as Russian with a notice, Ctrl+T no longer switches the CLI to Russian-to-Hebrew, and `--direction` accepts `he-ru` and `he-en` only;
