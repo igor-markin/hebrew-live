@@ -130,7 +130,8 @@ class BrowserUI:
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
                     'recording_started':False,'capture_active':False,
-                    'input_source':'microphone','input_source_locked':False,'phone_status':None,'input_error':None})
+                    'input_source':'microphone','input_source_locked':False,'phone_status':None,'input_error':None,
+                    'phone_view':False,'phone_view_status':'off','phone_view_url':None})
         self.state['desktop_mode']=self.desktop_mode
         # HEBREW_LIVE_CALM_DRAFTS keeps a shown translation until a refresh is complete; on by
         # default since 23.11.2026 (fewer erased words, measured), =0 rolls it back.
@@ -165,16 +166,19 @@ class BrowserUI:
         self.phone_check=0
         self.vocabulary_lock=threading.Lock()
         self.phone_probe=None   # Injectable for tests; phone_audio.status otherwise.
+        # The read-only copy of the window for the owner's phone (phone_view.py), and the choice
+        # it was last asked for: only the latest one is carried out.
+        self.phone_view=None
+        self.phone_view_ticket=0
+        self.phone_view_lock=threading.Lock()
+        self.tailscale_probe=None   # Injectable for tests; phone_view.tailscale_address otherwise.
 
     def __enter__(self):
         owner=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass  # Never log the private URL or captions.
             def valid(self):return self.headers.get('Host')==owner.host and self.path.startswith('/'+owner.token+'/')
-            def security_headers(self):
-                self.send_header('Cache-Control','no-store');self.send_header('Referrer-Policy','no-referrer')
-                self.send_header('X-Content-Type-Options','nosniff')
-                self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+            def security_headers(self):owner.security_headers(self)
             def reply(self,status,data,kind='application/json; charset=utf-8'):
                 self.send_response(status)
                 self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)))
@@ -184,54 +188,15 @@ class BrowserUI:
                 except (BrokenPipeError,ConnectionResetError):pass
             def stream_state(self):
                 """Server-Sent Events: the same JSON as `state`, pushed when it really changes."""
-                self.send_response(200)
-                self.send_header('Content-Type','text/event-stream; charset=utf-8')
-                self.security_headers()
-                self.end_headers()
-                self.close_connection=True
-                self.connection.settimeout(10.)  # A stalled reader must not pin this thread forever.
-                state=owner.state;changed=state.changed
-                seen=None;pushed=written=0.
-                try:
-                    while True:
-                        with changed:
-                            while True:
-                                if owner.closing:return
-                                now=time.monotonic()
-                                current=(state.version,state.meter_version)
-                                if seen is None:due=now
-                                elif seen[0]!=current[0]:due=pushed+PUSH_INTERVAL
-                                elif seen[1]!=current[1]:due=pushed+METER_INTERVAL
-                                else:due=written+KEEPALIVE_INTERVAL
-                                if due<=now:break
-                                changed.wait(due-now)
-                        if seen==current:
-                            self.wfile.write(b': keepalive\n\n');written=time.monotonic()
-                            continue
-                        with owner.lock:
-                            # Read the counters before the snapshot: a later change is then pushed again, never lost.
-                            seen=(state.version,state.meter_version)
-                            data=json.dumps(state,ensure_ascii=False).encode()
-                            finished=state['finished']
-                        self.wfile.write(b'data: '+data+b'\n\n')
-                        pushed=written=time.monotonic()
-                        if finished and not owner.exports and owner.session_folder is None:owner.finished_seen.set()
-                except OSError:pass  # Client went away or stopped reading.
+                def pushed(finished):
+                    if finished and not owner.exports and owner.session_folder is None:owner.finished_seen.set()
+                owner.push_state(self,lambda:owner.state,pushed)
             def do_GET(self):
                 if not self.valid():return self.reply(404,b'{}')
                 relative=self.path[len('/'+owner.token+'/'):]
                 if relative.startswith('live/'):
-                    import mimetypes
-                    name=relative[5:] or 'live.html'
-                    # Exact local build members only. Never resolve user paths.
-                    assets={str(p.relative_to(owner.live_root)):p for p in owner.live_root.rglob('*') if p.is_file() and not p.is_symlink()}
-                    path=assets.get(name)
-                    if path is None:return self.reply(404,b'{}')
-                    kind=mimetypes.guess_type(name)[0] or 'application/octet-stream'
-                    data=path.read_bytes()
-                    # Hide the retired selector in previously built local UI too.
-                    if name.endswith('.css'):data+=b'\n.live-mode{display:none!important}\n'
-                    return self.reply(200,data,kind)
+                    asset=owner.live_asset(relative[5:] or 'live.html')
+                    return self.reply(200,*asset) if asset else self.reply(404,b'{}')
                 route=self.path.rsplit('/',1)[-1]
                 if route=='events' and owner.push_enabled:self.stream_state()
                 elif route=='state':
@@ -407,6 +372,15 @@ class BrowserUI:
                         except (OSError,ValueError):return self.reply(500,b'{}')
                         with owner.lock:owner.state[action]=hidden
                         return self.reply(200,b'{"ok":true}')
+                    if action=='phone_view':
+                        from .preferences import save
+                        value=payload.get('value')
+                        if type(value) is not bool:return self.reply(400,b'{}')
+                        if owner.preference_folder is None:return self.reply(409,b'{}')
+                        try:save(owner.preference_folder,phone_view=value)
+                        except (OSError,ValueError):return self.reply(500,b'{}')
+                        owner.set_phone_view(value)
+                        return self.reply(200,b'{"ok":true}')
                     if action=='save_raw_audio':
                         value=payload.get('value')
                         if type(value) is not bool or owner.preference_folder is None:return self.reply(400,b'{}')
@@ -552,12 +526,102 @@ class BrowserUI:
         if self.open_browser:webbrowser.open(self.url+('live/' if self.live else ''))
         return self
 
+    @staticmethod
+    def security_headers(handler):
+        handler.send_header('Cache-Control','no-store');handler.send_header('Referrer-Policy','no-referrer')
+        handler.send_header('X-Content-Type-Options','nosniff')
+        handler.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+
+    def live_asset(self,name):
+        """(bytes, content type) of one file of the packaged window, or None. Exact local build
+        members only: a path from a request is never resolved."""
+        import mimetypes
+        assets={str(p.relative_to(self.live_root)):p for p in self.live_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        path=assets.get(name)
+        if path is None:return None
+        kind=mimetypes.guess_type(name)[0] or 'application/octet-stream'
+        data=path.read_bytes()
+        # Hide the retired selector in previously built local UI too.
+        if name.endswith('.css'):data+=b'\n.live-mode{display:none!important}\n'
+        return data,kind
+
+    def push_state(self,handler,snapshot,pushed=None,stopped=None):
+        """Server-Sent Events on `handler`: `snapshot()` (called under `lock`) as JSON whenever the
+        state really changes, meters at a calmer pace, a keepalive when nothing changes. Ends when
+        the window closes, when `stopped()` turns true, or when the reader goes away."""
+        handler.send_response(200)
+        handler.send_header('Content-Type','text/event-stream; charset=utf-8')
+        self.security_headers(handler)
+        handler.end_headers()
+        handler.close_connection=True
+        handler.connection.settimeout(10.)  # A stalled reader must not pin this thread forever.
+        state=self.state;changed=state.changed
+        seen=None;pushed_at=written=0.
+        try:
+            while True:
+                with changed:
+                    while True:
+                        if self.closing or stopped is not None and stopped():return
+                        now=time.monotonic()
+                        current=(state.version,state.meter_version)
+                        if seen is None:due=now
+                        elif seen[0]!=current[0]:due=pushed_at+PUSH_INTERVAL
+                        elif seen[1]!=current[1]:due=pushed_at+METER_INTERVAL
+                        else:due=written+KEEPALIVE_INTERVAL
+                        if due<=now:break
+                        changed.wait(due-now)
+                if seen==current:
+                    handler.wfile.write(b': keepalive\n\n');written=time.monotonic()
+                    continue
+                with self.lock:
+                    # Read the counters before the snapshot: a later change is then pushed again, never lost.
+                    seen=(state.version,state.meter_version)
+                    data=json.dumps(snapshot(),ensure_ascii=False).encode()
+                    finished=state['finished']
+                handler.wfile.write(b'data: '+data+b'\n\n')
+                pushed_at=written=time.monotonic()
+                if pushed is not None:pushed(finished)
+        except OSError:pass  # Client went away or stopped reading.
+
     def vocabulary_json(self):
         from dataclasses import asdict
         from . import vocabulary
         return json.dumps({'entries':[asdict(entry) for entry in vocabulary.load()],'damaged':vocabulary.damaged(),
                            'enabled':vocabulary.enabled(),'limit':VOCABULARY_LIMIT,
                            'lengths':VOCABULARY_LENGTH},ensure_ascii=False).encode()
+
+    def set_phone_view(self,enabled):
+        """Open or close the phone's read-only copy of this window (phone_view.py) off the request
+        thread. Only the latest choice is carried out and published."""
+        with self.lock:
+            self.phone_view_ticket+=1;ticket=self.phone_view_ticket
+            self.state.update(phone_view=enabled,phone_view_status='starting' if enabled else 'off',
+                              phone_view_url=self.state.get('phone_view_url') if enabled else None)
+        def publish(**values):
+            with self.lock:
+                if ticket==self.phone_view_ticket:self.state.update(values)
+        def run():
+            from . import phone_view
+            with self.phone_view_lock:
+                if ticket!=self.phone_view_ticket or self.closing:return   # a later choice carries on
+                current=self.phone_view
+                if not enabled:
+                    if current:current.stop();self.phone_view=None
+                    return
+                try:address=(self.tailscale_probe or phone_view.tailscale_address)()
+                except Exception:address=None
+                if current and current.address==address:
+                    return publish(phone_view_status='on',phone_view_url=current.url)
+                if current:current.stop();self.phone_view=None
+                if address is None:return publish(phone_view_status='no_tailscale',phone_view_url=None)
+                try:
+                    token=phone_view.load_token(data_root())
+                    self.phone_view=phone_view.PhoneView(self,address,token).start()
+                except OSError as error:
+                    import errno
+                    return publish(phone_view_status='port_busy' if error.errno==errno.EADDRINUSE else 'failed',phone_view_url=None)
+                publish(phone_view_status='on',phone_view_url=self.phone_view.url)
+        threading.Thread(target=run,name='phone-view-switch',daemon=True).start()
 
     def phone_blocks_start(self):
         """The phone is chosen but not known to be ready: Start would only fail. Call under `lock`."""
@@ -691,5 +755,7 @@ class BrowserUI:
         finally:
             with self.state.changed:
                 self.closing=True;self.state.changed.notify_all()  # Close open event streams promptly.
+            with self.phone_view_lock:
+                if self.phone_view:self.phone_view.stop();self.phone_view=None
             self.server.shutdown();self.server.server_close();self.thread.join(timeout=2)
             self.keyboard.__exit__(exc_type,exc,tb)

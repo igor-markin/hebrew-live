@@ -4,6 +4,7 @@
 
 ### Changed
 
+- the translation can be read on the owner's phone: Settings have «Translation on the phone», which opens a read-only copy of the window on the Mac's own Tailscale address (asked of `tailscale ip -4`, never a guessed 100.64.0.0/10 address), on port 8794 (`HEBREW_LIVE_PHONE_VIEW_PORT`), behind a secret kept in `phone-view-token` (0600) in the data folder, so a link saved on the phone survives restarts; the window shows the link with a copy button. The copy shows the conversation only: no actions (POST answers 405), no saved sessions, no files, no folder paths; the page sends nothing back. Off by default and saved with the other preferences (`phone_view`); without Tailscale the switch says so and nothing listens;
 - the dark theme survives a restart: it is saved with the other preferences (`dark_theme`) instead of only in the window's localStorage, which the window's new address empties every launch;
 - a closed append card puts a sentence's full stop after its closing «» quote, as Russian does: the model wrote «нажмите «3.».» (Mor call replay 26.11), the card now shows «нажмите «3».»; a full stop inside the quote moves out at the card's end and before a capital letter, and stays inside in the middle of a sentence; an open card still shows what the model wrote until it closes;
 - the number check counts a lone «0» as a number: a translation's «0» the Hebrew has not said is held back in a live call and reported at the end like any other figure («нажмите 0» for «הקישו שתיים», Mor call replay 26.11); «00» as in «16:00» still needs no source;

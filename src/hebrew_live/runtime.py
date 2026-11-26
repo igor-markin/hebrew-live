@@ -163,6 +163,8 @@ def run_session(args, session, browser_ui=None):
         target_capabilities_assumed=bool(custom_models.get('translation')),
         ui_locale=preferences.get('ui_locale','en'),text_size=preferences.get('text_size','normal'),menu_hidden=preferences.get('menu_hidden',False),sessions_hidden=preferences.get('sessions_hidden',False),dark_theme=preferences.get('dark_theme',False),target_error=None,
         model_message=' '.join(preference_notices) if preference_notices else None)
+    if browser_ui and preferences.get('phone_view') and hasattr(browser_ui,'set_phone_view') and not browser_ui.state.get('phone_view'):
+        browser_ui.set_phone_view(True)   # the translation on the phone was left on: open it again
     session.event('effective_models',asr=asr_backend,
                   translation='bridge-preview' if bridge_models else 'milmmt',
                   custom_asr=False,custom_translation=bool(custom_models.get('translation')),
