@@ -1,12 +1,13 @@
 # Local macOS desktop build
 
-Current alpha.3 desktop profile: Whisper Turbo recognition and MiLMMT translation only.
-Silero VAD is the only bundled model (2,327,524 bytes). The pinned Whisper/MiLMMT files
-are required at first preparation (~3.83 GB), then reused offline. GigaAM-He,
-CoreML helpers/models and experimental recognition selection are excluded.
-The alpha has no Developer ID signature and is not notarized. Older measurements
-and build profiles below are historical; they are not acceptance evidence for the
-alpha.3 DMG.
+Current desktop profile (0.1.0-alpha.4): streaming zipformer recognition and MiLMMT
+translation only. Two models are bundled: Silero VAD (2,327,524 bytes) and the streaming
+Hebrew recognizer zipformer2-66m-streaming-he (72,316,960 bytes). The pinned MiLMMT files
+are the only download at first preparation (2,216,770,326 bytes, ~2.22 GB), then reused
+offline. Whisper, GigaAM-He, CoreML helpers/models and experimental recognition selection
+are excluded. The alpha has no Developer ID signature and is not notarized. Older
+measurements and build profiles below are historical; they are not acceptance evidence for
+the current DMG.
 
 
 This procedure builds the local `Hebrew Live.app`, signed ad hoc only. It does not
@@ -23,6 +24,11 @@ The procedure below was exercised on exactly this machine:
 - Python 3.12.14 (alpha.2) and 3.12.15 (alpha.3), PyInstaller 6.22.3;
 - Node.js 24, Electron 44.4.3, electron-builder 26.15.3.
 
+The current profile was last built on 2026-11-26 from `stable-release` on a MacBook Air
+(Apple M5, 16 GiB) with macOS 27.3, Python 3.12.16, PyInstaller 6.22.3, Node.js 26.13.1
+(the packages declare Node 24; the build and tests passed), Electron 44.4.3 and
+electron-builder 26.15.3.
+
 This is a tested reference, not a proven minimum. A clean installation on a
 different Mac has not been tested. The native libraries in this build require
 macOS 27.0 or later; the preflight blocks older systems, Intel/Rosetta execution,
@@ -32,11 +38,11 @@ an unavailable Metal device, and insufficient target-disk space. Less than
 ## Reproducible build
 
 Run all commands from the repository root unless a command changes directory.
-Silero VAD is copied into the app from a hash-verified local build asset. The
-1,613,977,880-byte ivrit.ai Whisper Turbo model and the MiLMMT files are
-downloaded during first preparation or repair; the app packages their MLX
-runtimes but neither model's weights. The model sources, revisions, file sizes,
-and hashes are in `src/hebrew_live/desktop_models.json`.
+Silero VAD and the streaming recognizer are copied into the app from hash-verified local
+build assets. The MiLMMT files are downloaded during first preparation or repair; the app
+packages the MLX runtime but not the translation weights. The sources, revisions, file
+sizes and hashes are in `src/hebrew_live/desktop_models.json` (Silero, MiLMMT) and
+`src/hebrew_live/streaming_asr_manifest.json` (the streaming recognizer).
 
 ```sh
 uv sync --frozen --group desktop-build
@@ -63,22 +69,39 @@ npm run dist:dmg
 cd ../..
 ```
 
-### Bundled model build asset
+### Bundled model build assets
 
-Only Silero VAD enters the app. Place its ONNX file at `models/silero.onnx` in the
-ignored `models` directory, or pass another directory with `--bundle-models`. The
-engine command checks its size and SHA-256 against
-`src/hebrew_live/desktop_models.json`, embeds it with a bundle manifest, and fails
-if it is missing or different, or if PyInstaller omits or changes it. Whisper Turbo
-and MiLMMT are not build assets: the installed app downloads them from their
-pinned Hugging Face revisions during first preparation or repair. The exact
-revisions, sizes, and SHA-256 values are in the same inventory. The builder also
-fails if the MiLMMT folder appears in the bundle.
+Two models enter the app. Place them in the ignored `models` directory, or pass another
+directory with `--bundle-models`:
 
-Do not commit the model files. Whisper Turbo and MiLMMT both run on Metal through
-MLX; Silero VAD runs on the CPU. At first launch the app verifies its bundled
-Silero file, downloads missing Whisper and MiLMMT files, copies Silero to external
-model storage, then warms the models.
+```text
+models/silero.onnx                                  2,327,524 bytes
+models/streaming-asr/sherpa-onnx/encoder.int8.onnx 70,478,964 bytes
+models/streaming-asr/sherpa-onnx/decoder.int8.onnx  1,049,105 bytes
+models/streaming-asr/sherpa-onnx/joiner.int8.onnx     771,805 bytes
+models/streaming-asr/sherpa-onnx/tokens.txt            17,086 bytes
+```
+
+Silero comes from the pinned `snakers4/silero-vad` revision in
+`src/hebrew_live/desktop_models.json`; the four recognizer files come from
+`ivrit-ai/zipformer2-66m-streaming-he` at the revision in
+`src/hebrew_live/streaming_asr_manifest.json`. The engine command checks every file's
+size and SHA-256 against those inventories, embeds them with a bundle manifest, and stops
+with `Bundled model missing or wrong size: …` or `Bundled model checksum mismatch: …` if
+one is missing or different, or if PyInstaller omits or changes it. MiLMMT is not a build
+asset: the installed app downloads it from its pinned Hugging Face revision during first
+preparation or repair. The builder also fails if the MiLMMT folder appears in the bundle.
+
+Do not commit the model files. MiLMMT runs on Metal through MLX; Silero VAD and the
+streaming recognizer (sherpa-onnx) run on the CPU. At first launch the app verifies its
+bundled files, downloads missing MiLMMT files, copies Silero to external model storage,
+then warms the models.
+
+With the uv, npm and Electron caches already filled by an earlier build, the dependency
+steps run without network access: `uv sync --frozen --group desktop-build --offline` and
+`npm ci --offline` in both frontend folders. The 2026-11-26 build reused the Electron zip
+in `~/Library/Caches/electron` (its file time did not change), although the log still
+prints `Downloading Electron binary...`.
 
 Outputs:
 
@@ -92,9 +115,6 @@ macOS build.
 
 The recipe supplies model-download TLS roots from the copied, pinned
 `certifi` package. The installed app does not need a Homebrew CA directory.
-Whisper word alignment requires `numba` and `llvmlite`; both are included with
-their license metadata. The optional OpenMP threading extension is excluded;
-Numba retains its bundled workqueue backend and needs no Homebrew libomp.
 The recipe excludes installer-origin metadata,
 including editable `direct_url.json`, from the public bundle. If npm skips
 Electron's lifecycle script, `dist:mac` and `dist:dmg` explicitly run the locked
@@ -169,23 +189,22 @@ only; verify the signature on the build itself.
 
 ## Model set and disk calculation
 
-The desktop inventory is `src/hebrew_live/desktop_models.json`. It pins 13
-files across three components; one file enters the app and twelve are
+The desktop inventory is `src/hebrew_live/desktop_models.json` (Silero and MiLMMT); the
+streaming recognizer has its own inventory, `src/hebrew_live/streaming_asr_manifest.json`.
+Together they pin 15 files across three components; five enter the app and ten are
 downloaded:
 
 | Component | Revision | Files | Bytes | Placement |
 | --- | --- | ---: | ---: | --- |
-| ivrit.ai Whisper Turbo (`mlx-community/ivrit-ai-whisper-large-v3-turbo-mlx`) | `53ad8c6cd8b32eb0303f093a404ae13c1b1d567f` | 2 | 1,613,977,880 | Downloaded model storage |
 | MiLMMT (`translate-studio/MiLMMT-46-4B-v1.0-4bit-MLX`) | `24877ecba801e4b198a5679445501022682d867c` | 10 | 2,216,770,326 | Downloaded model storage |
+| zipformer2-66m-streaming-he (`ivrit-ai/zipformer2-66m-streaming-he`) | `ee769a2a13b887f91572eec349458bfb0fe79e7a` | 4 | 72,316,960 | App |
 | Silero VAD | `867c2aa692646a1f1de3e94a15c9dd9f614c0acb` | 1 | 2,327,524 | App; verified copy in model storage |
-| **Total** |  | **13** | **3,833,075,730** |  |
+| **Total** |  | **15** | **2,291,414,810** |  |
 
 The pinned file list used for build and first-launch SHA-256 verification is:
 
 | Component | Relative file | Bytes |
 | --- | --- | ---: |
-| ASR | `asr/config.json` | 268 |
-| ASR | `asr/weights.safetensors` | 1,613,977,612 |
 | MiLMMT | `milmmt-4b-4bit/README.md` | 5,795 |
 | MiLMMT | `milmmt-4b-4bit/added_tokens.json` | 35 |
 | MiLMMT | `milmmt-4b-4bit/chat_template.jinja` | 62 |
@@ -196,19 +215,24 @@ The pinned file list used for build and first-launch SHA-256 verification is:
 | MiLMMT | `milmmt-4b-4bit/special_tokens_map.json` | 662 |
 | MiLMMT | `milmmt-4b-4bit/tokenizer.json` | 33,384,123 |
 | MiLMMT | `milmmt-4b-4bit/tokenizer_config.json` | 804 |
+| ASR | `streaming-asr/sherpa-onnx/encoder.int8.onnx` | 70,478,964 |
+| ASR | `streaming-asr/sherpa-onnx/decoder.int8.onnx` | 1,049,105 |
+| ASR | `streaming-asr/sherpa-onnx/joiner.int8.onnx` | 771,805 |
+| ASR | `streaming-asr/sherpa-onnx/tokens.txt` | 17,086 |
 | VAD | `silero.onnx` | 2,327,524 |
 
-The same JSON inventory stores every SHA-256 and the exact terms/source URLs;
-the table above is deliberately not a second source of hashes.
+The two JSON inventories store every SHA-256 and the exact terms/source URLs; the
+tables above are deliberately not a second source of hashes.
 
-The packaged desktop reads Whisper Turbo and MiLMMT from the selected external
-model directory. A valid shared CLI directory is reused; an incompatible one
-causes a persistent separate desktop directory. Silero is verified in the app and
-copied atomically into the selected directory. CLI and Electron serialize writes
-to a shared directory, while desktop integrity checks cover only the pinned
-desktop files and ignore damage to unrelated CLI files such as the retired
-multilingual ASR. The preflight retains a 2 GiB free-space reserve and a 64 MiB
-working allowance during preparation. Model file size is not a RAM requirement.
+The packaged desktop reads MiLMMT from the selected external model directory and the
+streaming recognizer from the app. A valid shared CLI directory is reused; an
+incompatible one causes a persistent separate desktop directory. Silero is verified in
+the app and copied atomically into the selected directory. CLI and Electron serialize
+writes to a shared directory, while desktop integrity checks cover only the pinned
+desktop files and ignore files of retired models (Whisper Turbo, the multilingual ASR):
+a manifest that still lists Whisper verifies without its files. The preflight retains a
+2 GiB free-space reserve and a 64 MiB working allowance during preparation. Model file
+size is not a RAM requirement.
 
 ## Local measurement
 
