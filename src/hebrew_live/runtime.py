@@ -161,7 +161,7 @@ def run_session(args, session, browser_ui=None):
     if browser_ui:browser_ui.details(models={'Распознавание':asr_label,'Перевод':translation_label,'Проверка языка':'Фильтр письменности; без определения аудиоязыка'},
         target_language=target_language,target_languages=target_options,
         target_capabilities_assumed=bool(custom_models.get('translation')),
-        ui_locale=preferences.get('ui_locale','en'),text_size=preferences.get('text_size','normal'),menu_hidden=preferences.get('menu_hidden',False),sessions_hidden=preferences.get('sessions_hidden',False),target_error=None,
+        ui_locale=preferences.get('ui_locale','en'),text_size=preferences.get('text_size','normal'),menu_hidden=preferences.get('menu_hidden',False),sessions_hidden=preferences.get('sessions_hidden',False),dark_theme=preferences.get('dark_theme',False),target_error=None,
         model_message=' '.join(preference_notices) if preference_notices else None)
     session.event('effective_models',asr=asr_backend,
                   translation='bridge-preview' if bridge_models else 'milmmt',

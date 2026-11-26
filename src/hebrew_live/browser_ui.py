@@ -126,7 +126,7 @@ class BrowserUI:
         self.state=_State({'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
                     'status_code':'loading_models','direction':'he-ru','target_language':'ru',
                     'target_languages':[],'target_error':None,'target_error_code':None,
-                    'ui_locale':'en','text_size':'normal','menu_hidden':False,'sessions_hidden':False,'paused':False,'finished':False,
+                    'ui_locale':'en','text_size':'normal','menu_hidden':False,'sessions_hidden':False,'dark_theme':False,'paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
                     'recording_started':False,'capture_active':False,
@@ -398,7 +398,7 @@ class BrowserUI:
                         except (OSError,ValueError):return self.reply(500,b'{}')
                         with owner.lock:owner.state['text_size']=size
                         return self.reply(200,b'{"ok":true}')
-                    if action in ('menu_hidden','sessions_hidden'):
+                    if action in ('menu_hidden','sessions_hidden','dark_theme'):
                         from .preferences import save
                         hidden=payload.get('value')
                         if type(hidden) is not bool:return self.reply(400,b'{}')

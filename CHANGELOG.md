@@ -4,6 +4,7 @@
 
 ### Changed
 
+- the dark theme survives a restart: it is saved with the other preferences (`dark_theme`) instead of only in the window's localStorage, which the window's new address empties every launch;
 - a closed append card puts a sentence's full stop after its closing «» quote, as Russian does: the model wrote «нажмите «3.».» (Mor call replay 26.11), the card now shows «нажмите «3».»; a full stop inside the quote moves out at the card's end and before a capital letter, and stays inside in the middle of a sentence; an open card still shows what the model wrote until it closes;
 - the number check counts a lone «0» as a number: a translation's «0» the Hebrew has not said is held back in a live call and reported at the end like any other figure («нажмите 0» for «הקישו שתיים», Mor call replay 26.11); «00» as in «16:00» still needs no source;
 - a live translation call that added nothing while the owner's vocabulary words were given as sentences translated before the open one is asked once more with the words as a list above the task (`append_terms_listed` event): given as sentences, the model could take the same Hebrew in the open sentence for already translated and drop it («завтра доктор работает в больничной кассе в Бейт-ха-Керем» came out as «завтра доктор работает», Maccabi call replay with 104 entries, 26.11); the list alone everywhere kept the phrase but followed the vocabulary less («Маккаби Дент» for «Маккабидент», «Солимит» for «решётка»);
