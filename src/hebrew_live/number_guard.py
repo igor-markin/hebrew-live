@@ -208,7 +208,9 @@ class _Side:
             self.values.update(value - 1 for value in hours)
 
     def explains(self, value, digits):
-        return (value in self.values or not digits.strip('0') or digits in self.spoken
+        # «00» of «16:00» needs no source; a lone «0» does: «нажмите 0» for «הקישו שתיים» passed
+        # unnoticed (Mor call replay, 26.11)
+        return (value in self.values or not digits.strip('0') and len(digits) > 1 or digits in self.spoken
                 or len(digits) >= 3 and digits in self.concat
                 or any(digits in other for other in self.spoken if len(digits) >= 2)
                 or any(digits in chunk for chunk in self.chunks if len(chunk) >= 7 and len(digits) >= 2))

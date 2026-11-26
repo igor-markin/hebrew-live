@@ -110,6 +110,17 @@ class UnheardTests(unittest.TestCase):
         self.assertEqual(unheard('להשמעה חוזרת יש', 'Для повтора', 'нажмите «восьмёрку»'.split()), 1)
         self.assertIsNone(unheard('לחזרה הקישו שמונה', '', 'Назад — нажмите «восьмерку»'.split()))
 
+    def test_a_lone_zero_needs_the_source_to_say_it(self):
+        # «ל"המשך המתנה יש להקיש שתיים» came out as «нажмите 0.» (Mor call replay, 26.11)
+        self.assertEqual(unheard('להמשך המתנה יש להקיש', 'Для продолжения ожидания', 'нажмите 0.'.split()), 1)
+        self.assertEqual(unheard('להמשך המתנה יש להקיש שתיים', '', 'нажмите 0.'.split()), 1)
+        self.assertEqual(check('להמשך המתנה יש להקיש שתיים', 'Для продолжения ожидания нажмите 0.'),
+                         [Issue('extra', '0')])
+        self.assertIsNone(unheard('לחזרה לתפריט יש להקיש אפס', '', 'Для возврата в меню нажмите 0.'.split()))
+        self.assertEqual(check('לחזרה לתפריט יש להקיש 0', 'нажмите 0'), [])
+        self.assertIsNone(unheard('בשעה ארבע', '', 'в 16:00'.split()))
+        self.assertEqual(check('בארבע אחר הצהריים', 'в 16:00'), [])
+
 
 if __name__ == '__main__':
     unittest.main()
