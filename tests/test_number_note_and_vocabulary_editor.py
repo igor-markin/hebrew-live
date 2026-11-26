@@ -155,10 +155,20 @@ class VocabularyEditorTests(unittest.TestCase):
         self.assertEqual(body['entries'][0]['en'], 'Haifa')
         status, body = post(self.ui, {'action': 'vocabulary_set', 'previous': 'תכנית',
                                       'value': {'he': 'תוכנית', 'en': 'programme'}})
-        self.assertEqual([entry['he'] for entry in body['entries']], ['תוכנית', 'חיפה'])   # renamed in place of the old
+        self.assertEqual([entry['he'] for entry in body['entries']], ['חיפה', 'תוכנית'])   # renamed in place of the old
         status, body = post(self.ui, {'action': 'vocabulary_delete', 'he': 'חיפה'})
         self.assertEqual([entry['he'] for entry in body['entries']], ['תוכנית'])
         self.assertEqual(vocabulary.load(self.home / 'vocabulary.json'), [Entry('תוכנית', '', 'programme')])
+
+    def test_an_edit_keeps_the_place_and_takes_over_a_spelling_already_listed(self):
+        for he in ('קופת חולים כללית', 'קופת חולים', 'מכבי'):
+            post(self.ui, {'action': 'vocabulary_set', 'value': {'he': he, 'ru': he}})
+        status, body = post(self.ui, {'action': 'vocabulary_set', 'previous': 'קופת חולים',
+                                      'value': {'he': 'קופת חולים', 'ru': 'больничная касса'}})
+        self.assertEqual([(entry['he'], entry['ru']) for entry in body['entries']][1], ('קופת חולים', 'больничная касса'))
+        status, body = post(self.ui, {'action': 'vocabulary_set', 'previous': 'מכבי', 'value': {'he': 'קופת חולים', 'ru': 'касса'}})
+        self.assertEqual([(entry['he'], entry['ru']) for entry in body['entries']],
+                         [('קופת חולים', 'касса'), ('קופת חולים כללית', 'קופת חולים כללית')])
 
     def test_bad_entries_are_refused_and_change_nothing(self):
         post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'חיפה', 'ru': 'Хайфа'}})
@@ -185,6 +195,33 @@ class VocabularyEditorTests(unittest.TestCase):
             self.assertEqual(post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'שלוש', 'ru': 'три'}}),
                              (409, {'error': 'too_many'}))
             self.assertEqual(post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'אחת', 'ru': 'раз'}})[0], 200)
+
+    def test_a_file_adds_new_words_at_the_end_and_updates_known_ones_in_place(self):
+        post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'חיפה', 'ru': 'Хайфа'}})
+        post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'עכו', 'ru': 'Акко'}})
+        status, body = post(self.ui, {'action': 'vocabulary_import', 'entries': [
+            {'he': 'סולמית', 'ru': 'решётка (#)'}, {'he': ' חיפה ', 'ru': 'Хайфа', 'en': 'Haifa'},
+            {'he': 'כוכבית', 'ru': 'звёздочка'}, {'he': 'כוכבית', 'ru': 'звёздочка (*)'}]})
+        self.assertEqual(status, 200)
+        self.assertEqual([(entry['he'], entry['ru'], entry['en']) for entry in body['entries']],
+                         [('עכו', 'Акко', ''), ('חיפה', 'Хайфа', 'Haifa'), ('סולמית', 'решётка (#)', ''),
+                          ('כוכבית', 'звёздочка (*)', '')])
+
+    def test_a_file_with_one_bad_entry_changes_nothing(self):
+        post(self.ui, {'action': 'vocabulary_set', 'value': {'he': 'חיפה', 'ru': 'Хайфа'}})
+        before = (self.home / 'vocabulary.json').read_bytes()
+        self.assertEqual(post(self.ui, {'action': 'vocabulary_import', 'entries': [
+            {'he': 'סולמית', 'ru': 'решётка'}, {'he': 'Haifa', 'ru': 'Хайфа'}]}), (400, {'error': 'not_hebrew', 'index': 1}))
+        self.assertEqual(post(self.ui, {'action': 'vocabulary_import', 'entries': []})[0], 400)
+        with mock.patch('hebrew_live.browser_ui.VOCABULARY_LIMIT', 2):
+            self.assertEqual(post(self.ui, {'action': 'vocabulary_import', 'entries': [
+                {'he': 'אחת', 'ru': 'один'}, {'he': 'שתיים', 'ru': 'два'}]}), (409, {'error': 'too_many'}))
+        self.assertEqual((self.home / 'vocabulary.json').read_bytes(), before)
+
+    def test_a_whole_list_of_500_long_entries_fits_in_one_request(self):
+        entries = [{'he': 'א' * 55 + f'{index:05d}', 'ru': 'я' * 120, 'en': 'e' * 120} for index in range(500)]
+        status, body = post(self.ui, {'action': 'vocabulary_import', 'entries': entries})
+        self.assertEqual((status, len(body['entries'])), (200, 500))
 
 
 if __name__ == '__main__':

@@ -10,10 +10,11 @@ import {TEXT_SIZES,TEXT_SIZE_KEY,textSize,translationPixels} from './textSize';
 import type {TextSize} from './textSize';
 import {MENU_HIDDEN_KEY,SESSIONS_HIDDEN_KEY,storedHidden,storedValue} from './layout';
 import type {Drawn} from './uiLog';
-import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
-import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
+import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
+import {VOCABULARY_HASH} from './vocabularyFile';
 
 declare global {
   interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
@@ -279,64 +280,15 @@ const MessageCards=memo(function MessageCards({groups,scope,scroller,onRetry,ret
   </div>;
 });
 
-const emptyEntry:VocabularyEntry={he:'',ru:'',en:''};
-
-/** The owner's words in Settings: the engine re-reads the file, so edits apply from the next phrase. */
-function VocabularyEditor() {
+/** The vocabulary lives in a window of its own (VocabularyWindow): the desktop app opens it beside
+ * this one, a browser in a new tab. */
+function VocabularyLauncher() {
   const {tx}=useI18n();
-  const [list,setList]=useState<VocabularyList|null>(null);
-  const [error,setError]=useState('');
-  const [form,setForm]=useState<VocabularyEntry>(emptyEntry);
-  const [editing,setEditing]=useState<string|null>(null);
-  const [busy,setBusy]=useState(false);
-  const load=useCallback(async()=>{
-    try{setList(parseVocabulary(await readJson('../vocabulary')));setError('');}catch{setError(tx('vocabularyLoadError'));}
-  },[tx]);
-  const failure=(code:unknown)=>{
-    const keys:Record<string,TextKey>={empty_hebrew:'vocabularyEmptyHebrew',not_hebrew:'vocabularyNotHebrew',no_translation:'vocabularyNoTranslation',
-      too_long:'vocabularyTooLong',too_many:'vocabularyTooMany',damaged:'vocabularyDamaged'};
-    return tx(keys[String(code)]||'vocabularyError',{limit:list?.limit??500});
-  };
-  const send=async(body:object)=>{
-    setBusy(true);setError('');
-    try{
-      const response=await fetch('../action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:timeoutSignal()});
-      const data:unknown=await response.json().catch(()=>({}));
-      if(!response.ok){setError(failure((data as {error?:unknown}).error));return false;}
-      setList(parseVocabulary(data));return true;
-    }catch{setError(tx('vocabularyError'));return false;}
-    finally{setBusy(false);}
-  };
-  const submit=async(event:React.FormEvent)=>{
-    event.preventDefault();
-    if(!form.he.trim()){setError(tx('vocabularyEmptyHebrew'));return;}
-    if(!form.ru.trim()&&!form.en.trim()){setError(tx('vocabularyNoTranslation'));return;}
-    if(await send({action:'vocabulary_set',value:form,...(editing?{previous:editing}:{})})){setForm(emptyEntry);setEditing(null);}
-  };
-  const field=(key:keyof VocabularyEntry,label:TextKey,rtl=false)=><label className="vocabulary-field"><span>{tx(label)}</span>
-    <input value={form[key]} dir={rtl?'rtl':'auto'} lang={key} maxLength={list?.lengths[key]??120} disabled={busy}
-      onChange={event=>setForm(old=>({...old,[key]:event.target.value}))}/></label>;
-  const blocked=busy||!list||list.damaged;
-  return <details className="vocabulary" onToggle={event=>{if(event.currentTarget.open)void load();}}>
-    <summary>{tx('vocabulary')}{list?` · ${list.entries.length}`:''}</summary>
-    <p className="vocabulary-note">{tx('vocabularyHint')}</p>
-    <p className={`vocabulary-note ${shortHebrew(form.he)?'vocabulary-note--warn':''}`}>{tx('vocabularyShort')}</p>
-    {list&&!list.enabled&&<p className="vocabulary-note vocabulary-note--warn">{tx('vocabularyOff')}</p>}
-    {list?.damaged&&<p className="vocabulary-error" role="alert">{tx('vocabularyDamaged')}</p>}
-    <form className="vocabulary-form" onSubmit={event=>void submit(event)}>
-      {field('he','vocabularyHebrew',true)}{field('ru','vocabularyRussian')}{field('en','vocabularyEnglish')}
-      <div className="vocabulary-buttons">
-        <button type="submit" className="vocabulary-submit" disabled={blocked}>{editing?tx('vocabularySave'):tx('vocabularyAdd')}</button>
-        {editing&&<button type="button" className="vocabulary-cancel" disabled={busy} onClick={()=>{setEditing(null);setForm(emptyEntry);setError('');}}>{tx('vocabularyCancel')}</button>}
-      </div>
-    </form>
-    {error&&<p className="vocabulary-error" role="alert">{error}</p>}
-    {list?(list.entries.length?<ul className="vocabulary-list">{list.entries.map(entry=><li key={entry.he}>
-      <span><strong lang="he" dir="rtl">{entry.he}</strong><small>{[entry.ru,entry.en].filter(Boolean).join(' · ')}</small></span>
-      <button type="button" disabled={blocked} onClick={()=>{setEditing(entry.he);setForm(entry);setError('');}}>{tx('vocabularyEdit')}</button>
-      <button type="button" disabled={blocked} onClick={()=>{if(window.confirm(tx('vocabularyDeleteConfirm',{word:entry.he})))void send({action:'vocabulary_delete',he:entry.he});}}>{tx('vocabularyDelete')}</button>
-    </li>)}</ul>:<p className="vocabulary-note">{tx('vocabularyEmpty')}</p>):!error&&<p className="vocabulary-note">{tx('vocabularyLoading')}</p>}
-  </details>;
+  const open=()=>{window.open(`${location.pathname}${VOCABULARY_HASH}`,'hebrew-live-vocabulary','width=1000,height=760');};
+  return <div className="vocabulary-launcher">
+    <span><strong>{tx('vocabulary')}</strong><small>{tx('vocabularyWindowNote')}</small></span>
+    <button type="button" onClick={open}>{tx('vocabularyOpen')}</button>
+  </div>;
 }
 
 /** Microphone or phone, chosen before recording starts; for the phone, whether a call can be taken now. */
@@ -394,7 +346,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <label className="settings-field"><span>{tx('textSize')}</span><select value={size} disabled={pending} onChange={event=>setSize(textSize(event.target.value))}>{TEXT_SIZES.map(item=><option key={item} value={item}>{tx('textSizeOption',{name:tx(`textSize_${item}` as TextKey),px:String(translationPixels(item))})}</option>)}</select></label>
-          <VocabularyEditor/>
+          <VocabularyLauncher/>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
         </div>

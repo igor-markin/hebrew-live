@@ -46,6 +46,9 @@ for _name in ('__delitem__','pop','popitem','clear','setdefault','__ior__'):seta
 
 UI_LOG_BYTES=262144
 UI_LOG_ITEMS=400
+# a whole vocabulary from a file: 500 entries of 60 + 120 + 120 letters, each up to six bytes as a
+# JSON \u escape (about 0.9 MB)
+VOCABULARY_IMPORT_BYTES=1048576
 UI_TEXT_LIMIT=4000
 UI_LOG_KINDS=('render','click','scroll','key','visibility','resize','follow','settings')
 
@@ -263,10 +266,12 @@ class BrowserUI:
                 if self.headers.get_content_type()!='application/json':return self.reply(415,b'{}')
                 try:
                     size=int(self.headers.get('Content-Length','0'))
-                    # A ticker report carries one sentence; a window log batch up to UI_LOG_BYTES.
-                    if not 0<size<=UI_LOG_BYTES:return self.reply(400,b'{}')
+                    # A ticker report carries one sentence; a window log batch up to UI_LOG_BYTES;
+                    # a vocabulary file up to VOCABULARY_IMPORT_BYTES.
+                    if not 0<size<=max(UI_LOG_BYTES,VOCABULARY_IMPORT_BYTES):return self.reply(400,b'{}')
                     payload=json.loads(self.rfile.read(size));action=payload.get('action')
-                    if size>8192 and action!='ui_log':return self.reply(400,b'{}')
+                    limit={'ui_log':UI_LOG_BYTES,'vocabulary_import':VOCABULARY_IMPORT_BYTES}.get(action,8192)
+                    if size>limit:return self.reply(400,b'{}')
                     if action=='ui_log':
                         received=time.monotonic()
                         items=payload.get('items')
@@ -425,6 +430,27 @@ class BrowserUI:
                         with owner.lock:owner.state.update(input_source=value,input_error=None)
                         if value=='phone':owner.check_phone()
                         return self.reply(200,b'{"ok":true}')
+                    if action=='vocabulary_import':
+                        # a file chosen in the vocabulary window: every entry is checked before
+                        # anything is saved; a word already in the list keeps its place and takes
+                        # the file's translations, a new word goes to the end of the list
+                        from . import vocabulary
+                        items=payload.get('entries')
+                        if not isinstance(items,list) or not items:return self.reply(400,b'{"error":"invalid"}')
+                        imported=[]
+                        for index,item in enumerate(items):
+                            entry,error=vocabulary_entry(item)
+                            if error:return self.reply(400,json.dumps({'error':error,'index':index}).encode())
+                            imported=[*vocabulary.remove(imported,entry.he),entry]
+                        with owner.vocabulary_lock:
+                            if vocabulary.damaged():return self.reply(409,b'{"error":"damaged"}')
+                            entries=vocabulary.load()
+                            known={entry.he:entry for entry in imported}
+                            merged=[known.pop(entry.he,entry) for entry in entries]+list(known.values())
+                            if len(merged)>max(VOCABULARY_LIMIT,len(entries)):return self.reply(409,b'{"error":"too_many"}')
+                            try:vocabulary.save(merged)
+                            except OSError:return self.reply(500,b'{}')
+                            return self.reply(200,owner.vocabulary_json())
                     if action in ('vocabulary_set','vocabulary_delete'):
                         from . import vocabulary
                         with owner.vocabulary_lock:
@@ -439,10 +465,17 @@ class BrowserUI:
                                 previous=payload.get('previous')
                                 if error or previous is not None and not isinstance(previous,str):
                                     return self.reply(400,json.dumps({'error':error or 'invalid'}).encode())
-                                if previous:entries=vocabulary.remove(entries,previous)   # an edit may change the spelling
-                                if entry.he not in {item.he for item in entries} and len(entries)>=VOCABULARY_LIMIT:
-                                    return self.reply(409,b'{"error":"too_many"}')
-                                entries=vocabulary.add(entries,entry.he,entry.ru,entry.en)
+                                place=[item.he for item in entries].index(vocabulary.clean(previous)) if (
+                                    previous and vocabulary.clean(previous) in {item.he for item in entries}) else None
+                                if place is not None:
+                                    # an edit keeps the word's place, even with a new spelling: the order
+                                    # says which entry wins when two match the same Hebrew
+                                    entries=[entry if index==place else item for index,item in enumerate(entries)
+                                             if index==place or item.he!=entry.he]
+                                else:
+                                    if entry.he not in {item.he for item in entries} and len(entries)>=VOCABULARY_LIMIT:
+                                        return self.reply(409,b'{"error":"too_many"}')
+                                    entries=vocabulary.add(entries,entry.he,entry.ru,entry.en)
                             try:vocabulary.save(entries)
                             except OSError:return self.reply(500,b'{}')
                             return self.reply(200,owner.vocabulary_json())
