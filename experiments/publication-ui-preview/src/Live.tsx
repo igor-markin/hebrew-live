@@ -15,6 +15,7 @@ import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} fro
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 import {VOCABULARY_HASH} from './vocabularyFile';
+import {isViewerPath,phoneViewNote} from './viewer';
 
 declare global {
   interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
@@ -26,6 +27,8 @@ const useI18n=()=>useContext(I18nContext);
 // Live display experiments the engine switched on (HEBREW_LIVE_CALM_DRAFTS, HEBREW_LIVE_SENTENCE_SPLIT,
 // HEBREW_LIVE_SENTENCE_CONTEXT for frozen sentences, HEBREW_LIVE_TICKER for the ticker view).
 const DisplayContext=createContext({calm:false,merge:false,frozen:false,ticker:false,append:false});
+// The phone's read-only copy (phone_view.py): the conversation only, and nothing is sent back.
+const viewer=isViewerPath(location.pathname);
 
 function Icon({kind}:{kind:string}) {
   const paths:Record<string,string>={trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',pause:'M8 5v14M16 5v14',play:'m8 5 11 7-11 7Z',stop:'M6 6h12v12H6Z',power:'M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0',help:'M9.1 9a3 3 0 1 1 4.8 2.4c-1 .7-1.9 1.2-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',clear:'m4 16 8-12 8 6-8 12H8l-4-6Zm7 5h10',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',theme:'M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10Z',folder:'M3 6h7l2 3h9v11H3Z',sidebar:'M4 4h16v16H4ZM9 4v16',up:'m6 15 6-6 6 6',expand:'m6 9 6 6 6-6',down:'M12 4v16m-6-6 6 6 6-6',warning:'M12 3 2 21h20L12 3Zm0 6v5m0 3v1'};
@@ -197,7 +200,7 @@ const TickerSentence=memo(function TickerSentence({group,pending,agreed}:{group:
   const black=pending?words.slice(0,agreed).join(' '):text;const grey=pending?words.slice(agreed).join(' '):'';
   const source=group.live?.current.translation.trim()?'live':'stream';
   useEffect(()=>{
-    if(!pending)return;
+    if(!pending||viewer)return;
     void fetch('../action',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action:'ui_ticker',group:group.id,source,black,grey})}).catch(()=>{});
   },[pending,group.id,source,black,grey]);
@@ -306,6 +309,24 @@ function InputSource({state,pending,onAction}:{state:LiveState;pending:boolean;o
   </div>;
 }
 
+/** The switch for the translation on the phone, and the link to open there once it is on. */
+function PhoneViewSetting({state,pending,onAction}:{state:LiveState;pending:boolean;onAction:(action:string,value?:string|boolean)=>void}){
+  const {tx}=useI18n();const [copied,setCopied]=useState(false);
+  const url=state.phone_view&&state.phone_view_status==='on'?state.phone_view_url:null;
+  const copy=()=>{if(!url||!navigator.clipboard)return;void navigator.clipboard.writeText(url).then(()=>{setCopied(true);window.setTimeout(()=>setCopied(false),2000);},()=>{});};
+  return <div className="phone-view-setting">
+    <label className="settings-check"><input type="checkbox" checked={!!state.phone_view} disabled={pending} onChange={event=>onAction('phone_view',event.target.checked)}/><span>{tx('phoneView')}<small>{tx(phoneViewNote(state.phone_view,state.phone_view_status))}</small></span></label>
+    {url&&<div className="phone-view-link"><code>{url}</code><button type="button" onClick={copy}>{copied?tx('phoneViewCopied'):tx('phoneViewCopy')}</button></div>}
+  </div>;
+}
+
+const STATUS_KEYS=['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session','runtime_status','partial_processing','restart_required'];
+/** What the engine is doing, in the interface language when the code is known. */
+function localStatus(state:LiveState,tx:Translate){
+  const statusKey=state.stopping?(state.cancelling?'cancelling':'finishing'):state.status_code;
+  return statusKey&&STATUS_KEYS.includes(statusKey)?tx(statusKey as TextKey):state.status;
+}
+
 function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,size,setSize,locale,onLocale,settingsRef,menuHidden,setMenuHidden,sessionsButton,onSessions,sessionsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;size:TextSize;setSize:(value:TextSize)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>;menuHidden:boolean;setMenuHidden:(value:boolean)=>void;sessionsButton:boolean;onSessions:()=>void;sessionsRef:React.RefObject<HTMLButtonElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
@@ -314,8 +335,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
   const direction=tx('direction',{source:languageName(locale,source,source),target:languageName(locale,target,target)});
   const archiveKey=selected?archiveRecordingLabel(state):'';
   const archiveState=archiveKey?tx(archiveKey as TextKey):'';
-  const statusKey=state.stopping?(state.cancelling?'cancelling':'finishing'):state.status_code;
-  const localizedStatus=statusKey&&['listening','playing_recording','finishing_translation','opening_audio','loading_models','preparing_session','app_closed','finishing','cancelling','session_finished','paused','ready_to_start','saved_session','runtime_status','partial_processing','restart_required'].includes(statusKey)?tx(statusKey as TextKey):state.status;
+  const localizedStatus=localStatus(state,tx);
   const inputKind=state.input_kind==='Файл'?tx('inputFile'):state.input_kind==='Микрофон'?tx('inputMicrophone'):state.input_kind==='Телефон'?tx('inputPhone'):state.input_kind;
   const device=state.input_kind==='Телефон'?tx('phoneSession'):state.device;
   const choosing=!selected&&!state.finished&&!state.recording_started;
@@ -347,6 +367,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
           <label className="settings-field"><span>{tx('textSize')}</span><select value={size} disabled={pending} onChange={event=>setSize(textSize(event.target.value))}>{TEXT_SIZES.map(item=><option key={item} value={item}>{tx('textSizeOption',{name:tx(`textSize_${item}` as TextKey),px:String(translationPixels(item))})}</option>)}</select></label>
           <VocabularyLauncher/>
+          <PhoneViewSetting state={state} pending={pending} onAction={onAction}/>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
         </div>
@@ -424,7 +445,7 @@ export default function Live(){
   },[state.ui_locale]);
   useEffect(()=>{document.documentElement.lang=locale;document.documentElement.dir=locale==='he'?'rtl':'ltr';},[locale]);
   useEffect(()=>{
-    if(document.visibilityState!=='visible'||selected)return;
+    if(viewer||document.visibilityState!=='visible'||selected)return;
     const candidates=state.groups.flatMap(group=>group.stream?.preview_id?[{group:group.id,id:group.stream.preview_id}]:[]);
     let first=0,second=0;
     first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{
@@ -448,7 +469,7 @@ export default function Live(){
   const viewName=display.ticker?'ticker':display.frozen?'frozen':'cards';
   useEffect(()=>{drawn.current.clear();},[state.session,state.generation]);
   useEffect(()=>{
-    if(selected)return;
+    if(selected||viewer)return;
     let first=0,second=0;
     first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{
       for(const record of renderRecords(state.groups.filter(isVisibleGroup),drawn.current,display.calm,viewName))uiLog.push(record);
@@ -456,6 +477,7 @@ export default function Live(){
     return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};
   },[state.groups,selected,display.calm,viewName,uiLog]);
   useEffect(()=>{
+    if(viewer)return;
     const view=()=>viewName;
     const click=(event:PointerEvent)=>uiLog.push({type:'click',...clickTarget(event.target as Element|null),view:view()});
     const key=(event:KeyboardEvent)=>{
@@ -477,15 +499,28 @@ export default function Live(){
       document.removeEventListener('toggle',toggle,true);window.removeEventListener('pagehide',leave);clearTimeout(resizeTimer);uiLog.flush(true);};
   },[uiLog,viewName]);
 
-  useEffect(()=>{uiLog.push({type:'follow',following:follow.following});},[follow.following,uiLog]);
+  useEffect(()=>{if(!viewer)uiLog.push({type:'follow',following:follow.following});},[follow.following,uiLog]);
   useEffect(()=>{
-    const node=follow.containerRef.current;if(!node)return;
+    const node=follow.containerRef.current;if(!node||viewer)return;
     let timer:ReturnType<typeof setTimeout>|undefined;
     const scrolled=()=>{if(timer!==undefined)return;timer=setTimeout(()=>{timer=undefined;
       uiLog.push({type:'scroll',top:Math.round(node.scrollTop),height:node.scrollHeight,client_height:node.clientHeight});},300);};
     node.addEventListener('scroll',scrolled,{passive:true});
     return()=>{node.removeEventListener('scroll',scrolled);clearTimeout(timer);};
   },[follow.containerRef,uiLog]);
+
+  // The phone keeps its screen on while the translation is open, where the browser allows it
+  // (Chrome only on an https page; a phone held to the ear turns its screen off anyway).
+  useEffect(()=>{
+    if(!viewer||!('wakeLock' in navigator))return;
+    let held:WakeLockSentinel|undefined;let live=true;
+    const take=()=>{
+      if(document.visibilityState!=='visible'||held&&!held.released)return;
+      void navigator.wakeLock.request('screen').then(sentinel=>{if(live)held=sentinel;else void sentinel.release();}).catch(()=>{});
+    };
+    take();document.addEventListener('visibilitychange',take);
+    return()=>{live=false;document.removeEventListener('visibilitychange',take);void held?.release().catch(()=>{});};
+  },[]);
 
   const closeSidebar=useCallback(()=>{setSidebar(false);requestAnimationFrame(()=>openSidebarRef.current?.focus());},[]);
   useEffect(()=>{
@@ -509,6 +544,7 @@ export default function Live(){
   },[sidebar,narrow,closeSidebar]);
 
   useEffect(()=>{
+    if(viewer)return;
     const controller=new AbortController();setSessionsError('');
     void readJson('../sessions',controller.signal).then(value=>{
       if(!Array.isArray(value)||!value.every(item=>typeof item?.id==='string'&&typeof item?.label==='string'&&(item.title===undefined||typeof item.title==='string')&&(item.preview===undefined||typeof item.preview==='string')))throw new Error('bad sessions');
@@ -610,7 +646,7 @@ export default function Live(){
   const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const preferenceAction=['ui_locale','text_size','menu_hidden','sessions_hidden','dark_theme','save_raw_audio','input_source','check_phone'].includes(action);
+    const preferenceAction=['ui_locale','text_size','menu_hidden','sessions_hidden','dark_theme','save_raw_audio','input_source','check_phone','phone_view'].includes(action);
     if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
@@ -623,6 +659,7 @@ export default function Live(){
       if(action==='save_raw_audio'&&typeof value==='boolean')setState(old=>({...old,save_raw_audio:value}));
       if(action==='input_source'&&(value==='microphone'||value==='phone'))setState(old=>({...old,input_source:value,input_error:null,...(value==='phone'?{phone_status:'checking'}:{})}));
       if(action==='check_phone')setState(old=>({...old,phone_status:'checking'}));
+      if(action==='phone_view'&&typeof value==='boolean')setState(old=>({...old,phone_view:value,phone_view_status:value?'starting':'off',phone_view_url:value?old.phone_view_url:null}));
       if(action==='exports_ready'){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
       if(action==='quit'){
         if(state.finished){setClosed(true);setState(old=>({...old,phase:'exited',can_start_new:false,status_code:'app_closed'}));}
@@ -660,6 +697,17 @@ export default function Live(){
   const query=search.trim().toLocaleLowerCase(locale);
   const filtered=sessions.filter(item=>item.id!==currentId&&(!query||[item.label,item.id,item.title||'',item.preview||''].some(value=>value.toLocaleLowerCase(locale).includes(query))));
   const loading=state.phase==='loading'||state.phase==='opening';
+  if(viewer)return <I18nContext.Provider value={i18n}><div className="app-shell live-shell messenger-shell viewer-shell">
+    <main className="conversation-pane">
+      <div className="viewer-bar" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localStatus(state,tx)}</strong><small>{tx('viewerNote')}</small></span></div>
+      {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
+      <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
+        <DisplayContext.Provider value={display}>{display.ticker?<TickerView groups={visibleGroups}/>:<MessageCards key={`${state.session||'current'}:${state.generation??0}`} groups={visibleGroups} scope="current" scroller={follow.containerRef} retryEnabled={false}/>}</DisplayContext.Provider>
+        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{loading?tx('loadingBeforeRecord'):state.finished?tx('recordingFinished'):state.paused?tx('readyToSpeak'):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
+      </section>
+      {!follow.following&&state.groups.length>0&&<Button className="follow-latest" variant="primary" onPress={follow.resume}><Icon kind="down"/>{tx('backToCurrent')}</Button>}
+    </main>
+  </div></I18nContext.Provider>;
   return <I18nContext.Provider value={i18n}><div className={`app-shell live-shell messenger-shell ${sidebar?'sessions-open':''} ${sessionsHidden&&!narrow?'sessions-hidden':''}`}>
     <aside ref={sidebarRef} className="session-sidebar" aria-label={tx('sessions')} role={narrow?'dialog':undefined} aria-modal={narrow||undefined} aria-hidden={(narrow?!sidebar:sessionsHidden)||undefined}>
       <header><h1>{tx('sessions')}</h1><Button variant="tertiary" className="close-sessions" onPress={narrow?closeSidebar:()=>chooseSessionsHidden(true)} aria-label={tx(narrow?'closeSessions':'hideSessions')}>×</Button></header>

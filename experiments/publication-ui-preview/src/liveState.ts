@@ -22,6 +22,7 @@ export type LiveState = {
   save_raw_audio?:boolean;save_raw_audio_locked?:boolean;audio_saved?:boolean;partial?:boolean;integrity_warning?:string|null;
   partial_kind?:'known_unprocessed'|'capture_unknown'|'mixed'|null;partial_ranges?:string[];partial_details?:PartialDetail[];capture_discontinuity?:boolean;
   input_source?:'microphone'|'phone';input_source_locked?:boolean;phone_status?:string|null;input_error?:'phone_not_ready'|'phone_stopped'|null;
+  phone_view?:boolean;phone_view_status?:string|null;phone_view_url?:string|null;viewer?:boolean;
 };
 
 const phases = new Set(['loading','opening','listening','paused','stopping','finished','error','exited']);
@@ -58,6 +59,7 @@ export function parseLiveState(value:unknown):LiveState {
   if(!optionalBoolean(value.can_start_new)||!optionalBoolean(value.stopping)||!optionalBoolean(value.cancelling)||!optionalBoolean(value.model_switching)||!optionalBoolean(value.retry_supported)||!optionalBoolean(value.save_raw_audio)||!optionalBoolean(value.save_raw_audio_locked)||!optionalBoolean(value.audio_saved)||!optionalBoolean(value.partial)||!optionalBoolean(value.capture_discontinuity)||!optionalBoolean(value.target_capabilities_assumed)||!optionalBoolean(value.desktop_mode)||!optionalBoolean(value.calm_drafts)||!optionalBoolean(value.append_view)||!optionalBoolean(value.merge_sentences)||!optionalBoolean(value.frozen_sentences)||!optionalBoolean(value.ticker_view)||!optionalBoolean(value.recording_started)||!optionalBoolean(value.capture_active)||!optionalNumber(value.generation))throw new Error('Invalid local API snapshot');
   if(value.input_source!==undefined&&!['microphone','phone'].includes(String(value.input_source))||!optionalBoolean(value.input_source_locked)||!optionalString(value.phone_status)||
     value.input_error!==undefined&&value.input_error!==null&&!['phone_not_ready','phone_stopped'].includes(String(value.input_error)))throw new Error('Invalid local API snapshot');
+  if(!optionalBoolean(value.phone_view)||!optionalString(value.phone_view_status)||!optionalString(value.phone_view_url)||!optionalBoolean(value.viewer))throw new Error('Invalid local API snapshot');
   if(value.exports!==undefined&&(!Array.isArray(value.exports)||!value.exports.every(item=>record(item)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.label==='string')))throw new Error('Invalid local API snapshot');
   if(value.phase!==undefined&&(typeof value.phase!=='string'||!phases.has(value.phase)))throw new Error('Invalid local API phase');
   const phase=(value.phase as string|undefined)??(value.finished?'finished':value.paused?'paused':'listening');

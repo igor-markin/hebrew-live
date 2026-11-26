@@ -274,3 +274,15 @@ html[dir="rtl"] .session-delete {right:auto;left:6px}
 /* A narrow menu line keeps its words for Pause and Finish and shows the rest as icons. */
 .live-controls {container-type:inline-size}
 @container (max-width:860px){.live-toolbar .button-label{display:none}}
+
+/* Translation on the phone: the switch and its link in the settings, and the phone's read-only page. */
+.phone-view-setting {margin:0 0 14px}.phone-view-setting .settings-check{margin-bottom:6px}
+.phone-view-link {display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:24px}
+.phone-view-link code {flex:1 1 220px;min-width:0;overflow-wrap:anywhere;user-select:all;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:8px}
+.phone-view-link button {font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:inherit;cursor:pointer}
+html[dir="rtl"] .phone-view-link {margin-left:0;margin-right:24px}
+.messenger-shell.viewer-shell,html[dir="rtl"] .messenger-shell.viewer-shell {padding:0 12px}
+.viewer-bar {display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border)}
+.viewer-bar > span:last-child {display:flex;flex-direction:column;min-width:0}
+.viewer-bar small {color:var(--muted);font-size:12px}
+.live-shell.viewer-shell .chat-feed {height:calc(100vh - 72px);height:calc(100dvh - 72px);max-width:none}
