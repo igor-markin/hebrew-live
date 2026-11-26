@@ -123,7 +123,7 @@ class BrowserUI:
         self.state=_State({'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
                     'status_code':'loading_models','direction':'he-ru','target_language':'ru',
                     'target_languages':[],'target_error':None,'target_error_code':None,
-                    'ui_locale':'en','paused':False,'finished':False,
+                    'ui_locale':'en','text_size':'normal','paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
                     'recording_started':False,'capture_active':False,
@@ -383,6 +383,15 @@ class BrowserUI:
                         try:save(owner.preference_folder,ui_locale=locale)
                         except OSError:return self.reply(500,b'{}')
                         with owner.lock:owner.state['ui_locale']=locale
+                        return self.reply(200,b'{"ok":true}')
+                    if action=='text_size':
+                        from .preferences import TEXT_SIZES,save
+                        size=payload.get('value')
+                        if size not in TEXT_SIZES:return self.reply(400,b'{}')
+                        if owner.preference_folder is None:return self.reply(409,b'{}')
+                        try:save(owner.preference_folder,text_size=size)
+                        except (OSError,ValueError):return self.reply(500,b'{}')
+                        with owner.lock:owner.state['text_size']=size
                         return self.reply(200,b'{"ok":true}')
                     if action=='save_raw_audio':
                         value=payload.get('value')

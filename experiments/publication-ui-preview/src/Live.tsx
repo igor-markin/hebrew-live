@@ -6,6 +6,8 @@ import './live.css';
 import {useFollowLatest} from './useFollowLatest';
 import {openStateStream} from './liveStream';
 import {UiLog,clickTarget,renderRecords} from './uiLog';
+import {TEXT_SIZES,TEXT_SIZE_KEY,textSize,translationPixels} from './textSize';
+import type {TextSize} from './textSize';
 import type {Drawn} from './uiLog';
 import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, parseVocabulary, shortHebrew, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph, VocabularyEntry, VocabularyList} from './liveState';
@@ -351,7 +353,7 @@ function InputSource({state,pending,onAction}:{state:LiveState;pending:boolean;o
   </div>;
 }
 
-function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
+function RecordingControls({state,pending,localePending,selected,onAction,dark,setDark,size,setSize,locale,onLocale,settingsRef}:{state:LiveState;pending:boolean;localePending:boolean;selected:boolean;onAction:(action:string,value?:string|boolean)=>void;dark:boolean;setDark:(value:boolean)=>void;size:TextSize;setSize:(value:TextSize)=>void;locale:UiLocale;onLocale:(value:UiLocale)=>void;settingsRef:React.RefObject<HTMLDetailsElement|null>}){
   const {tx}=useI18n();
   const loading=state.phase==='loading'||state.phase==='opening';
   const busy=pending||loading||state.finished||state.stopping||state.model_switching;
@@ -379,6 +381,7 @@ function RecordingControls({state,pending,localePending,selected,onAction,dark,s
           <label className="settings-field"><span>{tx('interfaceLanguage')}</span><select value={locale} disabled={pending||localePending} onChange={event=>onLocale(event.target.value as UiLocale)}><option value="en">English</option><option value="ru">Русский</option>{!state.desktop_mode&&<option value="he">עברית</option>}</select></label>
           <label className="settings-field"><span>{tx('targetLanguage')}</span><select value={state.target_language||target} disabled={busy||selected} onChange={event=>onAction('target_language',event.target.value)}>{(state.target_languages||[]).map(item=><option key={item.code} value={item.code}>{languageName(locale,item.code,item.name)}</option>)}</select><small>{tx('targetBoundary')}{state.target_capabilities_assumed?' '+tx('customCapability'):''}</small></label>
           <label className="settings-check"><input type="checkbox" checked={state.save_raw_audio!==false} disabled={pending||selected||state.save_raw_audio_locked} onChange={event=>onAction('save_raw_audio',event.target.checked)}/><span>{tx('saveRawAudio')}<small>{tx(state.save_raw_audio_locked?'saveRawAudioCli':'saveRawAudioNext')}</small></span></label>
+          <label className="settings-field"><span>{tx('textSize')}</span><select value={size} disabled={pending} onChange={event=>setSize(textSize(event.target.value))}>{TEXT_SIZES.map(item=><option key={item} value={item}>{tx('textSizeOption',{name:tx(`textSize_${item}` as TextKey),px:String(translationPixels(item))})}</option>)}</select></label>
           <VocabularyEditor/>
           <p className="reading-note">{state.publication==='draft'?tx('readingDraft'):tx('readingEarly')}</p>
           <div className="actions"><Button variant="tertiary" onPress={()=>setDark(!dark)}><Icon kind="theme"/>{dark?tx('lightTheme'):tx('darkTheme')}</Button><Button variant="tertiary" isDisabled={busy} onPress={()=>onAction('clear')}><Icon kind="clear"/>{tx('clearScreen')}</Button></div>
@@ -410,6 +413,7 @@ export default function Live(){
   const [sidebar,setSidebar]=useState(false);
   const [narrow,setNarrow]=useState(()=>matchMedia('(max-width: 900px)').matches);
   const [dark,setDark]=useState(()=>localStorage.getItem('hebrew-live-theme')==='dark');
+  const [size,setSize]=useState<TextSize>(()=>textSize(localStorage.getItem(TEXT_SIZE_KEY)));
   const [connectionError,setConnectionError]=useState('');
   const [actionError,setActionError]=useState('');
   const [lastSuccess,setLastSuccess]=useState<number>();
@@ -590,6 +594,9 @@ export default function Live(){
 
   useEffect(()=>{document.title=tx('liveTitle')+' — '+(state.publication!=='phrases'?tx('experimentMode'):tx('ordinaryMode'));},[state.publication,tx]);
   useEffect(()=>{document.documentElement.dataset.theme=dark?'dark':'light';localStorage.setItem('hebrew-live-theme',dark?'dark':'light');},[dark]);
+  useEffect(()=>{document.documentElement.dataset.textSize=size;localStorage.setItem(TEXT_SIZE_KEY,size);},[size]);
+  // The saved preference wins: the window's address (and so its localStorage) changes every launch.
+  useEffect(()=>{if(state.text_size!==undefined)setSize(textSize(state.text_size));},[state.text_size]);
   useEffect(()=>{
     if(!connectionError)return;
     setClock(Date.now());const timer=window.setInterval(()=>setClock(Date.now()),1000);
@@ -631,7 +638,7 @@ export default function Live(){
   const act=useCallback(async(action:string,value?:string|boolean)=>{
     const {state,closed}=actionContext.current;
     const loading=state.phase==='loading'||state.phase==='opening';
-    const preferenceAction=['ui_locale','save_raw_audio','input_source','check_phone'].includes(action);
+    const preferenceAction=['ui_locale','text_size','save_raw_audio','input_source','check_phone'].includes(action);
     if(closed||actionBusy.current||(!preferenceAction&&((loading&&!['stop','quit','open_archive_folder'].includes(action))||(state.finished&&!['open_folder','open_archive_folder','exports_ready','start_session','quit'].includes(action))||(!['stop','quit','cancel_processing','open_folder','open_archive_folder','exports_ready','start_session'].includes(action)&&(state.stopping||state.model_switching)))))return false;
     actionBusy.current=true;
     setPending(true);setActionError('');
@@ -654,6 +661,7 @@ export default function Live(){
     finally{actionBusy.current=false;setPending(false);}
   },[tx]);
   const onAction=useCallback((action:string,value?:string|boolean)=>{void act(action,value);},[act]);
+  const chooseSize=useCallback((value:TextSize)=>{setSize(value);void act('text_size',value).then(saved=>{if(saved)setState(old=>({...old,text_size:value}));});},[act]);
   const retryFragment=useCallback((id:string)=>{void act('retry_fragment',id);},[act]);
   const changeLocale=useCallback(async(value:UiLocale)=>{
     const request=beginLocaleRequest(locale,state.ui_locale,value,localeRequested.current);
@@ -689,7 +697,7 @@ export default function Live(){
     </aside>
     <main className="conversation-pane">
       <div className="conversation-title"><Button ref={openSidebarRef} variant="tertiary" className="show-sessions" onPress={()=>setSidebar(true)}><Icon kind="folder"/>{tx('sessions')}</Button><div><strong>{selected?sessions.find(item=>item.id===selected)?.label||tx('savedConversation'):tx('liveTitle')}</strong><small>{selected?tx('readOnly'):tx('onThisMac')}</small></div>{selected&&<Button variant="tertiary" onPress={()=>choose('')}><Icon kind="play"/>{tx('backToLive')}</Button>}</div>
-      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
+      <RecordingControls state={state} pending={pending} localePending={localePending} selected={!!selected} onAction={onAction} dark={dark} setDark={setDark} size={size} setSize={chooseSize} locale={locale} onLocale={value=>{void changeLocale(value);}} settingsRef={settingsRef}/>
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       {actionError&&<p className="unavailable global-error" role="alert">{actionError}</p>}
       {!selected&&state.input_error&&(state.input_error==='phone_stopped'||state.phone_status!=='ready')&&<p className="unavailable global-error" role="alert">{tx(state.input_error==='phone_stopped'?'phoneStopped':'phoneNotReadyAtStart',{reason:tx(phoneStatusText(state.phone_status))})}</p>}
