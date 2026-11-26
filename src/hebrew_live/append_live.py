@@ -221,6 +221,14 @@ def speech(text):
                                    for w in words)
 
 
+def opening(word):
+    """A shown word that only opens something («, „, ", ( or a dash): the sentence cannot end
+    right after it, and the next word goes on it. The model wrote «нажмите «» and wanted a
+    sentence end there; the end went after the quote and the number came after it
+    («нажмите «. 2».», Mor call replay 26.11)."""
+    return bool(word) and not any(ch.isalnum() for ch in word) and word[-1] in '«„"“(—–-'
+
+
 def balance_quotes(words):
     """A closed card's translation with its «» paired: a quote the model opened and did not close
     («нажмите «Согласен.») is closed before the end mark, a closing one with no opening is
@@ -795,6 +803,8 @@ class AppendProcessor:
                     added, stop = added[:cut], 'day'
             new, days = self._weekdays(card, upto, self._plain(card), ' '.join(added), settings)
             added = new.split()
+            if added and card.out and opening(card.out[-1]) and not PUNCTUATION_WORD.fullmatch(added[0]):
+                added[0] = card.out.pop() + added[0]   # «« 2».» → «2».»
             card.out.extend(added)
             now = self.audio_now()
             covered = []
@@ -808,7 +818,7 @@ class AppendProcessor:
                 covered = card.words[card.covered:upto]
                 card.covered, card.tried = upto, None
                 # «нажмите» with the number still to come is not the end of the sentence
-                if stop == 'sentence' and card.out and not (
+                if stop == 'sentence' and card.out and not opening(card.out[-1]) and not (
                         menu_words.enabled() and hebrew_source(settings) and menu_words.number_awaited(text)):
                     card.end_mark = result.end_mark
             else:
