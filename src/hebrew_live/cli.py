@@ -491,8 +491,18 @@ class Engine:
         if generator is None or generator.min_prob!=min_prob:
             generator=self._clause_generator=ClauseGenerator(self,min_prob=min_prob)
         began=time.monotonic()
-        pairs=[(he+'.',target+'.') for he,target in self._live_terms(text,direction)]+list(pairs)
-        result=generator.generate(text,forced,tuple(tuple(p) for p in pairs),direction,upto=upto,close=close,max_new=max_new)
+        terms=tuple(self._live_terms(text,direction))
+        given=tuple(tuple(p) for p in pairs)
+        # The owner's words as sentences translated before this one: the model follows them best
+        # that way. But it may take the same Hebrew in the open sentence for done and add nothing
+        # («завтра доктор работает» for «...עובדת בקופת חולים בבית הכרם», Maccabi call replay 26.11):
+        # then the words go once more as a list above the task, where it translates the sentence.
+        result=generator.generate(text,forced,tuple((he+'.',target+'.') for he,target in terms)+given,direction,
+                                  upto=upto,close=close,max_new=max_new)
+        if terms and not result.words and result.stop=='end':
+            result=generator.generate(text,forced,given,direction,upto=upto,close=close,max_new=max_new,terms=terms)
+            log=getattr(self,'log',None)
+            if log is not None:log.event('append_terms_listed',terms=len(terms),words=len(result.words),stop=result.stop)
         return dict(words=result.words,stop=result.stop,end_mark=result.end_mark,tokens=result.tokens,
                     seconds=time.monotonic()-began)
     def warmup(self):

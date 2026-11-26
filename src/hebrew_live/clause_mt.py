@@ -131,7 +131,8 @@ class ClauseGenerator:
     `text`: the open sentence's Hebrew; `forced`: its translation shown so far; `pairs`: earlier
     (Hebrew, translation) sentences as context; `upto`: how many Hebrew words this call may cover
     (default: all but the last); `close`: the sentence is over, translate to the end, no stops;
-    `max_new`: at most this many new words.
+    `max_new`: at most this many new words; `terms`: (Hebrew, translation) of the owner's words that
+    occur in `text`, given as a list above the task.
     `Result.stop`: 'end' (the model finished), 'frontier' (attention reached a word it may not
     cover), 'sentence' (it wanted a sentence end the Hebrew has not reached), 'unsure', 'cap',
     'repetition' (the translation ran into a loop, see `runaway`: the words up to its first copy),
@@ -148,12 +149,17 @@ class ClauseGenerator:
             self.capture = AttentionCapture(model)
         return self.capture
 
-    def prompt(self, text, forced, pairs, direction):
+    def prompt(self, text, forced, pairs, direction, terms=()):
         from .languages import prompt_names
         source, target = prompt_names(direction)
         before = ' '.join(p[0] for p in pairs)
         done = ' '.join(p[1] for p in pairs if p[1])
-        head = f'Translate this from {source} to {target}:\n{source}: ' + (before + ' ' if before else '')
+        # The owner's words as a list above the task, not as sentences translated before this one:
+        # given as «קופת חולים. → больничная касса.» before «עובדת בקופת חולים בבית הכרם» the
+        # model took that Hebrew for done and dropped it (Maccabi call replay, 26.11).
+        glossary = ('Use these translations of names and terms:\n' +
+                    ''.join(f'{he} = {translation}\n' for he, translation in terms)) if terms else ''
+        head = glossary + f'Translate this from {source} to {target}:\n{source}: ' + (before + ' ' if before else '')
         content = head + text + f'\n{target}:' + (' ' + done if done else '') + (' ' + forced if forced else '')
         encoded = self.engine.tokenizer._tokenizer(content, add_special_tokens=False, return_offsets_mapping=True)
         ids, offsets = encoded['input_ids'], encoded['offset_mapping']
@@ -169,12 +175,12 @@ class ClauseGenerator:
                 span.append((position, index))
         return ids, span, len(bounds)
 
-    def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+    def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None, terms=()):
         import mlx.core as mx
         from mlx_lm.models.cache import make_prompt_cache
         model, tokenizer = self.engine.model, self.engine.tokenizer
         capture = self._capture()
-        ids, span, count = self.prompt(text, forced, pairs, direction)
+        ids, span, count = self.prompt(text, forced, pairs, direction, terms)
         positions = np.array([p for p, _ in span])
         upto = count - 1 if upto is None else upto
         accessible = sum(1 for _, i in span if i < upto)

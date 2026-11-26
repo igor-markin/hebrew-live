@@ -1,7 +1,8 @@
 """The owner's own words: terms and names with the translations he wants.
 
 Translation is told about the entries that occur in the phrase; the append-only screen's
-translator gets them as finished sentences before the open one. Recognition can take the
+translator gets them as finished sentences before the open one, and as a list above the task
+when that way it added nothing. Recognition can take the
 words as the text that came just before the audio (`HEBREW_LIVE_VOCABULARY_ASR=1`), but that
 is off: a list of 29 terms raised word errors on speech without those words from 947 to 1184
 (eval-d1) and from 1585 to 1889 (eval-whatsapp), see experiments/tail-only. Whisper reads only
