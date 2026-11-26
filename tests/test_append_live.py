@@ -66,12 +66,12 @@ class Append(unittest.TestCase):
         self.updates = queue.Queue()
         self.log = SimpleNamespace(event=lambda name, **v: self.events.append((name, v)))
 
-    def make(self, script, deadline=4., generator=None):
+    def make(self, script, deadline=4., generator=None, join=None):
         recognizer = FakeRecognizer(script)
         recognizer.create_stream = lambda: feeding(recognizer)
         self.generator = generator or FakeGenerator()
         return AppendProcessor(SimpleNamespace(), self.updates, self.log, threading.Event(), recognizer=recognizer,
-                               deadline=deadline, ticker=False, generator=self.generator)
+                               deadline=deadline, ticker=False, generator=self.generator, join=join)
 
     def feed(self, processor, seconds, final=False, reason=''):
         audio = np.zeros(int(seconds * RATE), np.float32)
@@ -263,7 +263,7 @@ class Append(unittest.TestCase):
         self.assertEqual(calls[1]['text'], 'ב, ג')
         self.assertEqual(self.publications()[-1]['current']['translation'], 'ru:א,. ru:ב, ru:ג')
         # a pause is not a sentence end: the last call keeps its stops and a cap on new words
-        self.assertEqual((calls[-1]['close'], calls[-1]['upto'], calls[-1]['max_new']), (False, 2, 3))
+        self.assertEqual((calls[-1]['close'], calls[-1]['upto'], calls[-1]['max_new']), (False, 2, 6))
 
     def test_wrong_weekday_in_new_words_is_replaced_with_the_cards_hebrew(self):
         class Days(FakeGenerator):
@@ -431,6 +431,83 @@ class Append(unittest.TestCase):
         self.assertEqual(processor._plain(card), 'Запись в четверг.')
         self.assertEqual(card.base_out, len(card.out))
 
+
+    def closed(self):
+        return [v['current'] for v in self.publications() if v['stage'] == 'closed']
+
+    def test_a_word_right_after_a_pause_goes_on_in_the_same_card(self):
+        # «אני אגיד מה בכיר אחר בחרדים אמר» | «לי» .3 s later (TV recording, 26.11)
+        # stream time: .7 s of speech, .8 s of silence fed at the pause, then the speech from .7 s on
+        script = [(' בחרדים', .2), (' אמר', .5), (' לי', 1.75), ('.', 1.8)]
+        processor = self.make(script, join=.5)
+        self.feed(processor, .7, final=True, reason='silence')   # the pause detector heard a pause after «אמר»
+        self.assertEqual(self.closed(), [])
+        self.assertTrue(any(not c['close'] and c['upto'] == 2 for c in self.generator.calls))   # translated now
+        self.feed(processor, 1.6, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['בחרדים אמר לי.'])
+
+    def test_a_word_after_a_longer_pause_starts_a_card_of_its_own(self):
+        # «בלעדיו, נתניהו קורס» | .8 s | «אתה מייחס…»: the other person answers
+        script = [(' נתניהו', .2), (' קורס', .5), (' אתה', 1.6), (' מייחס', 1.9)]
+        processor = self.make(script, join=.5)
+        self.feed(processor, .9, final=True, reason='silence')
+        self.feed(processor, 2.6, final=True, reason='silence')
+        processor.flush('eof')
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['נתניהו קורס', 'אתה מייחס'])
+
+    def test_a_held_card_closes_when_no_near_word_can_come_any_more(self):
+        processor = self.make([(' אני', .2), (' אגיד', .5)], join=.5)
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.assertEqual(self.closed(), [])
+        processor.clock = time.monotonic() - 3.6   # .5 s + 2.5 s of recognition delay after «אגיד»
+        with processor.lock:
+            processor.expire()
+            processor.schedule()
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['אני אגיד'])
+
+    def test_without_joining_every_pause_closes_the_card(self):
+        script = [(' בחרדים', .2), (' אמר', .5), (' לי', 1.75)]
+        processor = self.make(script, join=0.)
+        self.feed(processor, .7, final=True, reason='silence')
+        self.feed(processor, 1.6, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['בחרדים אמר', 'לי'])
+
+    def test_the_end_of_a_word_after_a_pause_goes_on_the_word(self):
+        # «בבית הכר» | «ם.»: the quiet end of the word was taken for a pause (Maccabi call, 26.11)
+        script = [(' בבית', .2), (' הכר', .6), ('ם', 1.4), ('.', 1.45)]   # stream time: 1 s of speech, .8 s of silence
+        processor = self.make(script, join=.5)
+        self.feed(processor, 1., final=True, reason='silence')
+        self.assertEqual(self.publications()[-1]['current']['source'], 'בבית הכר')
+        self.feed(processor, 2.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual([c['source'] for c in self.closed()], ['בבית הכרם.'])
+        self.assertIn('append_glued', [name for name, _ in self.events])
+
+    def test_a_closing_translation_cut_at_its_limit_is_marked_and_kept_out_of_the_context(self):
+        class Cut(FakeGenerator):
+            def generate(self, text, forced, pairs, direction, upto=None, close=False, max_new=None):
+                self.calls.append(dict(text=text, forced=forced, pairs=pairs, upto=upto, close=close))
+                return Result(['ru:' + w for w in text.split()[len(forced.split()):]], 'cap')
+        script = [(' שלום', .2), (' לכם', .5), (' כן', 2.5)]
+        processor = self.make(script, join=0., generator=Cut())
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.feed(processor, 3.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.closed()[0]['translation'], 'ru:שלום ru:לכם…')
+        self.assertEqual(self.generator.calls[-1]['pairs'], ())
+
+    def test_the_next_card_gets_a_card_closed_mid_sentence_as_an_ended_sentence(self):
+        script = [(' אני', .2), (' יכול', .5), (' כן', 2.5)]
+        processor = self.make(script, join=0.)
+        self.feed(processor, 1.1, final=True, reason='silence')
+        self.feed(processor, 3.2, final=True, reason='silence')
+        self.finish(processor)
+        self.assertEqual(self.generator.calls[-1]['pairs'][-1], ('אני יכול.', 'ru:אני ru:יכול.'))
+        self.assertEqual(self.closed()[0]['translation'], 'ru:אני ru:יכול')   # the screen keeps its text
 
 class WordsCutShort(unittest.TestCase):
     """The last word of a translation cut at its limit is not shown unfinished."""
