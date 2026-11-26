@@ -4,6 +4,7 @@ from pathlib import Path
 from .tuning import validate as timing_validate,as_dict
 from .model_selection import validate as model_validate
 _LOCK=threading.RLock()
+TEXT_SIZES=('smallest','small','normal','large')   # conversation text size in the window
 RETIRED_TRANSLATION_NOTICE='The saved retired translation-model choice is no longer supported; this session uses the installed MiLMMT model. No model files were deleted.'
 def read(folder):
  path=Path(folder)/'preferences.json'
@@ -40,6 +41,9 @@ def read(folder):
  if 'ui_locale' in data:
   if data['ui_locale'] not in ('en','ru','he'):raise ValueError('Invalid interface language')
   result['ui_locale']=data['ui_locale']
+ if 'text_size' in data:
+  # A size this release does not know is the normal one: a look must not block the preferences.
+  result['text_size']=data['text_size'] if data['text_size'] in TEXT_SIZES else 'normal'
  result['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
  result['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
  result['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
@@ -58,6 +62,7 @@ def save(folder,**values):
    from .languages import TARGETS
    if data['target_language'] not in TARGETS:raise ValueError('Invalid target language')
   if 'ui_locale' in data and data['ui_locale'] not in ('en','ru','he'):raise ValueError('Invalid interface language')
+  if 'text_size' in data and data['text_size'] not in TEXT_SIZES:raise ValueError('Invalid text size')
   data['draft_max_audio_seconds']=validate_draft_limit(data.get('draft_max_audio_seconds',20.0))
   data['draft_catchup_enabled']=validate_catchup(data.get('draft_catchup_enabled',False))
   data['save_raw_audio']=validate_save_audio(data.get('save_raw_audio',True))
