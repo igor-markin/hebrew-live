@@ -1,3 +1,9 @@
+/* Conversation text size (settings → text size); controls keep their size. */
+:root{--reading-scale:1}
+html[data-text-size="smallest"]{--reading-scale:0.8}
+html[data-text-size="small"]{--reading-scale:0.9}
+html[data-text-size="normal"]{--reading-scale:1}
+html[data-text-size="large"]{--reading-scale:1.15}
 .live-shell {max-width:1120px;overflow-x:clip}
 .live-controls {margin-bottom:28px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:20px}
 .live-status {display:flex;align-items:center;gap:10px;margin-bottom:18px;font-weight:600}
@@ -83,9 +89,9 @@
 .live-feed .chat-bubble:last-child {background:var(--soft-hover)}
 .live-feed .chat-bubble--reverse {align-self:flex-end;border-radius:18px 4px 18px 18px}
 .live-feed .chat-bubble:last-child {border-color:color-mix(in srgb,var(--accent) 42%,var(--border))}
-.live-feed .bubble-copy>.translation {display:block;margin:0;padding:4px 14px 10px;font-size:20px;font-weight:400;line-height:1.45;letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.live-feed .bubble-copy>.translation {display:block;margin:0;padding:4px 14px 10px;font-size:calc(20px * var(--reading-scale));font-weight:400;line-height:1.45;letter-spacing:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 /* Hebrew as heard: always visible above the translation, smaller and quieter, updated by every recognition. */
-.live-feed .bubble-copy>.bubble-hebrew {display:block;margin:0;padding:9px 14px 2px;font-size:15px;line-height:1.5;color:color-mix(in srgb,var(--foreground) 72%,transparent);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font-family:'Noto Sans Hebrew','Noto Sans',sans-serif}
+.live-feed .bubble-copy>.bubble-hebrew {display:block;margin:0;padding:9px 14px 2px;font-size:calc(15px * var(--reading-scale));line-height:1.5;color:color-mix(in srgb,var(--foreground) 72%,transparent);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font-family:'Noto Sans Hebrew','Noto Sans',sans-serif}
 /* Times, dates, sums and other figures stand out in both lines. */
 .live-feed mark.figure {background:color-mix(in srgb,var(--accent) 16%,transparent);color:inherit;font-weight:600;border-radius:4px;padding:0 2px}
 .bubble-original {border-top:1px solid color-mix(in srgb,var(--border) 65%,transparent)}
@@ -108,24 +114,24 @@
 .live-feed .text-pending {transition:color 300ms ease-out}
 /* Frozen sentences: the newest card is not marked by an accent border that jumps between cards. */
 .live-feed .chat-bubble.speech-card--frozen,.live-feed .chat-bubble.speech-card--frozen:last-child {border-color:var(--border);background:var(--soft);animation:none}
-.live-feed .bubble-history .translation {font-size:15px;color:var(--muted)}
+.live-feed .bubble-history .translation {font-size:calc(15px * var(--reading-scale));color:var(--muted)}
 /* Ticker view: plain paragraphs; only the grey open sentence at the end changes. */
 .live-feed .ticker {max-width:760px;width:100%;margin:0 auto;padding:4px 4px 24px}
-.live-feed .ticker-paragraph {margin:0 0 16px;font-size:17px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.live-feed .ticker-paragraph {margin:0 0 16px;font-size:calc(17px * var(--reading-scale));line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .live-feed .ticker-sentence {color:var(--foreground);transition:color 400ms ease-out}
 .live-feed .ticker-sentence.text-pending,.live-feed .ticker-sentence .text-pending {color:var(--muted)}
 @media(prefers-reduced-motion:reduce){.live-feed .ticker-sentence{transition:none}}
-@media(max-width:640px){.live-feed .ticker-paragraph{font-size:16px}}
+@media(max-width:640px){.live-feed .ticker-paragraph{font-size:calc(16px * var(--reading-scale))}}
 .bubble-source {max-width:min(460px,calc(100vw - 32px));max-height:min(380px,45vh);overflow:auto;padding:14px 18px;background:var(--surface);color:var(--foreground);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 32px #0002;z-index:60;user-select:text}
 .bubble-source-label {display:block;font:500 11px/1.5 'Noto Sans',sans-serif;color:var(--muted);margin-bottom:6px}
-.bubble-source p {margin:0;font-size:16px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble-source p {margin:0;font-size:calc(16px * var(--reading-scale));line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 .bubble-source [lang="he"],.chat-bubble [lang="he"] {font-family:'Noto Sans Hebrew','Noto Sans',sans-serif}
 @media(max-width:560px){
  .live-shell .chat-feed {gap:8px;padding-top:16px}
  .live-feed .chat-bubble {max-width:94%}
- .live-feed .bubble-copy>.translation {padding:4px 12px 9px;font-size:18px;line-height:1.45}
- .live-feed .bubble-copy>.bubble-hebrew {padding:8px 12px 2px;font-size:14px}
- .bubble-source p {font-size:15px}
+ .live-feed .bubble-copy>.translation {padding:4px 12px 9px;font-size:calc(18px * var(--reading-scale));line-height:1.45}
+ .live-feed .bubble-copy>.bubble-hebrew {padding:8px 12px 2px;font-size:calc(14px * var(--reading-scale))}
+ .bubble-source p {font-size:calc(15px * var(--reading-scale))}
 }
 @media(prefers-reduced-motion:reduce){.bubble-source {animation:none!important;transition:none!important}}
 
