@@ -9,7 +9,7 @@ export type Group = {id:string;revision?:number;direction:string;complete:boolea
 export type PartialDetail = {part:number|null;direction:string|null;reason:string;start:number|null;end:number|null};
 export type LiveState = {
   session_path?:string;phase:string;can_start_new?:boolean;groups:Group[];status:string;
-  status_code?:string;ui_locale?:'en'|'ru'|'he';text_size?:string;target_language?:string;
+  status_code?:string;ui_locale?:'en'|'ru'|'he';text_size?:string;menu_hidden?:boolean;sessions_hidden?:boolean;target_language?:string;
   desktop_mode?:boolean;calm_drafts?:boolean;append_view?:boolean;merge_sentences?:boolean;frozen_sentences?:boolean;ticker_view?:boolean;recording_started?:boolean;capture_active?:boolean;
   target_languages?:{code:string;name:string;rtl:boolean}[];target_error?:string|null;target_error_code?:string|null;
   target_capabilities_assumed?:boolean;
