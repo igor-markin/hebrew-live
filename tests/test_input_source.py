@@ -184,11 +184,13 @@ class WindowActionTests(unittest.TestCase):
 class PhoneProcess:
     """Stands in for PhoneAudio; `fail_after` seconds later it reports scrcpy's exit."""
     entered = None; fail_after = None
-    def __init__(self, on_audio, on_end, **_):
-        self.on_end = on_end
+    def __init__(self, on_audio, on_end, on_event=None, **_):
+        self.on_end, self.on_event = on_end, on_event
     def __enter__(self):
         PhoneProcess.entered.set()
         if self.fail_after is not None:
+            self.on_event('phone_capture_exit', attempt=1, returncode=1, reason='ERROR: Could not find any ADB device',
+                          audio=False, restart=False, log=[])
             threading.Timer(self.fail_after, self.on_end, args=('ERROR: Could not find any ADB device',)).start()
         return self
     def __exit__(self, *_): pass
@@ -221,6 +223,7 @@ class CaptureStartTests(unittest.TestCase):
                 done = threading.Thread(target=run_session, args=(options, session, browser), daemon=True)
                 done.start(); done.join(20)
             self.assertFalse(done.is_alive(), 'session hung')
+            return [json.loads(line) for path in root.rglob('*.diagnostics.jsonl') for line in path.read_text().splitlines()]
 
     def test_window_choice_is_read_when_start_is_pressed(self):
         self.assertEqual(chosen_input(types.SimpleNamespace(), None), 'microphone')
@@ -250,6 +253,15 @@ class CaptureStartTests(unittest.TestCase):
             self.run_window(browser, ['ready', 'no_device'])
         self.assertEqual((browser.state['input_error'], browser.state['phone_status']), ('phone_stopped', 'no_device'))
         self.assertTrue(browser.prepared)
+
+    def test_why_the_phone_stopped_stays_in_the_session_log(self):
+        browser = ScriptedBrowser('phone')
+        with mock.patch.object(PhoneProcess, 'fail_after', .3):
+            events = self.run_window(browser, ['ready', 'ready'])
+        names = [event['event'] for event in events]
+        self.assertIn('phone_capture_exit', names)
+        stopped = next(event for event in events if event['event'] == 'phone_stopped')
+        self.assertEqual((stopped['reason'], stopped['status']), ('ERROR: Could not find any ADB device', 'capture_failed'))
 
     def test_scrcpy_failure_with_the_phone_still_seen_is_not_called_ready(self):
         browser = ScriptedBrowser('phone')

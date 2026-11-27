@@ -94,6 +94,79 @@ class PhoneAudioTests(unittest.TestCase):
             self.assertTrue(wait_for(lambda: ended))
         self.assertEqual(ended, ['ERROR: Could not find any ADB device'])
 
+    def test_a_crash_before_any_audio_starts_scrcpy_again(self):
+        # scrcpy 5.0.1 can segfault while it opens the recording (27.11, avformat_new_stream).
+        runs = [dict(exits=-11), dict(payload=wav(stereo(.2)))]
+        started = []
+        def popen(arguments, **options):
+            started.append(arguments)
+            return type('Scrcpy', (FakeScrcpy,), runs[len(started) - 1])(arguments, **options)
+        blocks = []; ended = []; events = []
+        with PhoneAudio(blocks.append, ended.append, executable='scrcpy', popen=popen, restart_pause=0,
+                        on_event=lambda name, **data: events.append((name, data))):
+            self.assertTrue(wait_for(lambda: len(blocks) == 2), (events, len(blocks)))
+        self.assertEqual(ended, [])
+        self.assertEqual(len(started), 2); self.assertEqual(started[0], started[1])
+        exit_event, restart_event = events[0], events[1]
+        self.assertEqual(exit_event[0], 'phone_capture_exit')
+        self.assertEqual({key: exit_event[1][key] for key in ('attempt', 'returncode', 'reason', 'audio', 'restart')},
+                         dict(attempt=1, returncode=-11, reason='scrcpy crashed: SIGSEGV', audio=False, restart=True))
+        self.assertEqual(restart_event, ('phone_capture_restart', dict(attempt=2)))
+
+    def test_a_run_that_dies_mid_header_is_replaced_by_a_clean_one(self):
+        class HalfHeader(FakeScrcpy):
+            payload = wav(b'')[:20]
+            def write(self, fifo):
+                with open(fifo, 'wb', buffering=0) as out: out.write(self.payload)
+                self.code = -11                          # the writer closed: the reader saw EOF
+        runs = [HalfHeader, type('Scrcpy', (FakeScrcpy,), dict(payload=wav(stereo(.2))))]
+        started = []
+        def popen(arguments, **options):
+            started.append(arguments); return runs[len(started) - 1](arguments, **options)
+        blocks = []; ended = []
+        with PhoneAudio(blocks.append, ended.append, executable='scrcpy', popen=popen, restart_pause=0):
+            self.assertTrue(wait_for(lambda: len(blocks) == 2), len(blocks))
+        self.assertEqual(ended, []); self.assertEqual(len(started), 2)
+        self.assertAlmostEqual(float(np.mean(blocks[0])), .25, places=4)
+
+    def test_scrcpy_that_keeps_failing_is_reported_after_three_runs(self):
+        process = type('Scrcpy', (FakeScrcpy,), dict(log_line=b'ERROR: Could not find any ADB device\n', exits=1))
+        ended = []; events = []
+        with PhoneAudio(lambda block: None, ended.append, executable='scrcpy', popen=process, restart_pause=0,
+                        on_event=lambda name, **data: events.append((name, data))):
+            self.assertTrue(wait_for(lambda: ended))
+        self.assertEqual(ended, ['ERROR: Could not find any ADB device'])
+        exits = [data for name, data in events if name == 'phone_capture_exit']
+        self.assertEqual([(data['attempt'], data['restart']) for data in exits], [(1, True), (2, True), (3, False)])
+        self.assertEqual(exits[-1]['log'], ['ERROR: Could not find any ADB device'])
+
+    def test_a_crash_after_call_audio_ends_the_recording(self):
+        class Dies(FakeScrcpy):
+            payload = wav(stereo(.2))
+            def write(self, fifo):
+                with open(fifo, 'wb', buffering=0) as out: out.write(self.payload)
+                self.code = -11
+        started = []
+        def popen(arguments, **options):
+            started.append(arguments); return Dies(arguments, **options)
+        blocks = []; ended = []; events = []
+        with PhoneAudio(blocks.append, ended.append, executable='scrcpy', popen=popen, restart_pause=0,
+                        on_event=lambda name, **data: events.append((name, data))):
+            self.assertTrue(wait_for(lambda: ended))
+        self.assertEqual(len(started), 1)
+        self.assertEqual(ended, ['scrcpy crashed: SIGSEGV'])
+        self.assertEqual([(name, data['audio'], data['restart']) for name, data in events], [('phone_capture_exit', True, False)])
+
+    def test_stopping_during_the_restart_pause_starts_nothing(self):
+        started = []
+        def popen(arguments, **options):
+            started.append(arguments); return type('Scrcpy', (FakeScrcpy,), dict(exits=-11))(arguments, **options)
+        events = []
+        with PhoneAudio(lambda block: None, lambda reason: None, executable='scrcpy', popen=popen, restart_pause=5,
+                        on_event=lambda name, **data: events.append(name)):
+            self.assertTrue(wait_for(lambda: events))
+        self.assertEqual(len(started), 1); self.assertEqual(events, ['phone_capture_exit'])
+
     def test_wrong_sample_rate_ends_the_stream(self):
         process = type('Scrcpy', (FakeScrcpy,), dict(payload=wav(stereo(.1), rate=44100)))
         ended = []

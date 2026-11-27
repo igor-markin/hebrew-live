@@ -292,7 +292,7 @@ class BrowserUI:
                         except PermissionError:return self.reply(409,b'{}')
                         except OSError:return self.reply(500,b'{}')
                         return self.reply(200,b'{"ok":true}')
-                    if action in CONTROL_ACTIONS:return self.reply(*owner.control(action))
+                    if action in CONTROL_ACTIONS:return self.reply(*owner.control(action,origin='window'))
                     if action=='retry_fragment':
                         identity=payload.get('value')
                         if not isinstance(identity,str) or len(identity)>128:return self.reply(400,b'{}')
@@ -607,10 +607,21 @@ class BrowserUI:
                 publish(phone_view_status='on',phone_view_url=self.phone_view.url)
         threading.Thread(target=run,name='phone-view-switch',daemon=True).start()
 
-    def control(self,action):
+    def control(self,action,origin='window'):
         """Start, pause or resume (`pause`), finish (`stop`) or begin the next session
         (`start_session`): the recording controls the window and the phone's copy share.
-        Returns (HTTP status, JSON body)."""
+        Returns (HTTP status, JSON body). A refused press is logged: the phone's page logs nothing else."""
+        with self.lock:
+            event=self.on_preview_seen
+            phone_status=self.state.get('phone_status');finished=self.state['finished']
+        status,body=self._control(action)
+        if event is not None and status>=400 and not finished:
+            try:event('control_refused',action=action,origin=origin,http_status=status,
+                      reason=json.loads(body).get('error') if body!=b'{}' else None,phone_status=phone_status)
+            except Exception:pass        # the session log may already be closed
+        return status,body
+
+    def _control(self,action):
         with self.lock:
             state=self.state
             if action=='start_session':

@@ -171,6 +171,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.press({'action': 'pause'}), 409)
         self.assertEqual(self.drained(), [])
 
+    def test_a_refused_press_from_the_phone_is_logged_in_the_session(self):
+        # The phone's server logs no requests: without this a refused Start leaves no trace.
+        events = []
+        with self.ui.lock:
+            self.ui.on_preview_seen = lambda name, **data: events.append((name, data))
+            self.ui.state.update(input_source='phone', phone_status='checking', recording_started=False)
+        self.assertEqual(self.press({'action': 'pause'}), 409)
+        self.assertEqual(events, [('control_refused', dict(action='pause', origin='phone', http_status=409,
+                                                           reason='phone_not_ready', phone_status='checking'))])
+        with self.ui.lock: self.ui.state.update(phone_status='ready')
+        self.assertEqual(self.press({'action': 'pause'}), 200)
+        self.assertEqual(len(events), 1)                 # an accepted press adds nothing
+        def closed(name, **data): raise ValueError('I/O operation on closed file')
+        with self.ui.lock:
+            self.ui.on_preview_seen = closed; self.ui.state.update(phone_status='offline')
+        self.assertEqual(self.press({'action': 'pause'}), 409)   # a closed log does not break the button
+
     def test_only_the_recording_controls_are_taken_and_only_from_the_page(self):
         for action in ('phone_view', 'ui_locale', 'input_source', 'quit', 'delete_session', 'vocabulary_set',
                        'open_folder', 'cancel_processing', 'clear', None):

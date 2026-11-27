@@ -6,6 +6,7 @@ call the phone sends almost nothing, so the stream just waits.
 """
 import os
 import shutil
+import signal
 import struct
 import subprocess
 import tempfile
@@ -17,6 +18,9 @@ RATE = 48000                 # scrcpy raw audio is always 48 kHz stereo 16-bit
 SOURCE = 'voice-call-downlink'
 BLOCK_SECONDS = .1
 IDLE_FLUSH_SECONDS = .5      # a call that ends mid-block must not leave its tail waiting
+STARTS = 3                   # scrcpy can crash while it opens the recording: two more tries before giving up
+RESTART_PAUSE_SECONDS = .5
+LOG_TAIL_LINES = 5
 _SEARCH = ('/opt/homebrew/bin', '/usr/local/bin')
 
 
@@ -143,32 +147,50 @@ class Blocks:
 
 class PhoneAudio:
     """Context manager: `on_audio(block)` for every 100 ms of call audio, `on_end(reason)`
-    if scrcpy exits on its own (cable unplugged, USB debugging refused)."""
+    if scrcpy exits on its own (cable unplugged, USB debugging refused).
 
-    def __init__(self, on_audio, on_end, source=SOURCE, executable=None, popen=subprocess.Popen):
+    A scrcpy that stops before any audio arrived is started again, up to `starts` runs in all:
+    scrcpy 5.0.1 sometimes crashes while it opens the recording. `on_event(name, **data)` hears
+    every exit and restart, so the session log keeps the reason after the temporary folder is gone."""
+
+    def __init__(self, on_audio, on_end, source=SOURCE, executable=None, popen=subprocess.Popen,
+                 on_event=None, starts=STARTS, restart_pause=RESTART_PAUSE_SECONDS):
         self.on_audio, self.on_end, self.source, self.executable, self.popen = on_audio, on_end, source, executable, popen
-        self.stopping = threading.Event(); self.thread = self.process = self.folder = None
+        self.on_event, self.starts, self.restart_pause = on_event, starts, restart_pause
+        self.stopping = threading.Event(); self.lock = threading.Lock()
+        self.thread = self.process = self.folder = None; self.attempt = 0
 
     def __enter__(self):
         self.folder = tempfile.mkdtemp(prefix='hebrew-live-phone-')
-        self.fifo, self.log = os.path.join(self.folder, 'audio.wav'), os.path.join(self.folder, 'scrcpy.log')
+        self.fifo = os.path.join(self.folder, 'audio.wav')
         os.mkfifo(self.fifo, 0o600)
         try:
-            arguments = command(self.fifo, self.source, self.executable)
-            environment = dict(os.environ, PATH=os.pathsep.join((os.environ.get('PATH', ''), *_SEARCH)))  # scrcpy runs adb
+            self.arguments = command(self.fifo, self.source, self.executable)
+            self.environment = dict(os.environ, PATH=os.pathsep.join((os.environ.get('PATH', ''), *_SEARCH)))  # scrcpy runs adb
             adb = find_adb()
-            if adb: environment['ADB'] = adb
-            with open(self.log, 'wb') as log:
-                self.process = self.popen(arguments, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                          env=environment)
+            if adb: self.environment['ADB'] = adb
+            self.launch()
         except BaseException:
             self.cleanup(); raise
         self.thread = threading.Thread(target=self.read, name='phone-audio', daemon=True)
         self.thread.start()
         return self
 
+    def launch(self):
+        """Start one scrcpy run with its own log. False once stopping: `__exit__` must not miss a process."""
+        with self.lock:
+            if self.stopping.is_set():
+                return False
+            self.attempt += 1
+            self.log = os.path.join(self.folder, f'scrcpy-{self.attempt}.log')
+            with open(self.log, 'wb') as log:
+                self.process = self.popen(self.arguments, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                          env=self.environment)
+            return True
+
     def __exit__(self, *_):
-        self.stopping.set()
+        with self.lock:
+            self.stopping.set()
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try: self.process.wait(3)
@@ -176,23 +198,51 @@ class PhoneAudio:
         if self.thread: self.thread.join(3)
         self.cleanup()
 
+    def event(self, name, **data):
+        if self.on_event is None:
+            return
+        try: self.on_event(name, **data)
+        except Exception: pass               # a diagnostics failure must not stop the call
+
     def cleanup(self):
         shutil.rmtree(self.folder, ignore_errors=True)
 
-    def failure(self):
-        """Why scrcpy stopped: its first error names the cause (no device, permission refused),
-        the later ones only follow from it."""
+    def lines(self):
         try:
             with open(self.log, encoding='utf8', errors='replace') as log:
-                lines = [line.strip() for line in log if line.strip()]
+                return [line.strip() for line in log if line.strip()]
         except OSError:
-            lines = []
+            return []
+
+    def failure(self, code=None):
+        """Why scrcpy stopped: its first error names the cause (no device, permission refused),
+        the later ones only follow from it. A crash prints nothing, so the signal names it."""
+        lines = self.lines()
         problems = [line for line in lines if 'ERROR' in line]
-        return problems[0] if problems else lines[-1] if lines else 'scrcpy stopped'
+        if problems:
+            return problems[0]
+        if isinstance(code, int) and code < 0:
+            try: name = signal.Signals(-code).name
+            except ValueError: name = f'signal {-code}'
+            return f'scrcpy crashed: {name}'
+        return lines[-1] if lines else 'scrcpy stopped'
+
+    def exited(self, audio):
+        """scrcpy is gone on its own: log why, then start it again or report the end. True if restarted."""
+        code = self.process.poll()
+        reason = self.failure(code)
+        restart = not audio and self.attempt < self.starts
+        self.event('phone_capture_exit', attempt=self.attempt, returncode=code, reason=reason[:300], audio=audio,
+                   restart=restart, log=[line[:200] for line in self.lines()[-LOG_TAIL_LINES:]])
+        if restart and not self.stopping.wait(self.restart_pause) and self.launch():
+            self.event('phone_capture_restart', attempt=self.attempt)
+            return True
+        if not self.stopping.is_set(): self.on_end(reason)
+        return False
 
     def read(self):
         import select
-        header = bytearray(); blocks = None
+        header = bytearray(); blocks = None; delivered = False
         # Non-blocking, so that a scrcpy which fails before opening the FIFO cannot hang us.
         reader = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)
         try:
@@ -204,10 +254,12 @@ class PhoneAudio:
                 if not data:
                     idle += .1
                     if blocks and idle >= IDLE_FLUSH_SECONDS:
-                        for block in blocks.flush(): self.on_audio(block)
+                        for block in blocks.flush(): self.on_audio(block); delivered = True
                     if self.process.poll() is not None:
-                        if not self.stopping.is_set(): self.on_end(self.failure())
-                        return
+                        if self.stopping.is_set() or not self.exited(audio=delivered):
+                            return
+                        header = bytearray(); blocks = None; idle = 0.    # a new run writes a new WAV header
+                        continue
                     if ready: self.stopping.wait(.1)      # EOF before the writer opened: do not spin
                     continue
                 idle = 0.
@@ -218,7 +270,7 @@ class PhoneAudio:
                     rate, channels, offset = parsed
                     if rate != RATE: raise PhoneAudioError(f'Unexpected phone audio rate: {rate} Hz')
                     blocks = Blocks(channels, round(RATE * BLOCK_SECONDS)); data = bytes(header[offset:])
-                for block in blocks.feed(data): self.on_audio(block)
+                for block in blocks.feed(data): self.on_audio(block); delivered = True
         except Exception as exc:
             if not self.stopping.is_set(): self.on_end(str(exc))
         finally:

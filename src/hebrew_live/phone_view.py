@@ -192,7 +192,7 @@ class PhoneView:
                     return self.reply(400)
                 if action not in ACTIONS:
                     return self.reply(403)
-                return self.reply(*ui.control(action))
+                return self.reply(*ui.control(action, origin='phone'))
 
             def refuse(self):
                 self.reply(405)
