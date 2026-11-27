@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {isViewerPath,phoneViewNote,viewerIdleNote} from '../src/viewer.ts';
+import {isViewerPath,phoneViewNote,viewerControls,viewerIdleNote} from '../src/viewer.ts';
 import {translator} from '../src/i18n.ts';
 import {parseLiveState} from '../src/liveState.ts';
 
@@ -25,7 +25,7 @@ test('the switch explains each state of the phone link in every interface langua
   assert.equal(translator('ru')('phoneView'),'Перевод на телефоне');
 });
 
-test('the phone, which has no buttons, says what the Mac is doing instead of naming a button',()=>{
+test('before the first card the phone says what is happening instead of naming a button',()=>{
   assert.equal(viewerIdleNote(false),'viewerWaiting');
   assert.equal(viewerIdleNote(undefined),'viewerWaiting');
   assert.equal(viewerIdleNote(true),'viewerPaused');
@@ -34,7 +34,21 @@ test('the phone, which has no buttons, says what the Mac is doing instead of nam
     for(const key of ['viewerWaiting','viewerPaused'] as const)
       assert.doesNotMatch(tx(key),/Continue|Продолж|המשך|Start|Начать/,`${locale} ${key}`);
   }
-  assert.equal(translator('ru')('viewerWaiting'),'Перевод появится здесь, когда на Маке начнётся запись.');
+  assert.equal(translator('ru')('viewerWaiting'),'Перевод появится здесь, когда начнётся запись.');
+});
+
+test('the phone starts, pauses and finishes the recording like the window',()=>{
+  const ready={phase:'listening',finished:false,paused:true,desktop_mode:true,recording_started:false,status_code:'ready_to_start'};
+  assert.deepEqual(viewerControls(ready),{toggle:'startRecording',toggleBlocked:false,finish:true,finishEnabled:false,next:false});
+  assert.equal(viewerControls({...ready,paused:false,recording_started:true,status_code:'listening'}).toggle,'pause');
+  assert.equal(viewerControls({...ready,paused:false,recording_started:true}).finishEnabled,true);
+  assert.equal(viewerControls({...ready,recording_started:true,status_code:'paused'}).toggle,'continue');
+  assert.equal(viewerControls({...ready,input_source:'phone',phone_status:'not_found'}).toggleBlocked,true);
+  assert.equal(viewerControls({...ready,input_source:'phone',phone_status:'ready'}).toggleBlocked,false);
+  assert.equal(viewerControls({...ready,phase:'loading'}).toggleBlocked,true);
+  assert.deepEqual(viewerControls({...ready,stopping:true}),{toggle:null,toggleBlocked:false,finish:false,finishEnabled:false,next:false});
+  assert.equal(viewerControls({...ready,finished:true,can_start_new:true}).next,true);
+  assert.equal(viewerControls({...ready,finished:true,can_start_new:false}).next,false);
 });
 
 test('the phone link fields are checked like the rest of the snapshot',()=>{

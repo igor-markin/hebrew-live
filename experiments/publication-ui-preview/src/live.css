@@ -285,4 +285,7 @@ html[dir="rtl"] .phone-view-link {margin-left:0;margin-right:24px}
 .viewer-bar {display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border)}
 .viewer-bar > span:last-child {display:flex;flex-direction:column;min-width:0}
 .viewer-bar small {color:var(--muted);font-size:12px}
-.live-shell.viewer-shell .chat-feed {height:calc(100vh - 72px);height:calc(100dvh - 72px);max-width:none}
+.live-shell.viewer-shell .chat-feed {height:calc(100vh - 140px);height:calc(100dvh - 140px);max-width:none}
+.viewer-controls {display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border)}
+.viewer-controls button {min-height:44px}
+.viewer-phone-status,.viewer-controls .unavailable {flex-basis:100%;margin:0;font-size:14px;color:var(--muted)}

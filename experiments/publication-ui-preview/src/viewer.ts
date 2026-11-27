@@ -21,3 +21,20 @@ export function phoneViewNote(enabled:boolean|undefined,status:string|null|undef
 export function viewerIdleNote(recordingStarted:boolean|undefined):'viewerWaiting'|'viewerPaused' {
   return recordingStarted?'viewerPaused':'viewerWaiting';
 }
+
+/** The recording controls the phone shows: the same as the window's, minus everything else. */
+export type ViewerControls={
+  toggle:'startRecording'|'continue'|'pause'|null;toggleBlocked:boolean;
+  finish:boolean;finishEnabled:boolean;next:boolean;
+};
+export function viewerControls(state:{finished:boolean;stopping?:boolean;paused:boolean;can_start_new?:boolean;
+  desktop_mode?:boolean;recording_started?:boolean;status_code?:string|null;phase:string;model_switching?:boolean;
+  input_source?:string;phone_status?:string|null}):ViewerControls {
+  if(state.finished)return {toggle:null,toggleBlocked:false,finish:false,finishEnabled:false,next:!!state.can_start_new};
+  if(state.stopping)return {toggle:null,toggleBlocked:false,finish:false,finishEnabled:false,next:false};
+  const loading=state.phase==='loading'||state.phase==='opening';
+  const phoneBlocks=!state.recording_started&&state.input_source==='phone'&&state.phone_status!=='ready';
+  const toggle=state.paused?(state.desktop_mode&&state.status_code==='ready_to_start'||!state.recording_started?'startRecording':'continue'):'pause';
+  return {toggle,toggleBlocked:loading||!!state.model_switching||phoneBlocks,finish:true,
+    finishEnabled:!loading&&!state.model_switching&&!(state.desktop_mode&&!state.recording_started),next:false};
+}

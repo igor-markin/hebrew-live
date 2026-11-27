@@ -1,5 +1,6 @@
-"""The translation on the owner's phone: a read-only copy of the window on the Mac's Tailscale
-address, behind a secret that survives restarts. It shows the conversation and takes no actions."""
+"""The translation on the owner's phone: a copy of the window on the Mac's Tailscale address,
+behind a secret that survives restarts. It shows the conversation and takes only the recording
+controls."""
 import json
 import os
 import socket
@@ -128,8 +129,60 @@ class ServerTests(unittest.TestCase):
     def test_nothing_but_viewing_is_offered(self):
         for route in ('action', 'sessions', 'vocabulary', 'session-1', 'export-1', '', 'live/'):
             self.assertEqual(get(self.view, route)[0], 404, route)
-        self.assertEqual(get(self.view, 'action', method='POST')[0], 405)
-        self.assertEqual(get(self.view, 'state', method='POST')[0], 405)
+        self.assertEqual(get(self.view, 'state', method='POST')[0], 404)
+        self.assertEqual(get(self.view, 'action', method='PUT')[0], 405)
+
+    def press(self, body, origin='self', kind='application/json', host=None):
+        host = host or self.view.host
+        headers = {'Host': host, 'Content-Type': kind}
+        if origin:
+            headers['Origin'] = 'http://' + host if origin == 'self' else origin
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        request = urllib.request.Request(f'http://127.0.0.1:{self.view.server.server_port}/{self.view.token}/action',
+                                         method='POST', data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+
+    def drained(self):
+        keys = []
+        while not self.ui.actions.empty():
+            keys.append(self.ui.actions.get_nowait())
+        return keys
+
+    def test_the_phone_starts_and_pauses_the_recording(self):
+        self.assertEqual(self.press({'action': 'pause'}), 200)
+        self.assertEqual(self.drained(), [' '])
+        name = f'mac.tail1234.ts.net:{self.view.server.server_port}'
+        self.assertEqual(self.press({'action': 'pause'}, host=name), 200)   # the MagicDNS name works too
+        self.assertEqual(self.drained(), [' '])
+
+    def test_the_phone_finishes_the_recording_once(self):
+        self.assertEqual(self.press({'action': 'stop'}), 200)
+        self.assertEqual(self.press({'action': 'stop'}), 200)
+        self.assertEqual(self.drained(), ['q'])
+        self.assertTrue(self.ui.state['stopping'])
+
+    def test_the_phone_cannot_start_while_the_mac_does_not_see_it(self):
+        with self.ui.lock:
+            self.ui.state.update(input_source='phone', phone_status='not_found', recording_started=False)
+        self.assertEqual(self.press({'action': 'pause'}), 409)
+        self.assertEqual(self.drained(), [])
+
+    def test_only_the_recording_controls_are_taken_and_only_from_the_page(self):
+        for action in ('phone_view', 'ui_locale', 'input_source', 'quit', 'delete_session', 'vocabulary_set',
+                       'open_folder', 'cancel_processing', 'clear', None):
+            self.assertEqual(self.press({'action': action, 'value': True}), 403, action)
+        self.assertEqual(self.press({'action': 'pause'}, origin=None), 403)
+        self.assertEqual(self.press({'action': 'pause'}, origin='http://evil.example'), 403)
+        self.assertEqual(self.press({'action': 'pause'}, kind='text/plain'), 415)
+        self.assertEqual(self.press(b'not json'), 400)
+        self.assertEqual(self.press({'action': 'pause', 'pad': 'x' * 300}), 400)
+        self.assertEqual(self.press({'action': 'pause'}, host='evil.example:1'), 404)
+        self.assertEqual(self.drained(), [])
+        self.assertFalse(self.ui.state.get('stopping'))
 
     def test_a_wrong_secret_or_a_foreign_host_gets_nothing(self):
         request = urllib.request.Request(f'http://127.0.0.1:{self.view.server.server_port}/{"b" * 32}/state',

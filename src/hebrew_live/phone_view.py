@@ -3,9 +3,11 @@
 The main window listens on 127.0.0.1 behind a new address every launch, so a phone cannot
 open it. This second server listens only on the Mac's own Tailscale address (100.64.0.0/10),
 on a fixed port, behind a secret kept between launches: a link saved on the phone keeps
-working. It serves the same window in a viewing mode and a trimmed copy of its state; it
-takes no actions (no POST), lists no saved sessions and offers no files. Tailscale encrypts
-the link between the owner's own devices; nothing is sent anywhere else.
+working. It serves the same window in a viewing mode and a trimmed copy of its state. The
+only actions it takes are the recording controls (start, pause, finish, next session), so
+the owner can record only when wanted; it changes no settings, lists no saved sessions and
+offers no files. Tailscale encrypts the link between the owner's own devices; nothing is
+sent anywhere else.
 """
 import hashlib
 import ipaddress
@@ -28,7 +30,11 @@ _SEARCH = ('/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebre
 VIEW_KEYS = ('groups', 'generation', 'phase', 'status', 'status_code', 'direction', 'target_language', 'ui_locale',
              'text_size', 'dark_theme', 'paused', 'finished', 'stopping', 'cancelling', 'lag', 'level',
              'calm_drafts', 'merge_sentences', 'frozen_sentences', 'ticker_view', 'append_view', 'publication',
-             'recording_started', 'capture_active', 'input_source', 'input_kind', 'phone_status', 'input_error')
+             'recording_started', 'capture_active', 'input_source', 'input_kind', 'phone_status', 'input_error',
+             'can_start_new', 'model_switching', 'desktop_mode')
+# The recording controls, and nothing else, are taken from the phone (BrowserUI.control).
+ACTIONS = ('pause', 'stop', 'start_session')
+ACTION_BYTES = 256
 STATUSES = ('off', 'starting', 'on', 'no_tailscale', 'port_busy', 'failed')
 
 
@@ -167,9 +173,30 @@ class PhoneView:
                     return self.reply(200, data)
                 return self.reply(404)
 
+            def do_POST(self):
+                host = self.headers.get('Host')
+                if not owner.allowed_host(host) or self.path != '/' + owner.token + '/action':
+                    return self.reply(404)
+                # Only the phone's own page may press: another site's page has another Origin.
+                if self.headers.get('Origin') != 'http://' + host:
+                    return self.reply(403)
+                if self.headers.get_content_type() != 'application/json':
+                    return self.reply(415)
+                try:
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= ACTION_BYTES:
+                        return self.reply(400)
+                    payload = json.loads(self.rfile.read(size))
+                    action = payload.get('action') if isinstance(payload, dict) else None
+                except ValueError:
+                    return self.reply(400)
+                if action not in ACTIONS:
+                    return self.reply(403)
+                return self.reply(*ui.control(action))
+
             def refuse(self):
                 self.reply(405)
-            do_POST = do_PUT = do_PATCH = do_DELETE = refuse
+            do_PUT = do_PATCH = do_DELETE = refuse
 
         self.server = self.server_class((self.address, self.port), Handler)
         self.server.daemon_threads = True

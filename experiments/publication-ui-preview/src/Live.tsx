@@ -15,7 +15,7 @@ import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} fro
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 import {VOCABULARY_HASH} from './vocabularyFile';
-import {isViewerPath,phoneViewNote,viewerIdleNote} from './viewer';
+import {isViewerPath,phoneViewNote,viewerControls,viewerIdleNote} from './viewer';
 
 declare global {
   interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
@@ -700,6 +700,13 @@ export default function Live(){
   if(viewer)return <I18nContext.Provider value={i18n}><div className="app-shell live-shell messenger-shell viewer-shell">
     <main className="conversation-pane">
       <div className="viewer-bar" role="status"><span className={`state-dot ${state.paused||state.stopping?'':'state-dot--closed'}`}/><span><strong>{localStatus(state,tx)}</strong><small>{tx('viewerNote')}</small></span></div>
+      {(()=>{const controls=viewerControls(state);return <div className="viewer-controls" role="group" aria-label={tx('recordingControls')}>
+        {controls.toggle&&<Button variant="primary" isDisabled={pending||controls.toggleBlocked} onPress={()=>onAction('pause')}><Icon kind={controls.toggle==='pause'?'pause':'play'}/>{tx(controls.toggle)}</Button>}
+        {controls.finish&&<Button variant="tertiary" isDisabled={pending||!controls.finishEnabled} onPress={()=>onAction('stop')}><Icon kind="stop"/>{tx('finishRecording')}</Button>}
+        {controls.next&&<Button variant="primary" isDisabled={pending} onPress={()=>onAction('start_session')}><Icon kind="play"/>{tx('newRecording')}</Button>}
+        {controls.toggle&&controls.toggleBlocked&&state.input_source==='phone'&&state.phone_status!=='ready'&&<p className="viewer-phone-status" role="status">{tx(phoneStatusText(state.phone_status))}</p>}
+        {actionError&&<p className="unavailable" role="alert">{actionError}</p>}
+      </div>;})()}
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
         <DisplayContext.Provider value={display}>{display.ticker?<TickerView groups={visibleGroups}/>:<MessageCards key={`${state.session||'current'}:${state.generation??0}`} groups={visibleGroups} scope="current" scroller={follow.containerRef} retryEnabled={false}/>}</DisplayContext.Provider>
