@@ -37,6 +37,10 @@ class Segment(val id: Int, val startedMs: Long) {
     @Volatile var startAudioS: Double = 0.0
     @Volatile var endAudioS: Double = 0.0
     @Volatile var drafts: Int = 0
+    /** Input it was heard on; context never crosses from the microphone to a call. */
+    @Volatile var source: String = ""
+    /** The final translation ended on its own (not cut by a stop or the budget). */
+    @Volatile var complete: Boolean = false
 }
 
 /**
@@ -67,6 +71,8 @@ class LiveEngine(
     private val finals = LinkedBlockingDeque<Segment>()
     @Volatile private var draft: Segment? = null
     @Volatile private var draftRequestedMs = 0L
+    /** What the model is doing now: "draft", "final" or null. */
+    @Volatile private var running: String? = null
     private val wake = Object()
 
     /** Loudness of the last 100 ms, dBFS (-90 = silence). */
@@ -110,7 +116,7 @@ class LiveEngine(
             "audio_mode" to audioManager.mode, "shizuku" to callAudio?.state()?.name,
             "config" to mapOf(
                 "rate" to RATE, "draft_step_words" to DRAFT_STEP_WORDS, "asr_threads" to 2,
-                "endpoint_rule1" to "no speech 2.4 s", "endpoint_rule2" to "silence 0.8 s after speech",
+                "endpoint_rule1" to "after 8 s, silence 0.3 s", "endpoint_rule2" to "silence 0.8 s after speech",
                 "endpoint_rule3" to "phrase 20 s", "context_gap_s" to 20,
             ))
         Trace.system("session_start")
@@ -147,7 +153,9 @@ class LiveEngine(
             provider = "cpu",
         ),
         endpointConfig = EndpointConfig(
-            rule1 = EndpointRule(false, 2.4f, 0f),
+            // An automatic voice reads long sentences with short pauses: after 8 s a pause of 0.3 s closes the phrase
+            // (replayed on a recorded call: splits between clauses, no cut words; 0.3 s after 6 s cut a word).
+            rule1 = EndpointRule(true, 0.3f, 8f),
             // A pause of 0.8 s after speech closes the phrase; 20 s is the longest phrase, as the desktop's draft limit.
             rule2 = EndpointRule(true, 0.8f, 0f),
             rule3 = EndpointRule(false, 0f, 20f),
@@ -300,6 +308,7 @@ class LiveEngine(
                         current = it
                         lastDraftWords = 0
                         it.startAudioS = audioS - n.toDouble() / RATE
+                        it.source = input.label
                         synchronized(segments) { segments.add(it) }
                     }
                     if (text != seg.hebrew) {
@@ -343,14 +352,15 @@ class LiveEngine(
         Trace.event("asr_final", "seg" to seg.id, "reason" to reason, "he" to seg.hebrew,
             "start_audio_s" to seg.startAudioS, "end_audio_s" to seg.endAudioS,
             "speech_ms" to seg.endedMs - seg.startedMs, "queue" to finals.size,
-            "draft_running" to (draft != null))
+            "mt_running" to running)
         listener.onSegment(seg)
         if (translator == null) {
             writeLog(seg)
             return
         }
         finals.add(seg)
-        translator?.cancel()  // a running draft yields to the closed phrase
+        // A running draft yields to the closed phrase; a running final translation is never cut.
+        if (running == "draft") translator?.cancel()
         synchronized(wake) { wake.notifyAll() }
     }
 
@@ -372,17 +382,21 @@ class LiveEngine(
     private fun workerLoop() {
         while (true) {
             val t = translator
-            val seg = finals.poll(0, TimeUnit.MILLISECONDS)
+            // Without a model the closed phrases wait in the queue; they are not dropped.
+            val seg = if (t != null) finals.poll(0, TimeUnit.MILLISECONDS) else null
             if (t == null || (seg == null && draft == null)) {
                 synchronized(wake) { wake.wait(500) }
                 continue
             }
             try {
+                running = if (seg != null) "final" else "draft"
                 if (seg != null) translateFinal(t, seg) else translateDraft(t)
             } catch (e: Throwable) {
                 Log.e(TAG, "translation failed", e)
                 Trace.error("mt_error", e)
                 listener.onStatus("Ошибка перевода: ${e.message}")
+            } finally {
+                running = null
             }
         }
     }
@@ -427,6 +441,7 @@ class LiveEngine(
         seg.translated = true
         seg.translatedMs = SystemClock.elapsedRealtime()
         seg.stats = t.lastStats
+        seg.complete = t.lastStats.complete && out.isNotEmpty()
         listener.onSegment(seg)
         writeLog(seg)
         traceMt(t, "final", seg, source, pairs, out, waitMs, true)
@@ -438,7 +453,7 @@ class LiveEngine(
         val s = t.lastStats
         Trace.event("mt", "kind" to kind, "seg" to seg.id, "he" to source, "ru" to out,
             "shown" to shown, "stop" to s.stop, "context_pairs" to pairs.size,
-            "prompt" to t.lastPrompt, "budget" to t.lastBudget, "threads" to t.threads, "model" to t.modelName,
+            "prompt" to t.lastPrompt, "budget" to t.lastBudget, "reused_tokens" to s.reusedTokens, "threads" to t.threads, "model" to t.modelName,
             "wait_ms" to waitMs, "prompt_tokens" to s.promptTokens, "prompt_ms" to s.promptMs,
             "tokens" to s.tokens, "gen_ms" to s.genMs, "first_token_ms" to s.firstTokenMs,
             "tok_per_s" to s.tokensPerSecond,
@@ -452,7 +467,9 @@ class LiveEngine(
             val i = segments.indexOf(seg)
             if (i > 0) segments[i - 1] else null
         } ?: return emptyList()
-        if (!previous.translated || previous.russian.isEmpty()) return emptyList()
+        // A cut or empty translation would make the model finish the previous sentence inside this one.
+        if (!previous.translated || !previous.complete || previous.russian.isEmpty()) return emptyList()
+        if (previous.source != seg.source) return emptyList()
         if (seg.startedMs - previous.endedMs > 20_000) return emptyList()
         return listOf(previous.hebrew to previous.russian)
     }

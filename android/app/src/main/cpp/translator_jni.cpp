@@ -23,9 +23,12 @@ struct Translator {
     llama_sampler *sampler = nullptr;
     const llama_vocab *vocab = nullptr;
     std::atomic<bool> cancel{false};
+    // Tokens whose keys and values are in the context now (prompt and decoded output of the last call):
+    // the next prompt reuses the common prefix instead of reading it again.
+    std::vector<llama_token> cached;
     // Stats of the last call: prompt tokens, prompt ms, generated tokens, generation ms, first token ms,
-    // why it stopped (STOP_*).
-    double stats[6] = {0, 0, 0, 0, 0, 0};
+    // why it stopped (STOP_*), prompt tokens reused from the previous call.
+    double stats[7] = {0, 0, 0, 0, 0, 0, 0};
 };
 
 enum Stop { STOP_EOS = 0, STOP_NEWLINE = 1, STOP_BUDGET = 2, STOP_CANCEL = 3, STOP_LISTENER = 4, STOP_ERROR = 5 };
@@ -142,8 +145,8 @@ Java_com_markin_hebrewlive_NativeTranslator_cancel(JNIEnv *, jobject, jlong hand
 JNIEXPORT jdoubleArray JNICALL
 Java_com_markin_hebrewlive_NativeTranslator_lastStats(JNIEnv *env, jobject, jlong handle) {
     auto *t = reinterpret_cast<Translator *>(handle);
-    jdoubleArray out = env->NewDoubleArray(6);
-    if (t) env->SetDoubleArrayRegion(out, 0, 6, t->stats);
+    jdoubleArray out = env->NewDoubleArray(7);
+    if (t) env->SetDoubleArrayRegion(out, 0, 7, t->stats);
     return out;
 }
 
@@ -175,16 +178,29 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
         return env->NewStringUTF("");
     }
 
-    llama_memory_clear(llama_get_memory(t->ctx), true);
+    // Keep the longest common prefix with what is already in the context; at least the last prompt
+    // token is decoded again, because sampling needs its logits.
+    llama_memory_t mem = llama_get_memory(t->ctx);
+    int keep = 0;
+    while (keep < n - 1 && keep < static_cast<int>(t->cached.size()) && t->cached[keep] == tokens[keep]) ++keep;
+    if (keep == 0 || !llama_memory_seq_rm(mem, 0, keep, -1)) {
+        llama_memory_clear(mem, true);
+        keep = 0;
+    }
+    t->cached.assign(tokens.begin(), tokens.begin() + keep);
     llama_sampler_reset(t->sampler);
-    for (int i = 0; i < n; i += 512) {
+    for (int i = keep; i < n; i += 512) {
         int len = std::min(512, n - i);
         if (llama_decode(t->ctx, llama_batch_get_one(tokens.data() + i, len)) != 0) {
             LOGE("prompt decode failed");
+            llama_memory_clear(mem, true);
+            t->cached.clear();
             t->stats[5] = STOP_ERROR;
             return env->NewStringUTF("");
         }
+        t->cached.insert(t->cached.end(), tokens.begin() + i, tokens.begin() + i + len);
     }
+    t->stats[6] = keep;
     const double t1 = now_ms();
     t->stats[0] = n;
     t->stats[1] = t1 - t0;
@@ -230,9 +246,12 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
         }
         if (llama_decode(t->ctx, llama_batch_get_one(&id, 1)) != 0) {
             LOGE("token decode failed");
+            llama_memory_clear(mem, true);
+            t->cached.clear();
             stop = STOP_ERROR;
             break;
         }
+        t->cached.push_back(id);
     }
     t->stats[2] = generated;
     t->stats[3] = now_ms() - t1;

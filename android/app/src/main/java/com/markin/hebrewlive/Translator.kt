@@ -9,7 +9,11 @@ data class MtStats(
     val genMs: Double,
     val firstTokenMs: Double,
     val stop: String = "",
+    /** Prompt tokens already in the context from the previous call, not read again. */
+    val reusedTokens: Int = 0,
 ) {
+    /** The model ended the translation itself, so it covers the whole source. */
+    val complete: Boolean get() = stop == "eos" || stop == "newline"
     val tokensPerSecond: Double get() = if (genMs > 0) tokens * 1000.0 / genMs else 0.0
     val totalMs: Double get() = promptMs + genMs
 }
@@ -62,10 +66,10 @@ class Translator(model: File, threads: Int) : AutoCloseable {
         val budget = (4 * (text.length / 3 + 1) + 32).coerceIn(96, 512)
         lastPrompt = prompt
         lastBudget = budget
-        val raw = NativeTranslator.generate(handle, prompt, budget, ADD_BOS) { onText(it.trim()) }
+        val raw = NativeTranslator.generate(handle, prompt, budget, ADD_BOS) { onText(clean(it)) }
         val s = NativeTranslator.lastStats(handle)
-        lastStats = MtStats(s[0].toInt(), s[1], s[2].toInt(), s[3], s[4], STOPS.getOrElse(s[5].toInt()) { "?" })
-        return raw.trim()
+        lastStats = MtStats(s[0].toInt(), s[1], s[2].toInt(), s[3], s[4], STOPS.getOrElse(s[5].toInt()) { "?" }, s[6].toInt())
+        return clean(raw)
     }
 
     override fun close() = NativeTranslator.free(handle)
@@ -73,6 +77,9 @@ class Translator(model: File, threads: Int) : AutoCloseable {
     companion object {
         /** No BOS, as the desktop MLX path (add_special_tokens=False); the host check gave the same text either way. */
         const val ADD_BOS = false
+
+        /** After a context sentence the model sometimes starts with the punctuation that joins them (", до свидания"). */
+        fun clean(text: String): String = text.trim().trimStart(',', ';', ':', '.', '—', '-', ' ')
         /** Why generation ended, by the native STOP_* code. */
         val STOPS = listOf("eos", "newline", "budget", "cancel", "superseded", "error")
     }
