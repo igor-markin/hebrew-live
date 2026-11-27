@@ -35,16 +35,54 @@ class ModelStore(context: Context) {
         return ok
     }
 
-    /** Downloads with resume, then checks SHA-256. Throws on failure. */
+    /** Downloads Q4_K_M with resume, then checks SHA-256. Throws on failure. */
     fun download(progress: (Long, Long) -> Unit) {
+        fetch(URL_STRING, SIZE, SHA256, file, progress)
+        verified.writeText(SHA256)
+    }
+
+    // ---- Fast variant: every tensor Q4_0, made on the phone from the Q8_0 file ----
+
+    val fastFile = File(folder, FAST_FILE_NAME)
+    private val fastMarker = File(folder, "$FAST_FILE_NAME.done")
+    private val q8File = File(folder, Q8_FILE_NAME)
+
+    fun fastReady(): Boolean = fastFile.isFile && fastMarker.isFile
+
+    /**
+     * Downloads Q8_0 (4.13 GB, SHA-256 checked), requantizes it to Q4_0 for all tensors on the
+     * phone, then deletes the Q8_0 file. `stage` gets a line for the screen.
+     */
+    fun prepareFast(stage: (String) -> Unit) {
+        if (!(q8File.isFile && q8File.length() == Q8_SIZE)) {
+            fetch(Q8_URL, Q8_SIZE, Q8_SHA256, q8File) { done, total ->
+                stage(String.format(java.util.Locale.US, "Скачиваю Q8_0: %.2f из %.2f ГБ (%d %%)", done / 1e9, total / 1e9, done * 100 / total))
+            }
+        }
+        stage("Делаю Q4_0 на телефоне…")
+        val tmp = File(folder, "$FAST_FILE_NAME.tmp")
+        tmp.delete()
+        val t0 = System.currentTimeMillis()
+        val rc = NativeTranslator.quantizeQ4_0(q8File.absolutePath, tmp.absolutePath, 6)
+        if (rc != 0 || !tmp.isFile) throw IllegalStateException("Не удалось сделать Q4_0 (код $rc)")
+        fastFile.delete()
+        if (!tmp.renameTo(fastFile)) throw IllegalStateException("Не удалось переименовать Q4_0")
+        fastMarker.writeText("from $Q8_SHA256 in ${System.currentTimeMillis() - t0} ms")
+        q8File.delete()
+        stage("Q4_0 готова за ${(System.currentTimeMillis() - t0) / 1000} с")
+    }
+
+    /** Resumable download into `dest` through `dest.part`, checked against `sha`. */
+    private fun fetch(url: String, size: Long, sha: String, dest: File, progress: (Long, Long) -> Unit) {
         cancelled = false
-        var have = partialBytes()
-        if (have > SIZE) {
+        val part = File(dest.parentFile, dest.name + ".part")
+        var have = if (part.isFile) part.length() else 0L
+        if (have > size) {
             part.delete()
             have = 0
         }
-        if (have < SIZE) {
-            val connection = (URL(URL_STRING).openConnection() as HttpURLConnection).apply {
+        if (have < size) {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 30_000
                 readTimeout = 60_000
                 instanceFollowRedirects = true
@@ -65,22 +103,21 @@ class ModelStore(context: Context) {
                         have += read
                         if (have - last > 8L shl 20) {
                             last = have
-                            progress(have, SIZE)
+                            progress(have, size)
                         }
                     }
                 }
             }
             connection.disconnect()
         }
-        if (part.length() != SIZE) throw IllegalStateException("Скачано ${part.length()} из $SIZE байт")
+        if (part.length() != size) throw IllegalStateException("Скачано ${part.length()} из $size байт")
         val digest = sha256(part, progress)
-        if (digest != SHA256) {
+        if (digest != sha) {
             part.delete()
             throw IllegalStateException("Контрольная сумма не совпала, файл удалён")
         }
-        file.delete()
-        if (!part.renameTo(file)) throw IllegalStateException("Не удалось переименовать файл")
-        verified.writeText(SHA256)
+        dest.delete()
+        if (!part.renameTo(dest)) throw IllegalStateException("Не удалось переименовать файл")
     }
 
     private fun sha256(f: File, progress: (Long, Long) -> Unit): String {
@@ -107,5 +144,12 @@ class ModelStore(context: Context) {
         const val REVISION = "3d05b58ace3d89a89af0574cdc49c84567f33969"
         const val URL_STRING =
             "https://huggingface.co/mradermacher/MiLMMT-46-4B-v1.0-GGUF/resolve/$REVISION/$FILE_NAME"
+
+        const val Q8_FILE_NAME = "MiLMMT-46-4B-v1.0.Q8_0.gguf"
+        const val Q8_SIZE = 4_130_401_312L
+        const val Q8_SHA256 = "92796e263e22461c273c9f964ba4c1454d8dc764a482af60bc1ad9c269d9e7d0"
+        const val Q8_URL =
+            "https://huggingface.co/mradermacher/MiLMMT-46-4B-v1.0-GGUF/resolve/$REVISION/$Q8_FILE_NAME"
+        const val FAST_FILE_NAME = "MiLMMT-46-4B-v1.0.Q4_0-pure.gguf"
     }
 }

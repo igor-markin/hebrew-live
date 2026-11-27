@@ -19,4 +19,6 @@ object NativeTranslator {
     external fun lastStats(handle: Long): DoubleArray
     external fun generate(handle: Long, prompt: String, maxTokens: Int, addBos: Boolean, listener: TextListener): String
     external fun free(handle: Long)
+    /** GGUF -> Q4_0 for every tensor (requantize allowed). 0 on success. */
+    external fun quantizeQ4_0(input: String, output: String, threads: Int): Int
 }

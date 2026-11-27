@@ -6,6 +6,7 @@ import android.app.ActivityManager
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -30,11 +31,16 @@ class MainActivity : Activity(), LiveEngine.Listener {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var store: ModelStore
     private lateinit var engine: LiveEngine
+    private lateinit var calls: CallAudio
+    private lateinit var callLine: TextView
+    private lateinit var callButton: Button
+    private var callState: CallAudio.State? = null
     private var translator: Translator? = null
 
     private lateinit var status: TextView
     private lateinit var modelLine: TextView
     private lateinit var modelButton: Button
+    private lateinit var fastButton: Button
     private lateinit var startButton: Button
     private lateinit var benchButton: Button
     private lateinit var metrics: TextView
@@ -46,14 +52,15 @@ class MainActivity : Activity(), LiveEngine.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = ModelStore(this)
-        engine = LiveEngine(assets, File(getExternalFilesDir(null), "sessions"), this)
+        calls = CallAudio(this)
+        engine = LiveEngine(assets, getSystemService(AudioManager::class.java), calls, File(getExternalFilesDir(null), "sessions"), this)
         buildUi()
         refreshModel()
         thread(name = "asr-load") {
             val ms = engine.warmUpRecognizer()
             main.post { status.text = "Распознавание загружено за ${ms} мс" }
         }
-        if (store.isReady()) loadTranslator()
+        if (store.isReady() || store.fastReady()) loadTranslator()
         main.postDelayed(object : Runnable {
             override fun run() {
                 showMetrics()
@@ -64,6 +71,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
 
     override fun onDestroy() {
         engine.stop()
+        calls.unbind()
         translator?.close()
         super.onDestroy()
     }
@@ -105,6 +113,24 @@ class MainActivity : Activity(), LiveEngine.Listener {
             addView(modelLine, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(modelButton)
         })
+        fastButton = button("Быстрая Q4_0") { onFastButton() }
+        root.addView(fastButton)
+
+        callLine = text(14f, MUTED)
+        callButton = button("Разрешить") {
+            calls.requestPermission { granted ->
+                main.post {
+                    if (!granted) callLine.text = "Звонки: Shizuku не дал разрешения"
+                    refreshCalls()
+                }
+            }
+        }
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(callLine, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(callButton)
+        })
 
         startButton = button("▶ Начать") { onStartPressed() }
         benchButton = button("Замер перевода") { onBench() }
@@ -135,7 +161,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
     private fun refreshModel() {
         when {
             translator != null -> {
-                modelLine.text = "Перевод: MiLMMT-46-4B Q4_K_M, ${translator?.threads} потоков"
+                modelLine.text = "Перевод: MiLMMT-46-4B ${modelName(currentModel())}, ${translator?.threads} потоков"
                 modelButton.visibility = View.GONE
             }
             store.isReady() -> {
@@ -156,6 +182,62 @@ class MainActivity : Activity(), LiveEngine.Listener {
             }
         }
         benchButton.isEnabled = translator != null
+        fastButton.isEnabled = !busy
+        fastButton.text = when {
+            !store.fastReady() -> "Сделать быструю модель Q4_0 (скачать 4,13 ГБ)"
+            currentModel() == FAST -> "Перейти на модель Q4_K_M"
+            else -> "Перейти на быструю модель Q4_0"
+        }
+    }
+
+    private fun prefs() = getPreferences(MODE_PRIVATE)
+    private fun currentModel(): String = if (prefs().getString("model", BASE) == FAST && store.fastReady()) FAST else BASE
+    private fun modelFile(key: String): File = if (key == FAST) store.fastFile else store.file
+    private fun modelName(key: String) = if (key == FAST) "Q4_0 (все слои)" else "Q4_K_M"
+
+    private fun onFastButton() {
+        if (busy) return
+        if (engine.isRecording) {
+            status.text = "Сначала пауза"
+            return
+        }
+        if (store.fastReady()) {
+            val next = if (currentModel() == FAST) BASE else FAST
+            if (next == BASE && !store.isReady()) {
+                status.text = "Модели Q4_K_M на телефоне нет"
+                return
+            }
+            prefs().edit().putString("model", next).apply()
+            reloadTranslator()
+            return
+        }
+        busy = true
+        refreshModel()
+        thread(name = "fast-model") {
+            try {
+                store.prepareFast { line -> main.post { status.text = line } }
+                prefs().edit().putString("model", FAST).apply()
+                main.post {
+                    busy = false
+                    reloadTranslator()
+                }
+            } catch (e: Throwable) {
+                main.post {
+                    busy = false
+                    status.text = "Быстрая модель: ${e.message}"
+                    refreshModel()
+                }
+            }
+        }
+    }
+
+    private fun reloadTranslator() {
+        val old = translator
+        translator = null
+        engine.attachTranslator(null)
+        old?.close()
+        refreshModel()
+        loadTranslator()
     }
 
     private fun onModelButton() {
@@ -193,11 +275,12 @@ class MainActivity : Activity(), LiveEngine.Listener {
 
     private fun loadTranslator() {
         status.text = "Загружаю перевод…"
-        val threads = getPreferences(MODE_PRIVATE).getInt("threads", DEFAULT_THREADS)
+        val key = if (store.isReady() || store.fastReady()) currentModel() else BASE
+        val threads = prefs().getInt("threads_$key", DEFAULT_THREADS)
         thread(name = "mt-load") {
             val t0 = SystemClock.elapsedRealtime()
             try {
-                val t = Translator(store.file, threads)
+                val t = Translator(modelFile(key), threads)
                 // One short call maps the weights in, so the first phrase is not slow.
                 t.translate("שלום")
                 val ms = SystemClock.elapsedRealtime() - t0
@@ -243,11 +326,12 @@ class MainActivity : Activity(), LiveEngine.Listener {
             return
         }
         benchButton.isEnabled = false
-        status.text = "Замер: 2 × 5 фраз…"
+        val key = currentModel()
+        status.text = "Замер ${modelName(key)}: 2, 3, 4, 5, 6 потоков × 5 фраз…"
         thread(name = "bench") {
-            val report = StringBuilder()
+            val report = StringBuilder("Модель ${modelName(key)}\n")
             var best = 0 to 0.0
-            for (threads in listOf(4, 6)) {
+            for (threads in listOf(2, 3, 4, 5, 6)) {
                 t.threads = threads
                 t.translate(BENCH.first())
                 var tokens = 0
@@ -272,7 +356,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
                 main.post { status.text = report.toString().trim() }
             }
             t.threads = best.first
-            getPreferences(MODE_PRIVATE).edit().putInt("threads", best.first).apply()
+            prefs().edit().putInt("threads_$key", best.first).apply()
             report.append("Оставил ${best.first} потоков")
             File(getExternalFilesDir(null), "bench.txt").appendText(report.toString() + "\n\n")
             main.post {
@@ -283,7 +367,30 @@ class MainActivity : Activity(), LiveEngine.Listener {
         }
     }
 
+    /** Shizuku state for call audio: checked every second, the service starts as soon as it is allowed. */
+    private fun refreshCalls() {
+        val state = calls.state()
+        if (state == callState) return
+        callState = state
+        when (state) {
+            CallAudio.State.READY -> {
+                callLine.text = "Звонки: Shizuku готов, во время звонка слушаю собеседника"
+                callButton.visibility = View.GONE
+                calls.bind()
+            }
+            CallAudio.State.NO_PERMISSION -> {
+                callLine.text = "Звонки: нужно разрешение Shizuku"
+                callButton.visibility = View.VISIBLE
+            }
+            CallAudio.State.NO_SHIZUKU -> {
+                callLine.text = "Звонки: Shizuku не запущен, во время звонка микрофон заглушён"
+                callButton.visibility = View.GONE
+            }
+        }
+    }
+
     private fun showMetrics() {
+        refreshCalls()
         val am = getSystemService(ActivityManager::class.java)
         val mem = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
         val pss = android.os.Debug.getPss() / 1024
@@ -293,8 +400,13 @@ class MainActivity : Activity(), LiveEngine.Listener {
             String.format(Locale.US, "перевод %.1f ток/с, первый токен %.2f с, после конца фразы %.2f с",
                 it.tokensPerSecond, it.firstTokenMs / 1000, (last.translatedMs - last.endedMs) / 1000.0)
         } ?: "перевод —"
-        metrics.text = String.format(Locale.US, "распознавание %.3f с на 1 с звука · память приложения %d МБ, свободно %.1f ГБ\n%s",
-            rtf, pss, mem.availMem / 1e9, mt)
+        val mic = when {
+            !engine.isRecording -> "микрофон выключен"
+            engine.silenced -> "⚠ ${engine.source}: Android глушит звук"
+            else -> String.format(Locale.US, "%s, уровень %.0f дБ", engine.source, engine.levelDb)
+        }
+        metrics.text = String.format(Locale.US, "%s · распознавание %.3f с на 1 с звука\nпамять приложения %d МБ, свободно %.1f ГБ\n%s",
+            mic, rtf, pss, mem.availMem / 1e9, mt)
     }
 
     // ---------- engine callbacks (any thread) ----------
@@ -343,6 +455,8 @@ class MainActivity : Activity(), LiveEngine.Listener {
         private val FG = Color.rgb(0xf2, 0xf2, 0xf5)
         private val MUTED = Color.rgb(0x9a, 0x9a, 0xa8)
         private const val DEFAULT_THREADS = 4
+        private const val BASE = "q4km"
+        private const val FAST = "q40"
         private val BENCH = listOf(
             "שלום, אני רוצה לקבוע תור לרופא שיניים ביום שלישי בשעה עשר בבוקר",
             "אני חבר במכבי, האם הטיפול מכוסה בביטוח המשלים",

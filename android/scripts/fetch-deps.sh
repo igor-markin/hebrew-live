@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LLAMA_COMMIT=2a8bf0f593472159d8805e9c2a6efb482634db05
+KLEIDIAI_COMMIT=c80157210987eedaab2509638ef5e15950c53a8c  # tag v1.32.0, the version llama.cpp pins
 SHERPA_AAR=sherpa-onnx-1.12.21.aar
 SHERPA_AAR_SHA=4ce353cda9ab9e4c2e398dfd45aeb43cca1b5f97279051d354ebcdbd043e74ef
 ASR_REPO=ivrit-ai/zipformer2-66m-streaming-he
@@ -22,6 +23,16 @@ fi
 if [ "$(git -C third_party/llama.cpp rev-parse HEAD 2>/dev/null || true)" != "$LLAMA_COMMIT" ]; then
     git -C third_party/llama.cpp fetch -q --depth 1 origin "$LLAMA_COMMIT"
     git -C third_party/llama.cpp checkout -q FETCH_HEAD
+fi
+
+if [ "${1:-}" = "--kleidiai" ]; then
+    if [ "$(git -C third_party/kleidiai rev-parse HEAD 2>/dev/null || true)" != "$KLEIDIAI_COMMIT" ]; then
+        rm -rf third_party/kleidiai
+        git init -q third_party/kleidiai
+        git -C third_party/kleidiai remote add origin https://github.com/ARM-software/kleidiai
+        git -C third_party/kleidiai fetch -q --depth 1 origin "$KLEIDIAI_COMMIT"
+        git -C third_party/kleidiai checkout -q FETCH_HEAD
+    fi
 fi
 
 mkdir -p app/libs

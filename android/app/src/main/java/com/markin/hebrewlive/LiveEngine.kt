@@ -3,6 +3,8 @@ package com.markin.hebrewlive
 import android.annotation.SuppressLint
 import android.content.res.AssetManager
 import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
@@ -40,6 +42,8 @@ class Segment(val id: Int, val startedMs: Long) {
  */
 class LiveEngine(
     private val assets: AssetManager,
+    private val audioManager: AudioManager,
+    private val callAudio: CallAudio?,
     private val sessionsDir: File,
     private val listener: Listener,
 ) {
@@ -59,6 +63,13 @@ class LiveEngine(
     private val finals = LinkedBlockingDeque<Segment>()
     @Volatile private var draft: Segment? = null
     private val wake = Object()
+
+    /** Loudness of the last 100 ms, dBFS (-90 = silence). */
+    @Volatile var levelDb = -90.0
+    /** Android silences the current input (another app took the microphone, or a call started). */
+    @Volatile var silenced = false
+    /** What is being listened to now: the microphone or the call. */
+    @Volatile var source = ""
 
     // Recognizer cost: seconds of compute per second of audio.
     @Volatile var asrAudioSeconds = 0.0
@@ -126,15 +137,56 @@ class LiveEngine(
         decodingMethod = "greedy_search",
     )
 
-    @SuppressLint("MissingPermission")
+    private fun inCall() = audioManager.mode == AudioManager.MODE_IN_CALL
+
+    private fun openMic(): AudioInput? = MicInput(audioManager).takeIf { it.ok } ?: run {
+        listener.onStatus("Микрофон недоступен")
+        null
+    }
+
+    /** During a phone call Android silences the microphone of ordinary apps: switch to call audio via Shizuku and back. */
+    private fun switchIfNeeded(input: AudioInput, now: Long): AudioInput {
+        if (now - lastSwitchCheck < 1000) return input
+        lastSwitchCheck = now
+        val calls = callAudio
+        if (input is MicInput && inCall()) {
+            if (calls == null || calls.state() != CallAudio.State.READY) {
+                if (!warnedNoShizuku) {
+                    warnedNoShizuku = true
+                    listener.onStatus("⚠ Идёт звонок: Android заглушил микрофон. Для звука звонка нужен Shizuku с разрешением для Hebrew Live.")
+                }
+                return input
+            }
+            if (now - lastCallAttempt < 10_000) return input
+            lastCallAttempt = now
+            val call = calls.open()
+            if (call == null) {
+                listener.onStatus("⚠ Идёт звонок, а звук звонка не открылся: ${calls.lastError}")
+                return input
+            }
+            input.close()
+            listener.onStatus("Звонок: слушаю ${call.label}")
+            return call
+        }
+        if (input is CallStream && !inCall()) {
+            input.close()
+            warnedNoShizuku = false
+            val mic = openMic() ?: return input
+            listener.onStatus("Звонок закончился, слушаю микрофон")
+            return mic
+        }
+        return input
+    }
+
+    private var lastSwitchCheck = 0L
+    private var lastCallAttempt = 0L
+    private var warnedNoShizuku = false
+
     private fun audioLoop() {
-        val minBuffer = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE,
-            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, RATE * 2),
-        )
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            listener.onStatus("Микрофон недоступен")
+        lastSwitchCheck = 0L
+        lastCallAttempt = 0L
+        warnedNoShizuku = false
+        var input: AudioInput = openMic() ?: run {
             recording = false
             return
         }
@@ -142,14 +194,34 @@ class LiveEngine(
         val chunk = ShortArray(RATE / 10)
         var current: Segment? = null
         var lastDraftWords = 0
-        record.startRecording()
-        listener.onStatus("Слушаю")
+        var wasSilenced = false
+        listener.onStatus("Слушаю ${input.label}")
         try {
             while (recording) {
-                val n = record.read(chunk, 0, chunk.size)
-                if (n <= 0) continue
+                input = switchIfNeeded(input, SystemClock.elapsedRealtime())
+                val n = input.read(chunk)
+                if (n < 0) {
+                    // The call stream ended (the shell process stopped): back to the microphone.
+                    input.close()
+                    input = openMic() ?: break
+                    listener.onStatus("Звук звонка прервался, слушаю микрофон")
+                    continue
+                }
+                silenced = input.silenced
+                if (silenced != wasSilenced) {
+                    wasSilenced = silenced
+                    if (input is MicInput && !inCall()) listener.onStatus(
+                        if (silenced) "⚠ Микрофон забрало другое приложение. Распознавание слышит тишину."
+                        else "Слушаю ${input.label}"
+                    )
+                }
+                if (n == 0) continue
                 wav?.write(chunk, n)
                 val samples = FloatArray(n) { chunk[it] / 32768f }
+                var energy = 0.0
+                for (v in samples) energy += v * v
+                levelDb = 10 * Math.log10(energy / n + 1e-9)
+                source = input.label
                 val t0 = System.nanoTime()
                 stream.acceptWaveform(samples, RATE)
                 while (recognizer.isReady(stream)) recognizer.decode(stream)
@@ -188,8 +260,10 @@ class LiveEngine(
                 close(seg)
             }
         } finally {
-            record.stop()
-            record.release()
+            input.close()
+            silenced = false
+            levelDb = -90.0
+            source = ""
             stream.release()
             listener.onStatus("Пауза")
         }
@@ -319,6 +393,60 @@ class LiveEngine(
         const val RATE = 16000
         const val DRAFT_STEP_WORDS = 3
         private const val TAG = "HebrewLive"
+    }
+}
+
+/** 16 kHz mono 16-bit audio: the microphone or, during a call, the call via Shizuku. */
+interface AudioInput {
+    val label: String
+    val silenced: Boolean
+    /** Fills `out` with up to 100 ms of samples; -1 when the input has ended. */
+    fun read(out: ShortArray): Int
+    fun close()
+}
+
+@SuppressLint("MissingPermission")
+class MicInput(private val audioManager: AudioManager) : AudioInput {
+    private val record = AudioRecord(
+        MediaRecorder.AudioSource.VOICE_RECOGNITION, LiveEngine.RATE,
+        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+        maxOf(AudioRecord.getMinBufferSize(LiveEngine.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), LiveEngine.RATE * 2),
+    )
+    val ok = record.state == AudioRecord.STATE_INITIALIZED
+    private val session = record.audioSessionId
+    @Volatile override var silenced = false
+        private set
+    private val watcher = object : AudioManager.AudioRecordingCallback() {
+        override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+            configs.firstOrNull { it.clientAudioSessionId == session }?.let { silenced = it.isClientSilenced }
+        }
+    }
+
+    init {
+        if (ok) {
+            audioManager.registerAudioRecordingCallback(watcher, null)
+            record.startRecording()
+            silenced = audioManager.activeRecordingConfigurations.firstOrNull { it.clientAudioSessionId == session }?.isClientSilenced == true
+        } else {
+            record.release()
+        }
+    }
+
+    override val label = "микрофон"
+
+    override fun read(out: ShortArray): Int = record.read(out, 0, out.size).let { if (it < 0) 0 else it }
+
+    private var closed = false
+
+    override fun close() {
+        if (!ok || closed) return
+        closed = true
+        audioManager.unregisterAudioRecordingCallback(watcher)
+        try {
+            record.stop()
+        } catch (_: Throwable) {
+        }
+        record.release()
     }
 }
 

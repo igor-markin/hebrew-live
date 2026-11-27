@@ -18,7 +18,7 @@ microphone 16 kHz ─► sherpa-onnx zipformer2 (ivrit.ai, int8, CPU, 2 threads)
 | Recognition | zipformer2-66m streaming, sherpa-onnx | same model and hashes, sherpa-onnx 1.12.21 AAR, bundled in the APK (72 MB) |
 | Phrase boundaries | Silero VAD | sherpa-onnx endpoint rules (Silero not used yet) |
 | Translation | MiLMMT-46-4B 4-bit MLX | MiLMMT-46-4B v1.0 Q4_K_M GGUF (2.49 GB), llama.cpp, same prompt and stop tokens |
-| Audio | microphone, phone call via scrcpy | microphone only (call audio via Shizuku is a later step) |
+| Audio | microphone, phone call via scrcpy | microphone; during a phone call the other side's voice via Shizuku |
 
 The translation model is not in the APK. The app downloads it once from the pinned Hugging Face
 revision (`ModelStore.kt`, SHA-256 checked), or it can be copied over adb:
@@ -28,6 +28,21 @@ adb push MiLMMT-46-4B-v1.0.Q4_K_M.gguf /sdcard/Android/data/com.markin.hebrewliv
 ```
 
 Then press **Проверить** in the app (it checks the SHA-256 once).
+
+## Phone calls
+
+During a call Android silences the microphone of every ordinary app, so the app cannot hear the call by
+itself. When Shizuku is running and has allowed Hebrew Live, the app starts `CallAudioService` as a Shizuku
+user service: a separate process under the shell user that records `VOICE_DOWNLINK` (the other side, as the
+desktop phone mode; `VOICE_CALL` if that fails) and passes 16 kHz PCM to the app through a pipe. The app
+switches to it when the phone enters a call and back to the microphone when the call ends.
+
+## Faster model and test builds
+
+**Сделать быструю модель Q4_0** downloads the Q8_0 GGUF (4.13 GB, SHA-256 checked) and requantizes it on the
+phone to Q4_0 for every tensor (`--pure`), so that the ARM repacked kernels cover all of them; the Q8_0 file
+is deleted afterwards. **Замер перевода** tries 2 to 6 threads and keeps the fastest. `-Pkleidiai=true` builds
+the same app with Arm KleidiAI kernels in llama.cpp (`./scripts/fetch-deps.sh --kleidiai` first).
 
 ## Build
 

@@ -224,6 +224,25 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
     return to_jstring(env, text.substr(0, complete_utf8(text)));
 }
 
+// Requantizes a GGUF to Q4_0 for every tensor (--pure): the ARM repack path covers all of them,
+// including the tied output/embedding matrix, which is Q6_K in Q4_K_M. Returns 0 on success.
+JNIEXPORT jint JNICALL
+Java_com_markin_hebrewlive_NativeTranslator_quantizeQ4_10(JNIEnv *env, jobject, jstring jin, jstring jout, jint threads) {
+    llama_log_set(log_callback, nullptr);
+    llama_backend_init();
+    std::string in = from_jstring(env, jin);
+    std::string out = from_jstring(env, jout);
+    llama_model_quantize_params params = llama_model_quantize_default_params();
+    params.nthread = threads;
+    params.ftype = LLAMA_FTYPE_MOSTLY_Q4_0;
+    params.allow_requantize = true;
+    params.pure = true;
+    const double t0 = now_ms();
+    uint32_t rc = llama_model_quantize(in.c_str(), out.c_str(), &params);
+    LOGI("quantize %s -> %s: %u in %.0f ms", in.c_str(), out.c_str(), rc, now_ms() - t0);
+    return static_cast<jint>(rc);
+}
+
 JNIEXPORT void JNICALL
 Java_com_markin_hebrewlive_NativeTranslator_free(JNIEnv *, jobject, jlong handle) {
     auto *t = reinterpret_cast<Translator *>(handle);
