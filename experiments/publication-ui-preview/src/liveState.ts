@@ -47,6 +47,13 @@ function group(value:unknown): value is Group {
   return true;
 }
 
+/** The theme a page opens with: the one the server put on <html> (the saved choice), else the
+ * last one this page address remembers. A new window address every launch starts with empty
+ * localStorage, which opened a dark window light until its state arrived (27.11.2026). */
+export function initialDark(served:string|undefined,remembered:string|null):boolean {
+  return served==='dark'||served==='light'?served==='dark':remembered==='dark';
+}
+
 export function parseLiveState(value:unknown):LiveState {
   if(!record(value)||!Array.isArray(value.groups)||!value.groups.every(group)||typeof value.status!=='string'||typeof value.paused!=='boolean'||typeof value.finished!=='boolean'||typeof value.direction!=='string')throw new Error('Invalid local API snapshot');
   if(!optionalString(value.session_path)||!optionalString(value.publication)||!optionalString(value.input_kind)||!optionalString(value.device)||!optionalString(value.session)||!optionalString(value.warning)||!optionalString(value.integrity_warning)||!optionalString(value.retrying_group)||!optionalString(value.retry_error)||!optionalString(value.status_code)||!optionalString(value.target_language)||!optionalString(value.target_error)||!optionalString(value.target_error_code))throw new Error('Invalid local API snapshot');

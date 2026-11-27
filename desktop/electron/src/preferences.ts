@@ -12,6 +12,27 @@ export const DEFAULT_PREFERENCES: DesktopPreferences = {
   asrBackend: "streaming",
 };
 
+/** Window colours behind the pages: the live window's `--background` for its light and dark themes. */
+export const WINDOW_BACKGROUND = { light: "#eef4ef", dark: "#151d1e" } as const;
+
+/**
+ * Whether the owner chose the dark theme, read from the engine's own preferences before any
+ * window exists. The engine only tells the page later, so a dark launch first showed a light
+ * window and page (27.11.2026). Anything unreadable is the light theme, as before.
+ */
+export function readSavedDarkTheme(dataHome: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(dataHome, ".local-settings", "preferences.json"), "utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && (parsed as { dark_theme?: unknown }).dark_theme === true;
+  } catch {
+    return false;
+  }
+}
+
+export function windowBackground(dark: boolean): string {
+  return dark ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light;
+}
+
 export function readDesktopPreferences(file: string): DesktopPreferences {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<DesktopPreferences>;

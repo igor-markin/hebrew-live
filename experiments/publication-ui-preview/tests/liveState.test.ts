@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {archiveRecordingLabel,heldText,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,tickerParagraphs,agreeWords,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
+import {archiveRecordingLabel,heldText,initialDark,isQuietMiss,isVisibleGroup,keepStableGroups,mergeLiveState,parseLiveState,shownPair,speechTurns,tickerParagraphs,agreeWords,unchangedPrefix,virtualIndexes} from '../src/liveState.ts';
 
 const state={groups:[],status:'Слушаю',paused:false,finished:false,direction:'he-ru',phase:'listening'};
 
@@ -155,4 +155,12 @@ test('an open sentence turns black only where two different translations in a ro
   assert.equal(value.agreed,4);
   value=agreeWords(value,'Хочу вам сообщить');
   assert.equal(value.agreed,0);
+});
+
+test('a page opens with the theme the server served, then the one its address remembers',()=>{
+  assert.equal(initialDark('dark',null),true);         // dark launch: new address, empty localStorage
+  assert.equal(initialDark('dark','light'),true);      // the saved choice beats a stale memory
+  assert.equal(initialDark('light','dark'),false);
+  assert.equal(initialDark(undefined,'dark'),true);    // a page without the server (preview) remembers
+  assert.equal(initialDark(undefined,null),false);
 });

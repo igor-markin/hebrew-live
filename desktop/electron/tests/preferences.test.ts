@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "../src/preferences.ts";
+import {
+  acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, readSavedDarkTheme, saveDesktopPreferences,
+  WINDOW_BACKGROUND, windowBackground,
+} from "../src/preferences.ts";
 import { AGREEMENT_VERSION } from "../src/shared.ts";
 
 test("desktop onboarding preferences are separate, atomic, and private", () => {
@@ -50,4 +53,25 @@ test("explicit agreement acceptance persists its version and timestamp", () => {
   assert.equal(saved.acceptedAgreementVersion, AGREEMENT_VERSION);
   assert.equal(readDesktopPreferences(file).acceptedAgreementAt, at.toISOString());
   assert.equal(statSync(file).mode & 0o777, 0o600);
+});
+
+test("a saved dark theme is known before the first window, and anything else stays light", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "hebrew-live-theme-"));
+  assert.equal(readSavedDarkTheme(home), false);                       // no engine preferences yet
+  const folder = path.join(home, ".local-settings");
+  mkdirSync(folder);
+  const file = path.join(folder, "preferences.json");
+  for (const [text, dark] of [['{"schema_version":4,"dark_theme":true}', true], ['{"dark_theme":false}', false],
+                              ['{"dark_theme":"yes"}', false], ['[true]', false], ['null', false], ['{broken', false]] as const) {
+    writeFileSync(file, text);
+    assert.equal(readSavedDarkTheme(home), dark, text);
+  }
+  assert.equal(windowBackground(true), WINDOW_BACKGROUND.dark);
+  assert.equal(windowBackground(false), "#eef4ef");                    // the light window is unchanged
+});
+
+test("the dark window colour is the live page's dark background", () => {
+  const css = readFileSync(new URL("../../../experiments/publication-ui-preview/src/styles.css", import.meta.url), "utf8");
+  const dark = /:root\[data-theme="dark"\]\s*\{[^}]*--background:\s*(#[0-9a-f]{6})/i.exec(css);
+  assert.equal(dark?.[1], WINDOW_BACKGROUND.dark);
 });

@@ -760,7 +760,10 @@ def run(args, log):
     ui=getattr(args,'ui','auto')
     if ui=='browser' or (ui=='auto' and args.command=='listen' and sys.stdout.isatty()):
         from .browser_ui import BrowserUI
-        with BrowserUI(open_browser=not getattr(args,'no_open_browser',False),live=getattr(args,'publication',None) in ('revisable','draft')) as browser:
+        try:saved_dark=getattr(args,'models',None) is not None and read_preferences(preference_folder(args.models)).get('dark_theme') is True
+        except (OSError,ValueError):saved_dark=False    # the session reports a damaged file itself
+        with BrowserUI(open_browser=not getattr(args,'no_open_browser',False),live=getattr(args,'publication',None) in ('revisable','draft'),
+                       dark_theme=saved_dark) as browser:
             from .model_selection import ASR,TRANSLATION
             asr_label=ASR['streaming'][0]
             translation_label=('Custom local MLX-LM' if getattr(args,'translation_model',None)
