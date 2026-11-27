@@ -252,7 +252,7 @@ def run_session(args, session, browser_ui=None):
                 else:raise phone_audio.PhoneAudioError(f'Phone is not ready: {code}')
             rate=phone_audio.RATE if phone else int(sd.query_devices(args.device,'input')['default_samplerate'])
             if browser_ui:
-                browser_ui.details(device='Android · USB' if phone else sd.query_devices(args.device,'input')['name'],
+                browser_ui.details(device='Android' if phone else sd.query_devices(args.device,'input')['name'],
                                    rate=rate,channels=1,input_kind='Телефон' if phone else 'Микрофон',input_error=None,
                                    **({'phone_status':'ready'} if phone else {}))
             start_writer(rate,1)
@@ -270,10 +270,14 @@ def run_session(args, session, browser_ui=None):
                 except Exception:pass   # the stop below must happen even if the log cannot be written
                 errors.put(phone_audio.PhoneAudioError(f'Phone audio stopped: {reason}'));stop.set()
             capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended,
-                                            on_event=session.event) if phone else
+                                            on_event=session.event,pick=lambda:phone_audio.device()[1]) if phone else
                      sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback))
             with capture:
-                if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
+                if browser_ui:
+                    browser_ui.details(recording_started=True,capture_active=True,
+                                       **({'device':phone_audio.label(getattr(capture,'serial',None))} if phone else {}))
+                if phone:session.event('phone_device',serial=getattr(capture,'serial',None),
+                                       transport=phone_audio.transport(capture.serial) if getattr(capture,'serial',None) else None)
                 session.event('device',rate=rate,channels=1,input='phone' if phone else 'microphone')
                 updates.put(('status',0,'Listening'))
                 stop.wait()

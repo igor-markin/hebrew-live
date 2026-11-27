@@ -50,10 +50,34 @@ class PhoneStatusTests(unittest.TestCase):
                  head + 'X\tunauthorized usb:1\n': 'unauthorized', head + 'X\tauthorizing\n': 'unauthorized',
                  head + 'X\toffline\n': 'offline', head + 'X\tno permissions (user)\n': 'no_permissions',
                  head + 'X\trecovery\n': 'wrong_mode', head + 'X\tsomething new\n': 'unknown',
-                 head + 'X\tdevice\nY\tdevice\n': 'several_devices', head + 'X\tdevice\nY\tunauthorized\n': 'several_devices',
+                 head + 'X\tdevice\nY\tdevice\n': 'several_devices', head + 'X\tdevice\nY\tunauthorized\n': 'ready',
+                 head + 'X\toffline\nY\tunauthorized\n': 'several_devices',
                  '* daemon not running; starting now at tcp:5037\n* daemon started successfully\n' + head + 'X\tdevice\n': 'ready'}
         for output, expected in cases.items():
             self.assertEqual(phone_audio.status(adb(output)), expected, output)
+
+    def test_one_phone_seen_three_ways_is_taken_through_tailscale(self):
+        # 27.11.2026 12:24: cable, Wi-Fi debugging and the Tailscale port at once; Start was refused.
+        output = ('List of devices attached\n'
+                  '0A1B2C3D4E5F6G         device usb:17825792X product:mustang_beta model:Pixel_10_Pro_XL device:mustang transport_id:8\n'
+                  '100.101.102.103:5555    device product:mustang_beta model:Pixel_10_Pro_XL device:mustang transport_id:7\n'
+                  'adb-0A1B2C3D4E5F6G-aBcDeF._adb-tls-connect._tcp device product:mustang_beta model:Pixel_10_Pro_XL device:mustang transport_id:9\n')
+        self.assertEqual(phone_audio.device(adb(output)), ('ready', '100.101.102.103:5555'))
+        without_tailscale = '\n'.join(line for line in output.splitlines() if not line.startswith('100.'))
+        self.assertEqual(phone_audio.device(adb(without_tailscale)), ('ready', 'adb-0A1B2C3D4E5F6G-aBcDeF._adb-tls-connect._tcp'))
+        cable_only = 'List of devices attached\n' + output.splitlines()[1] + '\n100.101.102.103:5555 offline transport_id:7\n'
+        self.assertEqual(phone_audio.device(adb(cable_only)), ('ready', '0A1B2C3D4E5F6G'))
+        two_phones = ('List of devices attached\nA device usb:1 model:Pixel_10_Pro_XL\n'
+                      '100.1.2.3:5555 device model:Pixel_7\n')
+        self.assertEqual(phone_audio.device(adb(two_phones)), ('several_devices', None))
+
+    def test_connections_are_told_apart_by_their_serial(self):
+        for serial, expected in {'100.101.102.103:5555': 'tailscale', '[fd7a:115c:a1e0::1]:5555': 'tailscale',
+                                 '192.168.1.50:39801': 'wifi', 'adb-X-aBcDeF._adb-tls-connect._tcp': 'wifi',
+                                 '0A1B2C3D4E5F6G': 'usb', 'emulator-5554': 'usb'}.items():
+            self.assertEqual(phone_audio.transport(serial), expected, serial)
+        self.assertEqual(phone_audio.label('100.101.102.103:5555'), 'Android · Tailscale')
+        self.assertEqual(phone_audio.label(None), 'Android')
 
     def test_adb_is_started_then_asked_with_deadlines_and_failures_are_named(self):
         run = adb('List of devices attached\n')
@@ -61,7 +85,7 @@ class PhoneStatusTests(unittest.TestCase):
         (started, start_options), (arguments, options) = run.calls
         self.assertEqual(started, ['/opt/homebrew/bin/adb', 'start-server'])
         self.assertEqual(start_options['timeout'], phone_audio.START_SECONDS); self.assertEqual(start_options['stdout'], subprocess.DEVNULL)
-        self.assertEqual(arguments, ['/opt/homebrew/bin/adb', 'devices']); self.assertEqual(options['timeout'], 3.)
+        self.assertEqual(arguments, ['/opt/homebrew/bin/adb', 'devices', '-l']); self.assertEqual(options['timeout'], 3.)
         self.assertEqual(phone_audio.status(adb(error=subprocess.TimeoutExpired('adb', 3))), 'timeout')
         self.assertEqual(phone_audio.status(adb(error=FileNotFoundError())), 'adb_failed')
         self.assertEqual(phone_audio.status(adb(code=1)), 'adb_failed')

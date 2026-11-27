@@ -4,6 +4,7 @@ scrcpy records the call downlink - the other person's voice only - into a FIFO a
 The room, the phone speaker and the owner's own voice never reach recognition. Outside a
 call the phone sends almost nothing, so the stream just waits.
 """
+import ipaddress
 import os
 import shutil
 import signal
@@ -55,8 +56,9 @@ STATUSES = ('ready', 'no_scrcpy', 'no_adb', 'no_device', 'unauthorized', 'offlin
 CAPTURE_FAILED = 'capture_failed'   # not a check result: scrcpy stopped while adb still saw the phone
 
 
-def parse_devices(output):
-    """[(serial, state)] from `adb devices`; daemon start-up chatter and blank lines are skipped."""
+def parse_device_details(output):
+    """[(serial, state, details)] from `adb devices -l`; daemon start-up chatter and blank lines are
+    skipped. `details` holds the `key:value` words (`model`, `usb`, `transport_id`)."""
     found = []
     for line in output.splitlines():
         words = line.split(None, 1)
@@ -64,16 +66,72 @@ def parse_devices(output):
             continue
         serial, rest = words
         # `-l` and newer adb pad with spaces and append details; only "no permissions" has a space in it.
-        state = 'no permissions' if rest.startswith('no permissions') else rest.split()[0]
-        found.append((serial, state))
+        if rest.startswith('no permissions'):
+            state, rest = 'no permissions', rest[len('no permissions'):].split(')', 1)[-1] if '(' in rest else ''
+        else:
+            state, _, rest = rest.partition(' ')
+        details = dict(word.split(':', 1) for word in rest.split() if ':' in word)
+        found.append((serial, state, details))
     return found
+
+
+def parse_devices(output):
+    """[(serial, state)] from `adb devices`."""
+    return [(serial, state) for serial, state, _ in parse_device_details(output)]
+
+
+_TAILSCALE = (ipaddress.ip_network('100.64.0.0/10'), ipaddress.ip_network('fd7a:115c:a1e0::/48'))
+TRANSPORTS = ('tailscale', 'wifi', 'usb')   # preferred first: Tailscale works on any network,
+                                            # Wi-Fi only at home, a cable only at the desk
+
+
+def transport(serial):
+    """How adb reaches a device: `tailscale` (an address in Tailscale's ranges), `wifi` (any other
+    address, or the name wireless debugging announces over mDNS) or `usb`."""
+    host = serial.rsplit(':', 1)[0].strip('[]') if ':' in serial else ''
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return 'wifi' if '._adb-tls-connect._tcp' in serial or '._adb._tcp' in serial else 'usb'
+    return 'tailscale' if any(address in network for network in _TAILSCALE) else 'wifi'
+
+
+def label(serial):
+    """The window's name for the input: `Android · Tailscale`, `Android · Wi-Fi` or `Android · USB`."""
+    if not serial:
+        return 'Android'
+    return 'Android · ' + {'tailscale': 'Tailscale', 'wifi': 'Wi-Fi', 'usb': 'USB'}[transport(serial)]
+
+
+def choose(devices):
+    """(status, serial) for [(serial, state, details)]. The same phone often shows up several times
+    at once (cable, Wi-Fi debugging and the Tailscale port, 27.11.2026), and scrcpy then refuses to
+    pick: one ready connection is chosen by TRANSPORTS. Ready connections of different models, or
+    of no known model, may be different phones and stay `several_devices`."""
+    if not devices:
+        return 'no_device', None
+    ready = [(TRANSPORTS.index(transport(serial)), index, serial, details.get('model'))
+             for index, (serial, state, details) in enumerate(devices) if state == 'device']
+    if ready:
+        models = {model for *_, model in ready}
+        if len(ready) > 1 and (None in models or len(models) > 1):
+            return 'several_devices', None
+        return 'ready', min(ready)[2]
+    if len(devices) > 1:
+        return 'several_devices', None     # none ready: no single state to name
+    return _STATES.get(devices[0][1], 'unknown'), None
 
 
 START_SECONDS = 15.          # a cold adb service first scans the USB ports
 
 
 def status(run=subprocess.run, timeout=3., start_timeout=START_SECONDS):
-    """Whether a call can be taken now, without starting capture: one of STATUSES.
+    """Whether a call can be taken now, without starting capture: one of STATUSES."""
+    return device(run, timeout, start_timeout)[0]
+
+
+def device(run=subprocess.run, timeout=3., start_timeout=START_SECONDS):
+    """(one of STATUSES, the serial scrcpy should use or None).
 
     With the adb service down, `adb devices` starts it itself and can need more than the three
     seconds it has here (the likely cause of three failed window checks on 25.11.2026, not
@@ -81,36 +139,32 @@ def status(run=subprocess.run, timeout=3., start_timeout=START_SECONDS):
     captured (a service that keeps an inherited pipe open would hold up the check).
     """
     if not find_scrcpy():
-        return 'no_scrcpy'
+        return 'no_scrcpy', None
     adb = find_adb()
     if not adb:
-        return 'no_adb'
+        return 'no_adb', None
     try:
         started = run([adb, 'start-server'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                       stdin=subprocess.DEVNULL, timeout=start_timeout)
         if started.returncode:
-            return 'adb_failed'
-        result = run([adb, 'devices'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            return 'adb_failed', None
+        result = run([adb, 'devices', '-l'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
-        return 'timeout'
+        return 'timeout', None
     except OSError:
-        return 'adb_failed'
+        return 'adb_failed', None
     if result.returncode:
-        return 'adb_failed'
-    devices = parse_devices(result.stdout or '')
-    if len(devices) > 1:
-        return 'several_devices'          # scrcpy refuses to pick one, whatever their states
-    if not devices:
-        return 'no_device'
-    return _STATES.get(devices[0][1], 'unknown')
+        return 'adb_failed', None
+    return choose(parse_device_details(result.stdout or ''))
 
 
-def command(fifo, source=SOURCE, executable=None):
+def command(fifo, source=SOURCE, executable=None, serial=None):
     executable = executable or find_scrcpy()
     if not executable:
         raise PhoneAudioError('scrcpy is not installed: brew install scrcpy')
-    return [executable, '--no-video', '--no-audio-playback', '--no-window', '--no-control',
-            f'--audio-source={source}', '--audio-codec=raw', f'--record={fifo}', '--record-format=wav']
+    return [executable, *([f'--serial={serial}'] if serial else []), '--no-video', '--no-audio-playback',
+            '--no-window', '--no-control', f'--audio-source={source}', '--audio-codec=raw', f'--record={fifo}',
+            '--record-format=wav']
 
 
 def parse_header(data):
@@ -154,9 +208,12 @@ class PhoneAudio:
     every exit and restart, so the session log keeps the reason after the temporary folder is gone."""
 
     def __init__(self, on_audio, on_end, source=SOURCE, executable=None, popen=subprocess.Popen,
-                 on_event=None, starts=STARTS, restart_pause=RESTART_PAUSE_SECONDS):
+                 on_event=None, starts=STARTS, restart_pause=RESTART_PAUSE_SECONDS, pick=None):
+        """`pick()` names the device serial for each run (None: let scrcpy find the only one);
+        a restart asks again, so a run after a dropped connection takes one that is still there."""
         self.on_audio, self.on_end, self.source, self.executable, self.popen = on_audio, on_end, source, executable, popen
-        self.on_event, self.starts, self.restart_pause = on_event, starts, restart_pause
+        self.on_event, self.starts, self.restart_pause, self.pick = on_event, starts, restart_pause, pick
+        self.serial = None
         self.stopping = threading.Event(); self.lock = threading.Lock()
         self.thread = self.process = self.folder = None; self.attempt = 0
 
@@ -165,7 +222,7 @@ class PhoneAudio:
         self.fifo = os.path.join(self.folder, 'audio.wav')
         os.mkfifo(self.fifo, 0o600)
         try:
-            self.arguments = command(self.fifo, self.source, self.executable)
+            command(self.fifo, self.source, self.executable)          # fail early when scrcpy is missing
             self.environment = dict(os.environ, PATH=os.pathsep.join((os.environ.get('PATH', ''), *_SEARCH)))  # scrcpy runs adb
             adb = find_adb()
             if adb: self.environment['ADB'] = adb
@@ -182,9 +239,14 @@ class PhoneAudio:
             if self.stopping.is_set():
                 return False
             self.attempt += 1
+            self.serial = None
+            if self.pick is not None:
+                try: self.serial = self.pick()
+                except Exception: self.serial = None
+            arguments = command(self.fifo, self.source, self.executable, self.serial)
             self.log = os.path.join(self.folder, f'scrcpy-{self.attempt}.log')
             with open(self.log, 'wb') as log:
-                self.process = self.popen(self.arguments, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                self.process = self.popen(arguments, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                           env=self.environment)
             return True
 
@@ -232,10 +294,10 @@ class PhoneAudio:
         code = self.process.poll()
         reason = self.failure(code)
         restart = not audio and self.attempt < self.starts
-        self.event('phone_capture_exit', attempt=self.attempt, returncode=code, reason=reason[:300], audio=audio,
+        self.event('phone_capture_exit', attempt=self.attempt, serial=self.serial, returncode=code, reason=reason[:300], audio=audio,
                    restart=restart, log=[line[:200] for line in self.lines()[-LOG_TAIL_LINES:]])
         if restart and not self.stopping.wait(self.restart_pause) and self.launch():
-            self.event('phone_capture_restart', attempt=self.attempt)
+            self.event('phone_capture_restart', attempt=self.attempt, serial=self.serial)
             return True
         if not self.stopping.is_set(): self.on_end(reason)
         return False
