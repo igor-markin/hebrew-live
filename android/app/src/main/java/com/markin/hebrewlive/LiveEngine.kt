@@ -37,6 +37,8 @@ class Segment(val id: Int, val startedMs: Long) {
     @Volatile var startAudioS: Double = 0.0
     @Volatile var endAudioS: Double = 0.0
     @Volatile var drafts: Int = 0
+    /** Clauses of one recognizer utterance share a group and one card on screen. */
+    @Volatile var group: Int = 0
     /** Input it was heard on; context never crosses from the microphone to a call. */
     @Volatile var source: String = ""
     /** The final translation ended on its own (not cut by a stop or the budget). */
@@ -116,6 +118,7 @@ class LiveEngine(
             "audio_mode" to audioManager.mode, "shizuku" to callAudio?.state()?.name,
             "config" to mapOf(
                 "rate" to RATE, "draft_step_words" to DRAFT_STEP_WORDS, "asr_threads" to 2,
+                "clause_min_words" to CLAUSE_MIN_WORDS, "clause_force_words" to CLAUSE_FORCE_WORDS,
                 "endpoint_rule1" to "after 8 s, silence 0.3 s", "endpoint_rule2" to "silence 0.8 s after speech",
                 "endpoint_rule3" to "phrase 20 s", "context_gap_s" to 20,
             ))
@@ -235,8 +238,10 @@ class LiveEngine(
         }
         val stream = recognizer.createStream("")
         val chunk = ShortArray(RATE / 10)
-        var current: Segment? = null
-        var lastDraftWords = 0
+        current = null
+        committed = 0
+        prevTail = ""
+        group = 0
         var wasSilenced = false
         listener.onStatus("Слушаю ${input.label}")
         traceInput(input, "start")
@@ -303,38 +308,15 @@ class LiveEngine(
                     Trace.system("listening")
                 }
 
-                if (text.isNotEmpty()) {
-                    val seg = current ?: Segment(ids.incrementAndGet(), SystemClock.elapsedRealtime()).also {
-                        current = it
-                        lastDraftWords = 0
-                        it.startAudioS = audioS - n.toDouble() / RATE
-                        it.source = input.label
-                        synchronized(segments) { segments.add(it) }
-                    }
-                    if (text != seg.hebrew) {
-                        seg.hebrew = text
-                        Trace.event("asr_partial", "seg" to seg.id, "audio_s" to audioS, "he" to text)
-                        listener.onSegment(seg)
-                        val words = text.split(' ').size
-                        if (words >= lastDraftWords + DRAFT_STEP_WORDS) {
-                            lastDraftWords = words
-                            requestDraft(seg)
-                        }
-                    }
-                }
+                onText(text, input.label, n)
                 if (endpoint) {
-                    current?.let { close(it, "endpoint") }
-                    current = null
+                    endUtterance(text, "endpoint")
                     recognizer.reset(stream)
                 }
             }
             stream.inputFinished()
             while (recognizer.isReady(stream)) recognizer.decode(stream)
-            current?.let { seg ->
-                val text = recognizer.getResult(stream).text.trim()
-                if (text.isNotEmpty()) seg.hebrew = text
-                close(seg, "pause pressed")
-            }
+            endUtterance(recognizer.getResult(stream).text.trim(), "pause pressed")
         } finally {
             input.close()
             silenced = false
@@ -343,6 +325,103 @@ class LiveEngine(
             stream.release()
             listener.onStatus("Пауза")
         }
+    }
+
+    // ---------- one utterance of the recognizer, cut into clauses ----------
+    // The recognizer's text grows until an endpoint. Translating the whole of a 15-20 s sentence again
+    // at its end took 10-15 s and rewrote the screen many times. So a clause that has stopped changing
+    // is closed as its own phrase as soon as the next word starts: it is translated once, with the
+    // previous clause as context, and the open tail stays short.
+
+    private var current: Segment? = null
+    private var lastDraftWords = 0
+    /** Characters of the recognizer's text already given to closed clauses. */
+    private var committed = 0
+    /** The open tail at the previous update: a clause is cut only where it did not change. */
+    private var prevTail = ""
+    /** The utterance the clauses belong to; the screen shows one card per utterance. */
+    private var group = 0
+
+    private fun tailStart(text: String): Int {
+        val base = minOf(committed, text.length)
+        return base + (text.length - base - text.substring(base).trimStart().length)
+    }
+
+    private fun onText(text: String, source: String, n: Int) {
+        var start = tailStart(text)
+        var tail = text.substring(start)
+        if (tail.isEmpty() || tail == current?.hebrew) return
+        val cut = clauseCut(tail, prevTail)
+        if (cut > 0) {
+            val seg = openSegment(source, n)
+            seg.hebrew = tail.substring(0, cut).trim()
+            Trace.event("asr_partial", "seg" to seg.id, "audio_s" to audioS, "he" to seg.hebrew, "clause" to true)
+            close(seg, "clause")
+            current = null
+            committed = start + cut
+            start = tailStart(text)
+            tail = text.substring(start)
+            if (tail.isEmpty()) {
+                prevTail = ""
+                return
+            }
+        }
+        prevTail = tail
+        val seg = openSegment(source, n)
+        seg.hebrew = tail
+        Trace.event("asr_partial", "seg" to seg.id, "audio_s" to audioS, "he" to tail)
+        listener.onSegment(seg)
+        val words = tail.split(' ').size
+        if (words >= lastDraftWords + DRAFT_STEP_WORDS) {
+            lastDraftWords = words
+            requestDraft(seg)
+        }
+    }
+
+    private fun openSegment(source: String, n: Int): Segment = current ?: Segment(ids.incrementAndGet(), SystemClock.elapsedRealtime()).also {
+        current = it
+        lastDraftWords = 0
+        if (group == 0) group = it.id
+        it.group = group
+        it.startAudioS = audioS - n.toDouble() / RATE
+        it.source = source
+        synchronized(segments) { segments.add(it) }
+    }
+
+    /** The recognizer closed the utterance: the open tail becomes the last clause. */
+    private fun endUtterance(text: String, reason: String) {
+        val tail = text.substring(tailStart(text)).trim()
+        val seg = current
+        if (seg != null) {
+            if (tail.isNotEmpty()) seg.hebrew = tail
+            close(seg, reason)
+        } else if (tail.isNotEmpty() && group != 0) {
+            Trace.event("asr_tail_dropped", "he" to tail)
+        }
+        current = null
+        committed = 0
+        prevTail = ""
+        group = 0
+    }
+
+    /**
+     * Where a clause can be closed in the open tail, or 0. Only words that were already there at the
+     * previous update count (the recognizer updates about every 1.3 s, and its last word may be cut).
+     * Among them: the last punctuation with at least [CLAUSE_MIN_WORDS] words before it; or, in a long
+     * run without punctuation, all of them once there are [CLAUSE_FORCE_WORDS].
+     */
+    private fun clauseCut(tail: String, prev: String): Int {
+        val words = Regex("\\S+").findAll(tail).toList()
+        val before = prev.split(' ').filter { it.isNotEmpty() }
+        var stable = 0
+        while (stable < words.size && stable < before.size && words[stable].value == before[stable]) stable++
+        stable = minOf(stable, before.size - 1, words.size - 1)
+        if (stable < CLAUSE_MIN_WORDS) return 0
+        for (i in stable - 1 downTo CLAUSE_MIN_WORDS - 1) {
+            if (words[i].value.last() in ",.?!;:") return words[i].range.last + 1
+        }
+        if (stable >= CLAUSE_FORCE_WORDS) return words[stable - 1].range.last + 1
+        return 0
     }
 
     private fun close(seg: Segment, reason: String) {
@@ -504,6 +583,10 @@ class LiveEngine(
     companion object {
         const val RATE = 16000
         const val DRAFT_STEP_WORDS = 3
+        /** A clause closed at punctuation has at least this many words. */
+        const val CLAUSE_MIN_WORDS = 3
+        /** Without punctuation, this many settled words are closed as a clause. */
+        const val CLAUSE_FORCE_WORDS = 10
         private const val TAG = "HebrewLive"
     }
 }

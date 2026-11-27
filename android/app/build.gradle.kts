@@ -23,8 +23,8 @@ android {
         applicationId = "com.markin.hebrewlive"
         minSdk = 33
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.4.0-pixel" + if (kleidiai) "-kleidiai" else ""
+        versionCode = 6
+        versionName = "0.5.0-pixel" + if (kleidiai) "-kleidiai" else ""
         ndk { abiFilters += listOf("arm64-v8a") }
         buildConfigField("boolean", "KLEIDIAI", kleidiai.toString())
         externalNativeBuild {

@@ -480,8 +480,10 @@ class MainActivity : Activity(), LiveEngine.Listener {
         main.post { status.text = text }
     }
 
+    /** One card per utterance: its clauses' Hebrew above, their Russian below; unfinished parts in grey. */
     private fun render(seg: Segment) {
-        val pair = views.getOrPut(seg.id) {
+        val key = if (seg.group != 0) seg.group else seg.id
+        val pair = views.getOrPut(key) {
             val he = text(17f, MUTED).apply {
                 textDirection = View.TEXT_DIRECTION_RTL
                 gravity = Gravity.END
@@ -499,12 +501,25 @@ class MainActivity : Activity(), LiveEngine.Listener {
             })
             he to ru
         }
-        pair.first.text = seg.hebrew
-        pair.first.setTextColor(if (seg.final) FG else MUTED)
-        pair.second.text = seg.russian
-        // Draft (open phrase or unfinished translation) in grey, final translation in white.
-        pair.second.setTextColor(if (seg.translated) FG else MUTED)
+        val parts = synchronized(engine.segments) { engine.segments.filter { (if (it.group != 0) it.group else it.id) == key } }
+        val he = android.text.SpannableStringBuilder()
+        val ru = android.text.SpannableStringBuilder()
+        for (p in parts) {
+            append(he, p.hebrew, if (p.final) FG else MUTED)
+            // Final translation in white; a draft (open clause or unfinished translation) in grey.
+            append(ru, p.russian, if (p.translated) FG else MUTED)
+        }
+        pair.first.text = he
+        pair.second.text = ru
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun append(out: android.text.SpannableStringBuilder, part: String, color: Int) {
+        if (part.isEmpty()) return
+        if (out.isNotEmpty()) out.append(' ')
+        val from = out.length
+        out.append(part)
+        out.setSpan(android.text.style.ForegroundColorSpan(color), from, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     private fun gb(bytes: Long) = String.format(Locale.US, "%.2f ГБ", bytes / 1e9)
