@@ -281,11 +281,15 @@ html[dir="rtl"] .session-delete {right:auto;left:6px}
 .phone-view-link code {flex:1 1 220px;min-width:0;overflow-wrap:anywhere;user-select:all;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:8px}
 .phone-view-link button {font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:inherit;cursor:pointer}
 html[dir="rtl"] .phone-view-link {margin-left:0;margin-right:24px}
-.messenger-shell.viewer-shell,html[dir="rtl"] .messenger-shell.viewer-shell {padding:0 12px}
+/* Phone page: bar and buttons stay on screen, only the feed scrolls. */
+.messenger-shell.viewer-shell,html[dir="rtl"] .messenger-shell.viewer-shell {padding:0;height:100vh;height:100dvh;min-height:0;overflow:hidden}
+.viewer-shell .conversation-pane {height:100%;max-width:none;display:flex;flex-direction:column}
+.viewer-shell .viewer-bar,.viewer-shell .viewer-controls,.viewer-shell .global-error {flex:none}
 .viewer-bar {display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border)}
 .viewer-bar > span:last-child {display:flex;flex-direction:column;min-width:0}
 .viewer-bar small {color:var(--muted);font-size:12px}
-.live-shell.viewer-shell .chat-feed {height:calc(100vh - 140px);height:calc(100dvh - 140px);max-width:none}
+.live-shell.viewer-shell .chat-feed {flex:1 1 auto;min-height:0;height:auto;max-width:none;width:100%;padding:12px 12px 16px;scrollbar-gutter:auto}
+.viewer-shell .live-feed .chat-bubble {width:100%;max-width:100%}
 .viewer-controls {display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border)}
 .viewer-controls button {min-height:44px}
 .viewer-phone-status,.viewer-controls .unavailable {flex-basis:100%;margin:0;font-size:14px;color:var(--muted)}
