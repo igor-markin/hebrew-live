@@ -23,9 +23,12 @@ struct Translator {
     llama_sampler *sampler = nullptr;
     const llama_vocab *vocab = nullptr;
     std::atomic<bool> cancel{false};
-    // Stats of the last call: prompt tokens, prompt ms, generated tokens, generation ms, first token ms.
-    double stats[5] = {0, 0, 0, 0, 0};
+    // Stats of the last call: prompt tokens, prompt ms, generated tokens, generation ms, first token ms,
+    // why it stopped (STOP_*).
+    double stats[6] = {0, 0, 0, 0, 0, 0};
 };
+
+enum Stop { STOP_EOS = 0, STOP_NEWLINE = 1, STOP_BUDGET = 2, STOP_CANCEL = 3, STOP_LISTENER = 4, STOP_ERROR = 5 };
 
 double now_ms() {
     using namespace std::chrono;
@@ -139,8 +142,8 @@ Java_com_markin_hebrewlive_NativeTranslator_cancel(JNIEnv *, jobject, jlong hand
 JNIEXPORT jdoubleArray JNICALL
 Java_com_markin_hebrewlive_NativeTranslator_lastStats(JNIEnv *env, jobject, jlong handle) {
     auto *t = reinterpret_cast<Translator *>(handle);
-    jdoubleArray out = env->NewDoubleArray(5);
-    if (t) env->SetDoubleArrayRegion(out, 0, 5, t->stats);
+    jdoubleArray out = env->NewDoubleArray(6);
+    if (t) env->SetDoubleArrayRegion(out, 0, 6, t->stats);
     return out;
 }
 
@@ -167,6 +170,8 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
     if (n + max_tokens > n_ctx) max_tokens = std::max(16, n_ctx - n);
     if (n >= n_ctx) {
         LOGE("prompt too long: %d tokens", n);
+        t->stats[0] = n;
+        t->stats[5] = STOP_ERROR;
         return env->NewStringUTF("");
     }
 
@@ -176,6 +181,7 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
         int len = std::min(512, n - i);
         if (llama_decode(t->ctx, llama_batch_get_one(tokens.data() + i, len)) != 0) {
             LOGE("prompt decode failed");
+            t->stats[5] = STOP_ERROR;
             return env->NewStringUTF("");
         }
     }
@@ -186,12 +192,19 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
     std::string text;
     size_t emitted = 0;
     int generated = 0;
+    int stop = STOP_BUDGET;
     char piece[256];
     for (; generated < max_tokens; ++generated) {
-        if (t->cancel) break;
+        if (t->cancel) {
+            stop = STOP_CANCEL;
+            break;
+        }
         llama_token id = llama_sampler_sample(t->sampler, t->ctx, -1);
         // MiLMMT stops on <eos> (1) and <end_of_turn> (106), as in translation.configure.
-        if (id == 1 || id == 106 || llama_vocab_is_eog(t->vocab, id)) break;
+        if (id == 1 || id == 106 || llama_vocab_is_eog(t->vocab, id)) {
+            stop = STOP_EOS;
+            break;
+        }
         int len = llama_token_to_piece(t->vocab, id, piece, sizeof(piece), 0, false);
         if (len > 0) text.append(piece, static_cast<size_t>(len));
         if (generated == 0) t->stats[4] = now_ms() - t0;
@@ -200,6 +213,7 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
         if (newline != std::string::npos) {
             text.resize(newline);
             ++generated;
+            stop = STOP_NEWLINE;
             break;
         }
         size_t complete = complete_utf8(text);
@@ -210,16 +224,19 @@ Java_com_markin_hebrewlive_NativeTranslator_generate(JNIEnv *env, jobject, jlong
             env->DeleteLocalRef(partial);
             if (!keep) {
                 ++generated;
+                stop = STOP_LISTENER;
                 break;
             }
         }
         if (llama_decode(t->ctx, llama_batch_get_one(&id, 1)) != 0) {
             LOGE("token decode failed");
+            stop = STOP_ERROR;
             break;
         }
     }
     t->stats[2] = generated;
     t->stats[3] = now_ms() - t1;
+    t->stats[5] = stop;
     env->DeleteLocalRef(listener_class);
     return to_jstring(env, text.substr(0, complete_utf8(text)));
 }

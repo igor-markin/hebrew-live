@@ -43,6 +43,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
     private lateinit var fastButton: Button
     private lateinit var startButton: Button
     private lateinit var benchButton: Button
+    private lateinit var shareButton: Button
     private lateinit var metrics: TextView
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
@@ -51,6 +52,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Trace.init(this)
         store = ModelStore(this)
         calls = CallAudio(this)
         engine = LiveEngine(assets, getSystemService(AudioManager::class.java), calls, File(getExternalFilesDir(null), "sessions"), this)
@@ -58,6 +60,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
         refreshModel()
         thread(name = "asr-load") {
             val ms = engine.warmUpRecognizer()
+            Trace.event("asr_loaded", "ms" to ms, "model" to "ivrit-ai zipformer2-66m int8")
             main.post { status.text = "Распознавание загружено за ${ms} мс" }
         }
         if (store.isReady() || store.fastReady()) loadTranslator()
@@ -146,6 +149,9 @@ class MainActivity : Activity(), LiveEngine.Listener {
             addView(clear, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         })
 
+        shareButton = button("Поделиться журналом") { onShare() }
+        root.addView(shareButton)
+
         metrics = text(12f, MUTED).apply {
             typeface = Typeface.MONOSPACE
             setPadding(0, dp(6), 0, dp(6))
@@ -208,6 +214,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
                 return
             }
             prefs().edit().putString("model", next).apply()
+            Trace.event("model_switch", "to" to next)
             reloadTranslator()
             return
         }
@@ -215,13 +222,18 @@ class MainActivity : Activity(), LiveEngine.Listener {
         refreshModel()
         thread(name = "fast-model") {
             try {
-                store.prepareFast { line -> main.post { status.text = line } }
+                Trace.event("fast_model", "stage" to "start")
+                store.prepareFast { line ->
+                    Trace.event("fast_model", "stage" to line)
+                    main.post { status.text = line }
+                }
                 prefs().edit().putString("model", FAST).apply()
                 main.post {
                     busy = false
                     reloadTranslator()
                 }
             } catch (e: Throwable) {
+                Trace.error("fast_model_error", e)
                 main.post {
                     busy = false
                     status.text = "Быстрая модель: ${e.message}"
@@ -280,10 +292,15 @@ class MainActivity : Activity(), LiveEngine.Listener {
         thread(name = "mt-load") {
             val t0 = SystemClock.elapsedRealtime()
             try {
-                val t = Translator(modelFile(key), threads)
+                val file = modelFile(key)
+                val t = Translator(file, threads)
+                val loadMs = SystemClock.elapsedRealtime() - t0
                 // One short call maps the weights in, so the first phrase is not slow.
                 t.translate("שלום")
                 val ms = SystemClock.elapsedRealtime() - t0
+                Trace.event("mt_loaded", "model" to file.name, "bytes" to file.length(), "threads" to threads,
+                    "n_ctx" to 2048, "load_ms" to loadMs, "warmup_ms" to ms - loadMs, "warmup_stats" to t.lastStats.toString())
+                Trace.system("mt_loaded")
                 main.post {
                     translator = t
                     engine.attachTranslator(t)
@@ -291,6 +308,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
                     refreshModel()
                 }
             } catch (e: Throwable) {
+                Trace.error("mt_load_error", e, "model" to key)
                 main.post { status.text = "Перевод не загрузился: ${e.message}" }
             }
         }
@@ -298,6 +316,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
 
     private fun onStartPressed() {
         if (engine.isRecording) {
+            Trace.event("ui", "action" to "pause")
             engine.stop()
             startButton.text = "▶ Начать"
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -307,6 +326,7 @@ class MainActivity : Activity(), LiveEngine.Listener {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
             return
         }
+        Trace.event("ui", "action" to "start")
         engine.start()
         startButton.text = "⏸ Пауза"
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -328,6 +348,8 @@ class MainActivity : Activity(), LiveEngine.Listener {
         benchButton.isEnabled = false
         val key = currentModel()
         status.text = "Замер ${modelName(key)}: 2, 3, 4, 5, 6 потоков × 5 фраз…"
+        Trace.event("bench_start", "model" to modelFile(key).name)
+        Trace.system("bench_start")
         thread(name = "bench") {
             val report = StringBuilder("Модель ${modelName(key)}\n")
             var best = 0 to 0.0
@@ -342,6 +364,9 @@ class MainActivity : Activity(), LiveEngine.Listener {
                 for (phrase in BENCH) {
                     val out = t.translate(phrase)
                     val s = t.lastStats
+                    Trace.event("bench_phrase", "threads" to threads, "he" to phrase, "ru" to out, "stop" to s.stop,
+                        "prompt_tokens" to s.promptTokens, "prompt_ms" to s.promptMs, "tokens" to s.tokens,
+                        "gen_ms" to s.genMs, "first_token_ms" to s.firstTokenMs, "tok_per_s" to s.tokensPerSecond)
                     tokens += s.tokens
                     genMs += s.genMs
                     totalMs += s.totalMs
@@ -350,12 +375,16 @@ class MainActivity : Activity(), LiveEngine.Listener {
                 }
                 val tps = tokens * 1000.0 / genMs
                 if (tps > best.second) best = threads to tps
+                Trace.event("bench_threads", "threads" to threads, "tok_per_s" to tps,
+                    "first_token_s" to firstMs / BENCH.size / 1000, "phrase_s" to totalMs / BENCH.size / 1000)
+                Trace.system("bench")
                 report.append(String.format(Locale.US, "%d потоков: %.1f ток/с, первый токен %.2f с, фраза %.2f с\n",
                     threads, tps, firstMs / BENCH.size / 1000, totalMs / BENCH.size / 1000))
                 if (threads == 4) lines.forEachIndexed { i, s -> report.append("  ${i + 1}. $s\n") }
                 main.post { status.text = report.toString().trim() }
             }
             t.threads = best.first
+            Trace.event("bench_done", "best_threads" to best.first, "tok_per_s" to best.second)
             prefs().edit().putInt("threads_$key", best.first).apply()
             report.append("Оставил ${best.first} потоков")
             File(getExternalFilesDir(null), "bench.txt").appendText(report.toString() + "\n\n")
@@ -367,11 +396,43 @@ class MainActivity : Activity(), LiveEngine.Listener {
         }
     }
 
+    /** Zips the journal, recordings and logcat into Downloads and opens Android's share sheet. */
+    private fun onShare() {
+        if (engine.isRecording) {
+            status.text = "Сначала пауза, чтобы запись сессии закрылась"
+            return
+        }
+        shareButton.isEnabled = false
+        status.text = "Собираю журнал…"
+        thread(name = "share") {
+            try {
+                val (uri, bytes) = Trace.pack(File(getExternalFilesDir(null), "sessions"))
+                main.post {
+                    shareButton.isEnabled = true
+                    status.text = "Журнал в «Загрузках», ${"%.1f".format(Locale.US, bytes / 1e6)} МБ до сжатия"
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(android.content.Intent.createChooser(send, "Журнал Hebrew Live"))
+                }
+            } catch (e: Throwable) {
+                Trace.error("share_error", e)
+                main.post {
+                    shareButton.isEnabled = true
+                    status.text = "Журнал не собрался: ${e.message}"
+                }
+            }
+        }
+    }
+
     /** Shizuku state for call audio: checked every second, the service starts as soon as it is allowed. */
     private fun refreshCalls() {
         val state = calls.state()
         if (state == callState) return
         callState = state
+        Trace.event("shizuku", "state" to state.name, "error" to calls.lastError.ifEmpty { null })
         when (state) {
             CallAudio.State.READY -> {
                 callLine.text = "Звонки: Shizuku готов, во время звонка слушаю собеседника"

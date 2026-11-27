@@ -56,6 +56,18 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 The release APK is signed with the local debug key: it is a trial for one phone, not for distribution.
 
+## Journal for tuning
+
+Every launch writes `files/logs/<time>.jsonl`, one JSON line per event with `t` (ms since launch) and `ev`:
+`app_start` (build, KleidiAI, device, llama.cpp CPU features), `mt_loaded`, `session_start` (settings),
+`input` and `silenced` (microphone or call, audio mode, Shizuku state), `audio` (each second: level, recognizer
+cost), `asr_partial` and `asr_final` (text with its place in the session WAV), `mt` (each model call: exact
+prompt, output, why it stopped, wait, prompt and generation times, tokens/s), `system` (every 5 s: memory,
+heat status, battery temperature, CPU clocks), `bench_*`, errors and crashes. **Поделиться журналом** packs
+the journals of this and the previous launch, their WAVs, `bench.txt` and the app's logcat into
+`Downloads/hebrew-live-log-<time>.zip` and opens the share sheet. These files hold call audio and text: they
+stay on the phone until shared and must not be committed.
+
 ## What it records
 
 Each session writes `files/sessions/<time>.jsonl` (one line per phrase: Hebrew, Russian, phrase length,

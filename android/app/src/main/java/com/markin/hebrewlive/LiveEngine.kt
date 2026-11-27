@@ -33,6 +33,10 @@ class Segment(val id: Int, val startedMs: Long) {
     @Volatile var endedMs: Long = 0
     @Volatile var translatedMs: Long = 0
     @Volatile var stats: MtStats? = null
+    /** Where the phrase is in the session WAV, seconds. */
+    @Volatile var startAudioS: Double = 0.0
+    @Volatile var endAudioS: Double = 0.0
+    @Volatile var drafts: Int = 0
 }
 
 /**
@@ -62,6 +66,7 @@ class LiveEngine(
     private var worker: Thread? = null
     private val finals = LinkedBlockingDeque<Segment>()
     @Volatile private var draft: Segment? = null
+    @Volatile private var draftRequestedMs = 0L
     private val wake = Object()
 
     /** Loudness of the last 100 ms, dBFS (-90 = silence). */
@@ -79,6 +84,7 @@ class LiveEngine(
 
     fun attachTranslator(t: Translator?) {
         translator = t
+        Trace.event("translator", "model" to t?.modelName, "threads" to t?.threads)
         ensureWorker()
     }
 
@@ -98,6 +104,16 @@ class LiveEngine(
         val name = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
         log = File(sessionsDir, "$name.jsonl").bufferedWriter()
         wav = WavWriter(File(sessionsDir, "$name.wav"), RATE)
+        sessionName = name
+        Trace.event("session_start", "session" to name, "wav" to "$name.wav",
+            "model" to translator?.modelName, "threads" to translator?.threads,
+            "audio_mode" to audioManager.mode, "shizuku" to callAudio?.state()?.name,
+            "config" to mapOf(
+                "rate" to RATE, "draft_step_words" to DRAFT_STEP_WORDS, "asr_threads" to 2,
+                "endpoint_rule1" to "no speech 2.4 s", "endpoint_rule2" to "silence 0.8 s after speech",
+                "endpoint_rule3" to "phrase 20 s", "context_gap_s" to 20,
+            ))
+        Trace.system("session_start")
         ensureWorker()
         audioThread = Thread({ audioLoop() }, "asr").apply { start() }
     }
@@ -106,6 +122,9 @@ class LiveEngine(
         recording = false
         audioThread?.join(3000)
         audioThread = null
+        Trace.event("session_stop", "session" to sessionName, "audio_s" to samplesTotal.toDouble() / RATE,
+            "asr_rtf" to if (asrAudioSeconds > 0) asrComputeSeconds / asrAudioSeconds else null,
+            "phrases" to synchronized(segments) { segments.size })
         wav?.close()
         wav = null
     }
@@ -153,6 +172,7 @@ class LiveEngine(
             if (calls == null || calls.state() != CallAudio.State.READY) {
                 if (!warnedNoShizuku) {
                     warnedNoShizuku = true
+                    traceInput(input, "call without Shizuku")
                     listener.onStatus("⚠ Идёт звонок: Android заглушил микрофон. Для звука звонка нужен Shizuku с разрешением для Hebrew Live.")
                 }
                 return input
@@ -161,10 +181,12 @@ class LiveEngine(
             lastCallAttempt = now
             val call = calls.open()
             if (call == null) {
+                traceInput(input, "call audio failed", calls.lastError)
                 listener.onStatus("⚠ Идёт звонок, а звук звонка не открылся: ${calls.lastError}")
                 return input
             }
             input.close()
+            traceInput(call, "call started")
             listener.onStatus("Звонок: слушаю ${call.label}")
             return call
         }
@@ -172,10 +194,22 @@ class LiveEngine(
             input.close()
             warnedNoShizuku = false
             val mic = openMic() ?: return input
+            traceInput(mic, "call ended")
             listener.onStatus("Звонок закончился, слушаю микрофон")
             return mic
         }
         return input
+    }
+
+    private var sessionName = ""
+    /** Samples written to the session WAV so far: the audio clock of every event. */
+    @Volatile private var samplesTotal = 0L
+    private val audioS: Double get() = samplesTotal.toDouble() / RATE
+
+    private fun traceInput(input: AudioInput, reason: String, error: String? = null) {
+        Trace.event("input", "source" to input.label, "reason" to reason, "audio_s" to audioS,
+            "audio_mode" to audioManager.mode, "shizuku" to callAudio?.state()?.name,
+            "silenced" to input.silenced, "error" to error)
     }
 
     private var lastSwitchCheck = 0L
@@ -186,6 +220,7 @@ class LiveEngine(
         lastSwitchCheck = 0L
         lastCallAttempt = 0L
         warnedNoShizuku = false
+        samplesTotal = 0L
         var input: AudioInput = openMic() ?: run {
             recording = false
             return
@@ -196,6 +231,13 @@ class LiveEngine(
         var lastDraftWords = 0
         var wasSilenced = false
         listener.onStatus("Слушаю ${input.label}")
+        traceInput(input, "start")
+        // Per-second audio summary for the journal.
+        var secSamples = 0
+        var secEnergy = 0.0
+        var secPeakDb = -90.0
+        var secCompute = 0.0
+        var lastSystem = SystemClock.elapsedRealtime()
         try {
             while (recording) {
                 input = switchIfNeeded(input, SystemClock.elapsedRealtime())
@@ -203,13 +245,16 @@ class LiveEngine(
                 if (n < 0) {
                     // The call stream ended (the shell process stopped): back to the microphone.
                     input.close()
+                    Trace.event("input_ended", "source" to input.label, "audio_s" to audioS)
                     input = openMic() ?: break
+                    traceInput(input, "call stream ended")
                     listener.onStatus("Звук звонка прервался, слушаю микрофон")
                     continue
                 }
                 silenced = input.silenced
                 if (silenced != wasSilenced) {
                     wasSilenced = silenced
+                    Trace.event("silenced", "value" to silenced, "source" to input.label, "audio_s" to audioS, "audio_mode" to audioManager.mode)
                     if (input is MicInput && !inCall()) listener.onStatus(
                         if (silenced) "⚠ Микрофон забрало другое приложение. Распознавание слышит тишину."
                         else "Слушаю ${input.label}"
@@ -217,27 +262,49 @@ class LiveEngine(
                 }
                 if (n == 0) continue
                 wav?.write(chunk, n)
+                samplesTotal += n
                 val samples = FloatArray(n) { chunk[it] / 32768f }
                 var energy = 0.0
                 for (v in samples) energy += v * v
                 levelDb = 10 * Math.log10(energy / n + 1e-9)
+                secSamples += n
+                secEnergy += energy
+                secPeakDb = maxOf(secPeakDb, levelDb)
                 source = input.label
                 val t0 = System.nanoTime()
                 stream.acceptWaveform(samples, RATE)
                 while (recognizer.isReady(stream)) recognizer.decode(stream)
                 val text = recognizer.getResult(stream).text.trim()
                 val endpoint = recognizer.isEndpoint(stream)
-                asrComputeSeconds += (System.nanoTime() - t0) / 1e9
+                val compute = (System.nanoTime() - t0) / 1e9
+                asrComputeSeconds += compute
                 asrAudioSeconds += n.toDouble() / RATE
+                secCompute += compute
+                if (secSamples >= RATE) {
+                    Trace.event("audio", "audio_s" to audioS, "source" to input.label,
+                        "mean_db" to 10 * Math.log10(secEnergy / secSamples + 1e-9), "peak_db" to secPeakDb,
+                        "asr_rtf" to secCompute * RATE / secSamples, "silenced" to silenced)
+                    secSamples = 0
+                    secEnergy = 0.0
+                    secPeakDb = -90.0
+                    secCompute = 0.0
+                }
+                val nowMs = SystemClock.elapsedRealtime()
+                if (nowMs - lastSystem >= 5000) {
+                    lastSystem = nowMs
+                    Trace.system("listening")
+                }
 
                 if (text.isNotEmpty()) {
                     val seg = current ?: Segment(ids.incrementAndGet(), SystemClock.elapsedRealtime()).also {
                         current = it
                         lastDraftWords = 0
+                        it.startAudioS = audioS - n.toDouble() / RATE
                         synchronized(segments) { segments.add(it) }
                     }
                     if (text != seg.hebrew) {
                         seg.hebrew = text
+                        Trace.event("asr_partial", "seg" to seg.id, "audio_s" to audioS, "he" to text)
                         listener.onSegment(seg)
                         val words = text.split(' ').size
                         if (words >= lastDraftWords + DRAFT_STEP_WORDS) {
@@ -247,7 +314,7 @@ class LiveEngine(
                     }
                 }
                 if (endpoint) {
-                    current?.let { close(it) }
+                    current?.let { close(it, "endpoint") }
                     current = null
                     recognizer.reset(stream)
                 }
@@ -257,7 +324,7 @@ class LiveEngine(
             current?.let { seg ->
                 val text = recognizer.getResult(stream).text.trim()
                 if (text.isNotEmpty()) seg.hebrew = text
-                close(seg)
+                close(seg, "pause pressed")
             }
         } finally {
             input.close()
@@ -269,9 +336,14 @@ class LiveEngine(
         }
     }
 
-    private fun close(seg: Segment) {
+    private fun close(seg: Segment, reason: String) {
         seg.final = true
         seg.endedMs = SystemClock.elapsedRealtime()
+        seg.endAudioS = audioS
+        Trace.event("asr_final", "seg" to seg.id, "reason" to reason, "he" to seg.hebrew,
+            "start_audio_s" to seg.startAudioS, "end_audio_s" to seg.endAudioS,
+            "speech_ms" to seg.endedMs - seg.startedMs, "queue" to finals.size,
+            "draft_running" to (draft != null))
         listener.onSegment(seg)
         if (translator == null) {
             writeLog(seg)
@@ -285,6 +357,7 @@ class LiveEngine(
     private fun requestDraft(seg: Segment) {
         if (translator == null) return
         draft = seg
+        draftRequestedMs = SystemClock.elapsedRealtime()
         synchronized(wake) { wake.notifyAll() }
     }
 
@@ -308,6 +381,7 @@ class LiveEngine(
                 if (seg != null) translateFinal(t, seg) else translateDraft(t)
             } catch (e: Throwable) {
                 Log.e(TAG, "translation failed", e)
+                Trace.error("mt_error", e)
                 listener.onStatus("Ошибка перевода: ${e.message}")
             }
         }
@@ -319,6 +393,9 @@ class LiveEngine(
         if (seg.final) return
         val source = seg.hebrew
         val pairs = contextFor(seg)
+        val startMs = SystemClock.elapsedRealtime()
+        val waitMs = startMs - draftRequestedMs
+        seg.drafts++
         val out = t.translate(source, pairs) { partial ->
             if (seg.final || finals.isNotEmpty()) return@translate false
             seg.russian = partial
@@ -326,16 +403,19 @@ class LiveEngine(
             listener.onSegment(seg)
             true
         }
-        if (!seg.final && finals.isEmpty() && out.isNotEmpty()) {
+        val shown = !seg.final && finals.isEmpty() && out.isNotEmpty()
+        if (shown) {
             seg.russian = out
             seg.draftFor = source
             listener.onSegment(seg)
         }
+        traceMt(t, "draft", seg, source, pairs, out, waitMs, shown)
     }
 
     private fun translateFinal(t: Translator, seg: Segment) {
         val source = seg.hebrew
         val pairs = contextFor(seg)
+        val waitMs = SystemClock.elapsedRealtime() - seg.endedMs
         val out = t.translate(source, pairs) { partial ->
             seg.russian = partial
             seg.draftFor = source
@@ -349,6 +429,21 @@ class LiveEngine(
         seg.stats = t.lastStats
         listener.onSegment(seg)
         writeLog(seg)
+        traceMt(t, "final", seg, source, pairs, out, waitMs, true)
+    }
+
+    /** One line per model call: the exact prompt, what came out, why it stopped and every timing. */
+    private fun traceMt(t: Translator, kind: String, seg: Segment, source: String, pairs: List<Pair<String, String>>,
+                        out: String, waitMs: Long, shown: Boolean) {
+        val s = t.lastStats
+        Trace.event("mt", "kind" to kind, "seg" to seg.id, "he" to source, "ru" to out,
+            "shown" to shown, "stop" to s.stop, "context_pairs" to pairs.size,
+            "prompt" to t.lastPrompt, "budget" to t.lastBudget, "threads" to t.threads, "model" to t.modelName,
+            "wait_ms" to waitMs, "prompt_tokens" to s.promptTokens, "prompt_ms" to s.promptMs,
+            "tokens" to s.tokens, "gen_ms" to s.genMs, "first_token_ms" to s.firstTokenMs,
+            "tok_per_s" to s.tokensPerSecond,
+            "after_phrase_end_ms" to if (seg.final && seg.endedMs > 0) SystemClock.elapsedRealtime() - seg.endedMs else null,
+            "queue" to finals.size, "draft_no" to seg.drafts)
     }
 
     /** The previous translated phrase, if it ended within 20 s, as in the desktop's pairs. */
