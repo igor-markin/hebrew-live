@@ -1,4 +1,5 @@
 import struct
+import subprocess
 import threading
 import time
 import types
@@ -72,6 +73,8 @@ class PhoneAudioTests(unittest.TestCase):
         for expected in ('--no-video', '--no-audio-playback', '--no-window', '--audio-source=voice-call-downlink',
                          '--audio-codec=raw', '--record=/tmp/x.wav', '--record-format=wav'):
             self.assertIn(expected, arguments)
+        self.assertFalse(any(item.startswith('--serial') for item in arguments))
+        self.assertIn('--serial=100.101.102.103:5555', command('/tmp/x.wav', executable='scrcpy', serial='100.101.102.103:5555'))
         with mock.patch.object(phone_audio, 'find_scrcpy', return_value=None), self.assertRaises(PhoneAudioError):
             command('/tmp/x.wav')
 
@@ -111,7 +114,32 @@ class PhoneAudioTests(unittest.TestCase):
         self.assertEqual(exit_event[0], 'phone_capture_exit')
         self.assertEqual({key: exit_event[1][key] for key in ('attempt', 'returncode', 'reason', 'audio', 'restart')},
                          dict(attempt=1, returncode=-11, reason='scrcpy crashed: SIGSEGV', audio=False, restart=True))
-        self.assertEqual(restart_event, ('phone_capture_restart', dict(attempt=2)))
+        self.assertEqual(restart_event, ('phone_capture_restart', dict(attempt=2, serial=None)))
+
+    def test_every_run_asks_which_connection_to_use(self):
+        # A restart may come after the chosen connection dropped: it asks again.
+        runs = [dict(exits=-11), dict(payload=wav(stereo(.2)))]
+        started = []; picks = iter(['100.101.102.103:5555', '0A1B2C3D4E5F6G'])
+        def popen(arguments, **options):
+            started.append(arguments)
+            return type('Scrcpy', (FakeScrcpy,), runs[len(started) - 1])(arguments, **options)
+        blocks = []; events = []
+        with PhoneAudio(blocks.append, lambda reason: None, executable='scrcpy', popen=popen, restart_pause=0,
+                        pick=lambda: next(picks), on_event=lambda name, **data: events.append((name, data))) as phone:
+            self.assertTrue(wait_for(lambda: len(blocks) == 2))
+            self.assertEqual(phone.serial, '0A1B2C3D4E5F6G')
+        self.assertEqual([arguments[1] for arguments in started], ['--serial=100.101.102.103:5555', '--serial=0A1B2C3D4E5F6G'])
+        self.assertEqual([data['serial'] for _, data in events], ['100.101.102.103:5555', '0A1B2C3D4E5F6G'])
+
+    def test_a_failed_pick_lets_scrcpy_look_for_the_phone_itself(self):
+        started = []
+        def popen(arguments, **options):
+            started.append(arguments); return type('Scrcpy', (FakeScrcpy,), dict(payload=wav(stereo(.1))))(arguments, **options)
+        def pick(): raise subprocess.TimeoutExpired('adb', 3)
+        blocks = []
+        with PhoneAudio(blocks.append, lambda reason: None, executable='scrcpy', popen=popen, pick=pick):
+            self.assertTrue(wait_for(lambda: blocks))
+        self.assertFalse(any(item.startswith('--serial') for item in started[0]))
 
     def test_a_run_that_dies_mid_header_is_replaced_by_a_clean_one(self):
         class HalfHeader(FakeScrcpy):
