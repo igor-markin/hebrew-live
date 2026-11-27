@@ -47,6 +47,16 @@ class TailscaleAddressTests(unittest.TestCase):
         self.assertEqual(phone_view.tailscale_address(run, executable='/bin/tailscale'), '100.101.7.12')
         self.assertEqual(calls, [['/bin/tailscale', 'ip', '-4']])
 
+    def test_the_mac_app_binary_is_told_to_act_as_the_command_line(self):
+        # Started from Finder there is no SHLVL or TERM_PROGRAM, and the app's binary would try
+        # to open its window instead of printing the address.
+        seen = {}
+        def run(command, **options): seen.update(options.get('env') or {}); return done(stdout='100.101.7.12\n')
+        with patch.dict(os.environ, {'PATH': '/usr/bin:/bin'}, clear=True):
+            self.assertEqual(phone_view.tailscale_address(run, executable='/x'), '100.101.7.12')
+        self.assertEqual(seen.get('TAILSCALE_BE_CLI'), '1')
+        self.assertEqual(seen.get('PATH'), '/usr/bin:/bin')
+
     def test_anything_outside_the_tailnet_block_is_refused(self):
         for output in ('192.168.1.5\n', '10.0.0.2', 'fd7a:115c:a1e0::1', 'not an address', ''):
             self.assertIsNone(phone_view.tailscale_address(lambda *_, **__: done(stdout=output), executable='/x'), output)
