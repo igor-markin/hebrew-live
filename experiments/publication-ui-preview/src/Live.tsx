@@ -10,7 +10,7 @@ import {TEXT_SIZES,TEXT_SIZE_KEY,textSize,translationPixels} from './textSize';
 import type {TextSize} from './textSize';
 import {MENU_HIDDEN_KEY,SESSIONS_HIDDEN_KEY,storedHidden,storedValue} from './layout';
 import type {Drawn} from './uiLog';
-import {agreeWords, agreedSplit, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
+import {agreeWords, agreedSplit, initialDark, archiveRecordingLabel, figureParts, shownSource, heldText, isQuietMiss, isVisibleGroup, mergeLiveState, dayNotes, numberNotes, parseLiveState, partialNoticeKind, phoneBlocksStart, phoneStatusText, shownPair, speechTurns, tickerParagraphs, unchangedPrefix, virtualIndexes} from './liveState';
 import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} from './liveState';
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
@@ -398,7 +398,7 @@ export default function Live(){
   const [search,setSearch]=useState('');
   const [sidebar,setSidebar]=useState(false);
   const [narrow,setNarrow]=useState(()=>matchMedia('(max-width: 900px)').matches);
-  const [dark,setDark]=useState(()=>localStorage.getItem('hebrew-live-theme')==='dark');
+  const [dark,setDark]=useState(()=>initialDark(document.documentElement.dataset.theme,localStorage.getItem('hebrew-live-theme')));
   const [size,setSize]=useState<TextSize>(()=>textSize(localStorage.getItem(TEXT_SIZE_KEY)));
   const [menuHidden,setMenuHidden]=useState(()=>storedHidden(localStorage.getItem(MENU_HIDDEN_KEY)));
   const [sessionsHidden,setSessionsHidden]=useState(()=>storedHidden(localStorage.getItem(SESSIONS_HIDDEN_KEY)));

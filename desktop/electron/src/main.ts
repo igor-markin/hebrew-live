@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   session,
   shell,
   systemPreferences,
@@ -15,7 +16,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopControllerClient } from "./protocol.js";
-import { acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, saveDesktopPreferences } from "./preferences.js";
+import {
+  acceptDesktopAgreement, DEFAULT_PREFERENCES, readDesktopPreferences, readSavedDarkTheme, saveDesktopPreferences,
+  windowBackground,
+} from "./preferences.js";
 import { allowedBackendUrl, allowedExternalUrl, isVocabularyWindowUrl, preferredUiLocale } from "./security.js";
 import { AGREEMENT_VERSION, type BootstrapData, type ControllerEvent, type DesktopPreferences, type UiLocale } from "./shared.js";
 import { quitSituation, type BackendState } from "./lifecycle.js";
@@ -213,7 +217,7 @@ function installNavigationPolicy(window: BrowserWindow): void {
           height: 760,
           minWidth: 560,
           minHeight: 420,
-          backgroundColor: "#eef4ef",
+          backgroundColor: windowBackground(readSavedDarkTheme(dataHome)),
           webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true },
         },
       };
@@ -239,7 +243,7 @@ function createWindow(): BrowserWindow {
     minWidth: 760,
     minHeight: 620,
     show: false,
-    backgroundColor: "#eef4ef",
+    backgroundColor: windowBackground(readSavedDarkTheme(dataHome)),
     webPreferences: {
       preload: path.join(app.getAppPath(), "build", "preload.cjs"),
       contextIsolation: true,
@@ -535,6 +539,9 @@ if (!hasLock) {
   });
   app.whenReady().then(() => {
     preferences = readDesktopPreferences(preferencesFile);
+    // The preparation page follows prefers-color-scheme: a saved dark theme makes it dark too.
+    // The light theme keeps following the system, as before.
+    if (readSavedDarkTheme(dataHome)) nativeTheme.themeSource = "dark";
     installPermissions();
     registerIpc();
     installMenu();

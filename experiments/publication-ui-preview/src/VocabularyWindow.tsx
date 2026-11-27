@@ -2,7 +2,7 @@ import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {FormEvent,KeyboardEvent} from 'react';
 import {translator} from './i18n';
 import type {TextKey,UiLocale} from './i18n';
-import {parseVocabulary,shortHebrew} from './liveState';
+import {initialDark,parseVocabulary,shortHebrew} from './liveState';
 import type {VocabularyEntry,VocabularyList} from './liveState';
 import {filterVocabulary,parseVocabularyFile,vocabularyCsv} from './vocabularyFile';
 import './vocabulary.css';
@@ -34,7 +34,9 @@ export default function VocabularyWindow() {
 
   useEffect(()=>{
     const theme=()=>{document.documentElement.dataset.theme=localStorage.getItem('hebrew-live-theme')==='dark'?'dark':'light';};
-    theme();window.addEventListener('storage',theme);
+    // The server's saved theme comes first; a later switch in the live window arrives as `storage`.
+    document.documentElement.dataset.theme=initialDark(document.documentElement.dataset.theme,localStorage.getItem('hebrew-live-theme'))?'dark':'light';
+    window.addEventListener('storage',theme);
     void (async()=>{
       try{
         const response=await fetch('../state',{signal:timeoutSignal()});

@@ -113,8 +113,22 @@ def vocabulary_entry(value):
     if any(len(fields[key])>limit for key,limit in VOCABULARY_LENGTH.items()):return None,'too_long'
     return vocabulary.Entry(**fields),None
 
+DARK_BACKGROUND='#151d1e'    # --background of :root[data-theme="dark"] in the window's styles.css
+
+
+def themed_page(data,dark):
+    """live.html with the theme on <html> before any script runs: without it the page painted
+    light until its state arrived, a white flash on every dark launch (27.11.2026)."""
+    data=data.replace(b'<html ',b'<html data-theme="'+(b'dark' if dark else b'light')+b'" ',1)
+    if dark:data=data.replace(b'<meta name="theme-color" content="#f6f6f2"/>',
+                              b'<meta name="theme-color" content="'+DARK_BACKGROUND.encode()+b'"/>',1)
+    return data
+
+
 class BrowserUI:
-    def __init__(self,open_browser=True,live=False):
+    def __init__(self,open_browser=True,live=False,dark_theme=False):
+        """`dark_theme`: the saved theme, known before the window first loads (the session's
+        preferences arrive later), so the page is served dark from its first frame."""
         self.live=live
         self.desktop_mode=os.environ.get('HEBREW_LIVE_DESKTOP_MANAGED')=='1'
         self.live_root=Path(__file__).with_name('web')
@@ -127,7 +141,7 @@ class BrowserUI:
         self.state=_State({'groups':[],'phase':'loading','generation':0,'status':'Загрузка локальных моделей…',
                     'status_code':'loading_models','direction':'he-ru','target_language':'ru',
                     'target_languages':[],'target_error':None,'target_error_code':None,
-                    'ui_locale':'en','text_size':'normal','menu_hidden':False,'sessions_hidden':False,'dark_theme':False,'paused':False,'finished':False,
+                    'ui_locale':'en','text_size':'normal','menu_hidden':False,'sessions_hidden':False,'dark_theme':dark_theme is True,'paused':False,'finished':False,
                     'lag':0,'level':0,'retry_supported':True,'save_raw_audio':True,
                     'save_raw_audio_locked':False,'audio_saved':True,'partial':False,'integrity_warning':None,
                     'recording_started':False,'capture_active':False,
@@ -527,6 +541,9 @@ class BrowserUI:
         data=path.read_bytes()
         # Hide the retired selector in previously built local UI too.
         if name.endswith('.css'):data+=b'\n.live-mode{display:none!important}\n'
+        if name=='live.html':
+            with self.lock:dark=self.state.get('dark_theme') is True
+            data=themed_page(data,dark)
         return data,kind
 
     def push_state(self,handler,snapshot,pushed=None,stopped=None):
