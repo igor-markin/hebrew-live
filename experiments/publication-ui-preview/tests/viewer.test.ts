@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {isViewerPath,phoneViewNote} from '../src/viewer.ts';
+import {isViewerPath,phoneViewNote,viewerIdleNote} from '../src/viewer.ts';
 import {translator} from '../src/i18n.ts';
 import {parseLiveState} from '../src/liveState.ts';
 
@@ -19,10 +19,22 @@ test('the switch explains each state of the phone link in every interface langua
   assert.equal(phoneViewNote(true,'something new'),'phoneViewStarting');
   for(const locale of ['en','ru','he'] as const){
     const tx=translator(locale);
-    for(const key of ['phoneView','phoneViewHintOff','phoneViewStarting','phoneViewHint','phoneViewNoTailscale','phoneViewPortBusy','phoneViewFailed','phoneViewCopy','phoneViewCopied','viewerNote'] as const)
+    for(const key of ['phoneView','phoneViewHintOff','phoneViewStarting','phoneViewHint','phoneViewNoTailscale','phoneViewPortBusy','phoneViewFailed','phoneViewCopy','phoneViewCopied','viewerNote','viewerWaiting','viewerPaused'] as const)
       assert.notEqual(tx(key),key,`${locale} ${key}`);
   }
   assert.equal(translator('ru')('phoneView'),'Перевод на телефоне');
+});
+
+test('the phone, which has no buttons, says what the Mac is doing instead of naming a button',()=>{
+  assert.equal(viewerIdleNote(false),'viewerWaiting');
+  assert.equal(viewerIdleNote(undefined),'viewerWaiting');
+  assert.equal(viewerIdleNote(true),'viewerPaused');
+  for(const locale of ['en','ru','he'] as const){
+    const tx=translator(locale);
+    for(const key of ['viewerWaiting','viewerPaused'] as const)
+      assert.doesNotMatch(tx(key),/Continue|Продолж|המשך|Start|Начать/,`${locale} ${key}`);
+  }
+  assert.equal(translator('ru')('viewerWaiting'),'Перевод появится здесь, когда на Маке начнётся запись.');
 });
 
 test('the phone link fields are checked like the rest of the snapshot',()=>{

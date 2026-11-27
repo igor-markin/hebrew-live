@@ -16,3 +16,8 @@ export function phoneViewNote(enabled:boolean|undefined,status:string|null|undef
   if(!enabled)return NOTES.off;
   return NOTES[(status&&status in NOTES?status:'starting') as PhoneViewStatus];
 }
+
+/** What the phone shows before the first card: it has no buttons, so it says what the Mac is doing. */
+export function viewerIdleNote(recordingStarted:boolean|undefined):'viewerWaiting'|'viewerPaused' {
+  return recordingStarted?'viewerPaused':'viewerWaiting';
+}

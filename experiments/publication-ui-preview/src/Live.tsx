@@ -15,7 +15,7 @@ import type {Agreement, Group, LiveState, Pair, SpeechTurn, TickerParagraph} fro
 import {beginLocaleRequest,directionParts,htmlLanguage,isRtlLanguage,issueText,languageName,reconcileLocale,rollbackLocale,translator} from './i18n';
 import type {LocaleRequest,TextKey,UiLocale} from './i18n';
 import {VOCABULARY_HASH} from './vocabularyFile';
-import {isViewerPath,phoneViewNote} from './viewer';
+import {isViewerPath,phoneViewNote,viewerIdleNote} from './viewer';
 
 declare global {
   interface Window {hebrewLive?:{requestQuit:()=>Promise<void>;showHelp:()=>Promise<void>;setUiLocale:(value:'en'|'ru')=>Promise<unknown>}}
@@ -703,7 +703,7 @@ export default function Live(){
       {connectionError&&<p className="unavailable global-error" role="alert">{connectionError}{lastSuccess?' '+tx('secondsAgo',{seconds:Math.max(1,Math.floor((clock-lastSuccess)/1000))}):''}</p>}
       <section ref={follow.containerRef} className="live-feed chat-feed" onClickCapture={event=>{if((event.target as HTMLElement).closest('.history'))follow.stop();}} aria-label={tx('feedLabel')}>
         <DisplayContext.Provider value={display}>{display.ticker?<TickerView groups={visibleGroups}/>:<MessageCards key={`${state.session||'current'}:${state.generation??0}`} groups={visibleGroups} scope="current" scroller={follow.containerRef} retryEnabled={false}/>}</DisplayContext.Provider>
-        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{loading?tx('loadingBeforeRecord'):state.finished?tx('recordingFinished'):state.paused?tx('readyToSpeak'):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
+        {!shownVisibleGroups.length&&<Card className="speech-card"><Card.Content className="live-empty">{loading?tx('loadingBeforeRecord'):state.finished?tx('recordingFinished'):state.paused?tx(viewerIdleNote(state.recording_started)):state.phase==='listening'?tx('waitingSpeech'):state.status}</Card.Content></Card>}
       </section>
       {!follow.following&&state.groups.length>0&&<Button className="follow-latest" variant="primary" onPress={follow.resume}><Icon kind="down"/>{tx('backToCurrent')}</Button>}
     </main>
