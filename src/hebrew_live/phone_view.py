@@ -57,8 +57,13 @@ def tailscale_address(run=subprocess.run, executable=None):
     executable = executable or find_tailscale()
     if not executable:
         return None
+    # The Mac app's own binary acts as the command line only when it sees a shell (SHLVL,
+    # TERM_PROGRAM) or this variable; started from Finder it tries to open its window instead,
+    # exits 0 and prints no address.
+    environment = {**os.environ, 'TAILSCALE_BE_CLI': '1'}
     try:
-        result = run([executable, 'ip', '-4'], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+        result = run([executable, 'ip', '-4'], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL,
+                     env=environment)
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode:
