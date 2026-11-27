@@ -44,6 +44,7 @@ def _bumping(name):
     return wrapper
 for _name in ('__delitem__','pop','popitem','clear','setdefault','__ior__'):setattr(_State,_name,_bumping(_name))
 
+CONTROL_ACTIONS=('pause','stop','start_session')   # shared with the phone's copy (phone_view.py)
 UI_LOG_BYTES=262144
 UI_LOG_ITEMS=400
 # a whole vocabulary from a file: 500 entries of 60 + 120 + 120 letters, each up to six bytes as a
@@ -291,12 +292,7 @@ class BrowserUI:
                         except PermissionError:return self.reply(409,b'{}')
                         except OSError:return self.reply(500,b'{}')
                         return self.reply(200,b'{"ok":true}')
-                    if action=='start_session':
-                        with owner.lock:
-                            if not owner.state['finished'] or not owner.state.get('can_start_new') or owner.finished_seen.is_set():return self.reply(409,b'{}')
-                            owner.state.update(can_start_new=False,phase='loading',status='Подготовка новой сессии…',status_code='preparing_session')
-                            owner.next_session.set()
-                        return self.reply(200,b'{"ok":true}')
+                    if action in CONTROL_ACTIONS:return self.reply(*owner.control(action))
                     if action=='retry_fragment':
                         identity=payload.get('value')
                         if not isinstance(identity,str) or len(identity)>128:return self.reply(400,b'{}')
@@ -483,16 +479,6 @@ class BrowserUI:
                                 owner.stop_requested=True
                             owner.state.update(stopping=True,phase='stopping',status='Завершаю обработку…',status_code='finishing')
                         return self.reply(202,b'{"ok":true}')
-                    if action=='stop':
-                        # Stop is idempotent. A second HTTP request must never turn
-                        # into cancellation of translation that was already accepted.
-                        with owner.lock:
-                            if owner.state['finished']:return self.reply(409,b'{}')
-                            if owner.stop_requested:return self.reply(200,b'{"ok":true,"already_stopping":true}')
-                            owner.actions.put_nowait('q')
-                            owner.stop_requested=True
-                            owner.state.update(stopping=True,phase='stopping',status='Завершаю обработку…',status_code='finishing')
-                        return self.reply(200,b'{"ok":true}')
                     if action=='cancel_processing':
                         with owner.lock:
                             if owner.state['finished'] or not owner.stop_requested:return self.reply(409,b'{}')
@@ -501,12 +487,10 @@ class BrowserUI:
                             owner.cancel_requested=True
                             owner.state.update(cancelling=True,status='Отменяю оставшуюся обработку…',status_code='cancelling')
                         return self.reply(200,b'{"ok":true}')
-                    key={'pause':' ','clear':'\x0c','direction':'\x14'}.get(action)
+                    key={'clear':'\x0c','direction':'\x14'}.get(action)
                     if key is None:return self.reply(400,b'{}')
                     with owner.lock:
                         if owner.state['finished']:return self.reply(409,b'{}')
-                        if action=='pause' and owner.phone_blocks_start():
-                            return self.reply(409,b'{"error":"phone_not_ready"}')
                     owner.actions.put_nowait(key)
                     self.reply(200,b'{"ok":true}')
                 except (ValueError,AttributeError,queue.Full):self.reply(400,b'{}')
@@ -622,6 +606,33 @@ class BrowserUI:
                     return publish(phone_view_status='port_busy' if error.errno==errno.EADDRINUSE else 'failed',phone_view_url=None)
                 publish(phone_view_status='on',phone_view_url=self.phone_view.url)
         threading.Thread(target=run,name='phone-view-switch',daemon=True).start()
+
+    def control(self,action):
+        """Start, pause or resume (`pause`), finish (`stop`) or begin the next session
+        (`start_session`): the recording controls the window and the phone's copy share.
+        Returns (HTTP status, JSON body)."""
+        with self.lock:
+            state=self.state
+            if action=='start_session':
+                if not state['finished'] or not state.get('can_start_new') or self.finished_seen.is_set():return 409,b'{}'
+                state.update(can_start_new=False,phase='loading',status='Подготовка новой сессии…',status_code='preparing_session')
+                self.next_session.set()
+                return 200,b'{"ok":true}'
+            if state['finished']:return 409,b'{}'
+            if action=='stop':
+                # Stop is idempotent. A second HTTP request must never turn
+                # into cancellation of translation that was already accepted.
+                if self.stop_requested:return 200,b'{"ok":true,"already_stopping":true}'
+                try:self.actions.put_nowait('q')
+                except queue.Full:return 400,b'{}'
+                self.stop_requested=True
+                state.update(stopping=True,phase='stopping',status='Завершаю обработку…',status_code='finishing')
+                return 200,b'{"ok":true}'
+            if action!='pause':return 400,b'{}'
+            if self.phone_blocks_start():return 409,b'{"error":"phone_not_ready"}'
+        try:self.actions.put_nowait(' ')
+        except queue.Full:return 400,b'{}'
+        return 200,b'{"ok":true}'
 
     def phone_blocks_start(self):
         """The phone is chosen but not known to be ready: Start would only fail. Call under `lock`."""
