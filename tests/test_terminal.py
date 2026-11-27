@@ -87,8 +87,12 @@ class TerminalTests(unittest.TestCase):
                 os.write(master,b'\x0c');pump(.15)
                 fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',12,40,0,0))
                 os.write(master,b'\x1b[5~\x1b[6~\x1b[F');pump(.2)
-                os.write(master,b'q');pump(.5)
-                process.wait(timeout=5)
+                os.write(master,b'q')
+                # Keep reading while the session closes: its last screens can fill the pty, and a
+                # child blocked on a full pty never exits (the CI runner hit the old 5 s wait).
+                until=time.monotonic()+30
+                while process.poll() is None and time.monotonic()<until:pump(.05)
+                process.wait(timeout=1)
                 self.assertEqual(process.returncode,0,output.decode(errors='replace'))
                 folder=next(Path(tmp).iterdir())
                 events=[json.loads(line)['event'] for file in sorted(folder.glob('*.jsonl')) for line in file.read_text().splitlines()]
