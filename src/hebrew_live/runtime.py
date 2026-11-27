@@ -260,13 +260,17 @@ def run_session(args, session, browser_ui=None):
                 accept_audio_callback(control,session,stop,errors,data,status)
             def phone_ended(reason):
                 # Name the cause in the window: a pulled cable reads as `no_device`.
+                code=None
                 if browser_ui:
                     try:code=phone_audio.status()
                     except Exception:code='unknown'
                     if code=='ready':code=phone_audio.CAPTURE_FAILED   # adb still sees it: scrcpy itself gave up
                     browser_ui.details(phone_status=code,input_error='phone_stopped')
+                try:session.event('phone_stopped',reason=str(reason)[:300],status=code)
+                except Exception:pass   # the stop below must happen even if the log cannot be written
                 errors.put(phone_audio.PhoneAudioError(f'Phone audio stopped: {reason}'));stop.set()
-            capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended) if phone else
+            capture=(phone_audio.PhoneAudio(lambda block:callback(block[:,None],len(block),None,None),phone_ended,
+                                            on_event=session.event) if phone else
                      sd.InputStream(device=args.device,samplerate=rate,channels=1,dtype='float32',blocksize=rate//10,callback=callback))
             with capture:
                 if browser_ui:browser_ui.details(recording_started=True,capture_active=True)
