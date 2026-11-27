@@ -1,8 +1,0 @@
-.gradle/
-build/
-local.properties
-.cxx/
-app/libs/*.aar
-app/src/main/assets/asr/
-third_party/
-*.apk
